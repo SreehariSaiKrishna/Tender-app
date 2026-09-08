@@ -1,0 +1,29 @@
+# Core
+python-dotenv>=1.0.1
+pydantic>=2.9
+pydantic-settings>=2.5
+SQLAlchemy>=2.0
+click>=8.1
+
+# Browser automation
+playwright>=1.47
+
+# Excel / data processing
+pandas>=2.2
+openpyxl>=3.1
+python-dateutil>=2.9
+
+# AI
+openai>=1.50
+
+# Reports / email
+jinja2>=3.1
+
+# Testing
+pytest>=8.3
+pytest-mock>=3.14
+freezegun>=1.5
+
+# API (for later n8n / webhook integration)
+fastapi>=0.115
+uvicorn>=0.30

@@ -1,0 +1,10 @@
+{
+  "_comment": "Saved TenderDetail queries to automate. Names must match the dashboard EXACTLY. Confirm against the live dashboard before relying on this list (see README Phase 2).",
+  "queries": [
+    { "name": "Digital Marketing", "enabled": true },
+    { "name": "Software Development", "enabled": true },
+    { "name": "Awareness Campaign", "enabled": true },
+    { "name": "Surveillance Access", "enabled": true },
+    { "name": "content dev Tenders", "enabled": true }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "_comment": "Business capabilities used by the AI screening layer (Phase 5) to judge tender relevance. Edit freely - no code changes needed.",
+  "capabilities": [
+    "Digital marketing",
+    "Software development",
+    "Website development",
+    "E-learning content development",
+    "Advertising and creative services",
+    "Content creation"
+  ]
+}
