@@ -2,11 +2,18 @@
 python-dotenv>=1.0.1
 pydantic>=2.9
 pydantic-settings>=2.5
-SQLAlchemy>=2.0
+# <4.9 because mongomock (test-only) doesn't yet support the `sort` kwarg
+# pymongo 4.9+ passes internally for bulk replace/update operations - this
+# doesn't affect real MongoDB/Atlas connectivity, only local test mocking.
+pymongo>=4.6,<4.9
 click>=8.1
 
 # Browser automation
-playwright>=1.47
+# Pinned exactly (not >=) because the Lambda container image's base image
+# (mcr.microsoft.com/playwright/python) bundles a specific Chromium build -
+# the Python playwright package version must match it exactly or the
+# browser fails to launch. Keep this in sync with the Dockerfile's FROM tag.
+playwright==1.62.0
 
 # Excel / data processing
 pandas>=2.2
@@ -23,6 +30,7 @@ jinja2>=3.1
 pytest>=8.3
 pytest-mock>=3.14
 freezegun>=1.5
+mongomock>=4.2
 
 # API (for later n8n / webhook integration)
 fastapi>=0.115

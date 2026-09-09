@@ -1,14 +1,14 @@
 """Smoke tests for Phase 1: config loading and database wiring.
 
-No network access and no TenderDetail login are required for these tests.
+Uses mongomock (an in-memory fake implementing the pymongo API) - no real
+MongoDB, network access, or TenderDetail login required for these tests.
 """
 from __future__ import annotations
 
-from sqlalchemy import inspect
+import mongomock
 
+from app import database
 from app.config import load_business_capabilities, load_saved_queries
-from app.database import get_engine
-from app.models import Base
 
 
 def test_saved_queries_load_and_include_expected_names():
@@ -25,23 +25,21 @@ def test_business_capabilities_load():
     assert len(capabilities) >= 1
 
 
-def test_database_tables_can_be_created(tmp_path, monkeypatch):
-    db_file = tmp_path / "test_tenders.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+def test_ensure_indexes_creates_the_expected_indexes(monkeypatch):
+    client = mongomock.MongoClient()
+    collection = client["test_tender_intelligence"]["tenders"]
+    monkeypatch.setattr(database, "get_collection", lambda: collection)
 
-    # get_settings() is lru_cached; for this smoke test we build the engine
-    # directly against a throwaway sqlite file instead of the cached settings.
-    from sqlalchemy import create_engine
+    database.ensure_indexes()
 
-    engine = create_engine(f"sqlite:///{db_file}")
-    Base.metadata.create_all(engine)
-
-    inspector = inspect(engine)
-    tables = set(inspector.get_table_names())
+    index_names = set(collection.index_information().keys())
     assert {
-        "tenders",
-        "tender_query_matches",
-        "collection_runs",
-        "download_records",
-        "screening_results",
-    }.issubset(tables)
+        "dedup_key_1",
+        "tender_ref_1",
+        "closing_date_1",
+        "disappeared_1",
+        "first_seen_1",
+        "deadline_changed_1",
+        "query_match_count_1",
+        "query_matches.query_name_1",
+    }.issubset(index_names)

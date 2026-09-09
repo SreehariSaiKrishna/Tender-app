@@ -1,19 +1,26 @@
 """Command-line entry points for the Tender Intelligence Agent.
 
-Phase 1 provides `init-db` and `status` (working) plus placeholders for
-`collect`, `process`, `screen`, `report`, and `run` that will be implemented
-in later phases. Placeholders exist so the CLI shape is stable, but they do
-nothing beyond reporting that the feature is not yet built.
+`collect`/`process`/`screen` are fully implemented (Phases 2-5). `report`
+remains a stub pending Phase 6 (app/reports/ is still empty); `run` chains
+the working stages via app.pipeline.run_pipeline and will pick up reporting
+automatically once Phase 6 exists.
 """
 from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 import click
 
 from app.config import get_settings, load_business_capabilities, load_saved_queries
-from app.database import init_db
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_mongo_uri(uri: str) -> str:
+    """Never print a connection string's password to the terminal/logs."""
+    return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", uri)
 
 
 @click.group()
@@ -26,10 +33,12 @@ def cli() -> None:
 
 @cli.command("init-db")
 def init_db_command() -> None:
-    """Create the SQLite database and tables if they don't exist."""
-    init_db()
+    """Create the MongoDB indexes this app relies on, if they don't exist."""
+    from app.database import ensure_indexes
+
+    ensure_indexes()
     settings = get_settings()
-    click.echo(f"Database ready at: {settings.database_url}")
+    click.echo(f"Indexes ready on database: {settings.mongodb_db_name} (tenders collection)")
 
 
 @cli.command("status")
@@ -40,7 +49,7 @@ def status_command() -> None:
     capabilities = load_business_capabilities()
 
     click.echo("=== Tender Intelligence Agent - status ===")
-    click.echo(f"Database URL:        {settings.database_url}")
+    click.echo(f"MongoDB:             {_mask_mongo_uri(settings.mongodb_uri) or '(not set)'}")
     click.echo(f"Download dir:        {settings.download_dir}")
     click.echo(f"Browser headless:    {settings.browser_headless}")
     click.echo(f"AI provider:         {settings.ai_provider} ({settings.openai_model})")
@@ -62,7 +71,6 @@ def collect_command() -> None:
     from app.browser.collector import run_collection
 
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
-    init_db()
 
     click.echo("Starting collector. A browser window will open now.")
     click.echo("If this is the first run (or the session expired), log in")
@@ -92,92 +100,74 @@ def collect_command() -> None:
         raise SystemExit(1)
 
 
+def _print_process_result(result) -> None:
+    click.echo("=== Processing summary ===")
+    if not result.query_results:
+        click.secho(f"No downloaded files found in {result.raw_dir}. Run 'collect' first.", fg="red")
+        return
+
+    for query_name, qr in result.query_results.items():
+        if qr.status == "ok":
+            processed_name = Path(qr.processed_path).name if qr.processed_path else "?"
+            click.secho(
+                f"  OK     {query_name}: {qr.row_count} tenders "
+                f"({qr.synthetic_count} without a reference number) -> {processed_name}",
+                fg="green",
+            )
+        else:
+            click.secho(f"  FAIL   {query_name}: {qr.error_message}", fg="red")
+
+    if result.ingest_summary is not None:
+        summary = result.ingest_summary
+        click.echo("")
+        click.echo("=== Database merge summary (dedup + history) ===")
+        click.echo(f"  New tenders:            {summary.new}")
+        click.echo(f"  Deadline updated:       {summary.updated}")
+        click.echo(f"  Unchanged (re-seen):    {summary.unchanged}")
+        click.echo(f"  Closing within 7 days:  {summary.closing_soon}")
+        click.echo(f"  Disappeared (closed):   {summary.disappeared}")
+        click.echo(f"  Found in >1 query:      {summary.cross_query_matches}")
+    else:
+        click.secho("Nothing was successfully normalized; skipping database merge.", fg="red")
+
+
 @cli.command("process")
 @click.option(
     "--input-dir", default=None, help="Override the raw downloads directory."
 )
 def process_command(input_dir: str | None) -> None:
-    """Read the latest downloaded export per saved query, normalize it, and
-    merge it into the database (dedup + history tracking, Phase 3/4).
+    """Normalize the latest downloaded export per saved query, dedupe it
+    against everything seen before, and merge it into MongoDB.
 
     Also writes normalized JSON per query to the processed/ directory as a
     plain-text audit trail alongside the database.
     """
-    import json
-    from pathlib import Path
-
-    from app.processing.deduplicator import ingest_batch
-    from app.processing.excel_reader import ExcelReadError, read_raw_rows
-    from app.processing.normalizer import NormalizedTender, normalize_rows
+    from app.database import ensure_indexes
+    from app.pipeline import run_process
 
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
-    init_db()
+    ensure_indexes()
     settings = get_settings()
-    raw_dir = Path(input_dir) if input_dir else settings.resolved_path(settings.download_dir)
-    processed_dir = settings.resolved_path(settings.processed_dir)
-    processed_dir.mkdir(parents=True, exist_ok=True)
 
-    queries = [q.name for q in load_saved_queries() if q.enabled]
+    result = run_process(settings, input_dir=input_dir)
+    _print_process_result(result)
 
-    files_by_query: dict[str, Path] = {}
-    for query_name in queries:
-        slug = re.sub(r"[^A-Za-z0-9]+", "_", query_name).strip("_")
-        candidates = sorted(raw_dir.glob(f"{slug}_*.*"), key=lambda p: p.stat().st_mtime)
-        if candidates:
-            files_by_query[query_name] = candidates[-1]
-
-    if not files_by_query:
-        click.secho(
-            f"No downloaded files found in {raw_dir}. Run 'collect' first.", fg="red"
-        )
+    if not result.query_results or result.ingest_summary is None or result.any_failed:
         raise SystemExit(1)
 
-    click.echo("=== Processing summary ===")
-    query_results: dict[str, list[NormalizedTender]] = {}
-    any_failed = False
-    for query_name, path in files_by_query.items():
-        try:
-            raw_rows = read_raw_rows(path)
-        except ExcelReadError as exc:
-            any_failed = True
-            click.secho(f"  FAIL   {query_name}: {exc}", fg="red")
-            continue
 
-        normalized = normalize_rows(raw_rows, query_name)
-        query_results[query_name] = normalized
-        synthetic = sum(1 for n in normalized if n.ref_is_synthetic)
+def _print_screen_outcome(outcome, threshold: int) -> None:
+    if outcome.error:
+        click.secho(outcome.error, fg="red")
+        return
 
-        out_path = processed_dir / f"{path.stem}.json"
-        out_path.write_text(
-            json.dumps([n.model_dump(mode="json") for n in normalized], indent=2),
-            encoding="utf-8",
-        )
-        click.secho(
-            f"  OK     {query_name}: {len(normalized)} tenders "
-            f"({synthetic} without a reference number) -> {out_path.name}",
-            fg="green",
-        )
-
-    if not query_results:
-        click.secho("Nothing was successfully normalized; skipping database merge.", fg="red")
-        raise SystemExit(1)
-
-    from app.database import session_scope
-
-    with session_scope() as session:
-        summary = ingest_batch(session, query_results)
-
-    click.echo("")
-    click.echo("=== Database merge summary (dedup + history) ===")
-    click.echo(f"  New tenders:            {summary.new}")
-    click.echo(f"  Deadline updated:       {summary.updated}")
-    click.echo(f"  Unchanged (re-seen):    {summary.unchanged}")
-    click.echo(f"  Closing within 7 days:  {summary.closing_soon}")
-    click.echo(f"  Disappeared (closed):   {summary.disappeared}")
-    click.echo(f"  Found in >1 query:      {summary.cross_query_matches}")
-
-    if any_failed:
-        raise SystemExit(1)
+    summary = outcome.summary
+    click.echo("=== AI screening summary ===")
+    click.echo(f"  Screened:        {summary.screened}")
+    click.echo(f"  Failed:          {summary.failed}")
+    click.echo(f"  Above threshold ({threshold}): {summary.above_threshold}")
+    for priority, count in sorted(summary.by_priority.items()):
+        click.echo(f"    {priority:<14} {count}")
 
 
 @cli.command("screen")
@@ -191,33 +181,17 @@ def process_command(input_dir: str | None) -> None:
 )
 def screen_command(limit: int | None, rescreen_all: bool) -> None:
     """Run AI screening against configured business capabilities."""
-    from app.intelligence.scorer import ScreeningError, get_provider, screen_tenders
+    from app.database import ensure_indexes
+    from app.pipeline import run_screen
 
     logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
-    init_db()
+    ensure_indexes()
     settings = get_settings()
 
-    try:
-        provider = get_provider(settings)
-    except ScreeningError as exc:
-        click.secho(str(exc), fg="red")
-        raise SystemExit(1)
+    outcome = run_screen(settings, limit=limit, only_unscreened=not rescreen_all)
+    _print_screen_outcome(outcome, settings.ai_relevance_threshold)
 
-    from app.database import session_scope
-
-    with session_scope() as session:
-        summary = screen_tenders(
-            session, provider=provider, limit=limit, only_unscreened=not rescreen_all
-        )
-
-    click.echo("=== AI screening summary ===")
-    click.echo(f"  Screened:        {summary.screened}")
-    click.echo(f"  Failed:          {summary.failed}")
-    click.echo(f"  Above threshold ({settings.ai_relevance_threshold}): {summary.above_threshold}")
-    for priority, count in sorted(summary.by_priority.items()):
-        click.echo(f"    {priority:<14} {count}")
-
-    if summary.failed:
+    if outcome.error or (outcome.summary and outcome.summary.failed):
         raise SystemExit(1)
 
 
@@ -230,7 +204,34 @@ def report_command() -> None:
 @cli.command("run")
 def run_command() -> None:
     """Run the full pipeline: collect -> process -> screen -> report."""
-    click.echo("run: not yet implemented. Will chain collect/process/screen/report.")
+    from app.database import ensure_indexes
+    from app.pipeline import run_pipeline
+
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+    ensure_indexes()
+    settings = get_settings()
+
+    summary = run_pipeline(settings, include_report=False)
+
+    click.echo("=== Collection summary ===")
+    for outcome in summary.collect_outcomes:
+        if outcome.status == "success":
+            click.secho(f"  OK      {outcome.query_name} -> {outcome.file_path}", fg="green")
+        elif outcome.status == "skipped":
+            click.secho(f"  SKIPPED {outcome.query_name}: {outcome.error_message}", fg="yellow")
+        else:
+            click.secho(f"  FAIL    {outcome.query_name}: {outcome.error_message}", fg="red")
+
+    click.echo("")
+    if summary.process_result is not None:
+        _print_process_result(summary.process_result)
+
+    click.echo("")
+    if summary.screen_outcome is not None:
+        _print_screen_outcome(summary.screen_outcome, settings.ai_relevance_threshold)
+
+    click.echo("")
+    click.echo("report: not yet implemented (Phase 6) - skipped.")
 
 
 if __name__ == "__main__":

@@ -19,11 +19,11 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy.orm import Session
+from pymongo.collection import Collection
 
 from app.config import Settings, get_settings, load_business_capabilities
+from app.database import get_collection
 from app.intelligence.prompts import build_system_prompt, build_user_prompt
-from app.models import Priority, ScreeningResult, Tender
 
 logger = logging.getLogger(__name__)
 
@@ -133,51 +133,62 @@ class ScreenSummary:
     above_threshold: int = 0
 
 
-def _tender_to_dict(t: Tender) -> dict[str, Any]:
+def _tender_to_dict(t: dict[str, Any]) -> dict[str, Any]:
+    closing_date = t.get("closing_date")
+    published_date = t.get("published_date")
     return {
-        "title": t.title,
-        "organisation": t.organisation,
-        "location": t.location,
-        "state": t.state,
-        "closing_date": t.closing_date.isoformat() if t.closing_date else None,
-        "published_date": t.published_date.isoformat() if t.published_date else None,
-        "tender_value": t.tender_value,
-        "earnest_money": t.earnest_money,
-        "tender_ref": t.tender_ref,
-        "description": t.description,
-        "source_url": t.source_url,
+        "title": t.get("title"),
+        "organisation": t.get("organisation"),
+        "location": t.get("location"),
+        "state": t.get("state"),
+        "closing_date": closing_date.date().isoformat() if closing_date else None,
+        "published_date": published_date.date().isoformat() if published_date else None,
+        "tender_value": t.get("tender_value"),
+        "earnest_money": t.get("earnest_money"),
+        "tender_ref": t.get("tender_ref"),
+        "description": t.get("description"),
+        "source_url": t.get("source_url"),
     }
 
 
 def _as_naive_utc(d: dt.datetime) -> dt.datetime:
     """Normalize to a naive UTC datetime for comparison.
 
-    SQLite does not reliably preserve tzinfo across a round trip, so a
-    freshly-constructed aware datetime and one just read back from the
-    database can otherwise compare unequal (or raise) even when they
-    represent the same instant.
+    pymongo returns datetimes read back from MongoDB as naive UTC values
+    (BSON has no separate "aware" concept), while a freshly-constructed
+    datetime in this process may still carry tzinfo - comparing the two
+    directly would otherwise raise or compare unequal for the same instant.
     """
     if d.tzinfo is not None:
         return d.astimezone(dt.timezone.utc).replace(tzinfo=None)
     return d
 
 
-def _needs_screening(t: Tender) -> bool:
-    if not t.screenings:
+def _needs_screening(t: dict[str, Any]) -> bool:
+    screenings = t.get("screenings") or []
+    if not screenings:
         return True
-    latest = max(t.screenings, key=lambda s: s.screened_at)
-    return _as_naive_utc(latest.screened_at) < _as_naive_utc(t.last_seen)
+    latest = screenings[-1]  # append-only: the last element is always the most recent
+    # Deliberately compares against content_last_changed, not last_seen:
+    # last_seen advances every time a still-live tender reappears in a
+    # download, which is nearly every tender, nearly every day - using it
+    # here would re-screen almost everything on every run. Documents
+    # written before this field existed fall back to first_seen, which is
+    # always <= any real screened_at for something already screened once,
+    # so old data doesn't get spuriously re-screened by this change.
+    content_changed_at = t.get("content_last_changed") or t["first_seen"]
+    return _as_naive_utc(latest["screened_at"]) < _as_naive_utc(content_changed_at)
 
 
 def screen_tenders(
-    session: Session,
     provider: AIProvider | None = None,
     capabilities: list[str] | None = None,
     threshold: int | None = None,
     limit: int | None = None,
     only_unscreened: bool = True,
+    collection: Collection | None = None,
 ) -> ScreenSummary:
-    """Screen candidate tenders and persist a ScreeningResult for each.
+    """Screen candidate tenders and append a screening entry for each.
 
     By default only screens tenders that have never been screened, or have
     changed (last_seen advanced) since their most recent screening - this
@@ -188,9 +199,13 @@ def screen_tenders(
     provider = provider or get_provider(settings)
     capabilities = capabilities if capabilities is not None else load_business_capabilities()
     threshold = threshold if threshold is not None else settings.ai_relevance_threshold
+    collection = collection if collection is not None else get_collection()
 
-    query = session.query(Tender).filter(Tender.disappeared.is_(False))
-    candidates = [t for t in query.all() if not only_unscreened or _needs_screening(t)]
+    candidates = [
+        doc
+        for doc in collection.find({"disappeared": False})
+        if not only_unscreened or _needs_screening(doc)
+    ]
     if limit is not None:
         candidates = candidates[:limit]
 
@@ -199,24 +214,30 @@ def screen_tenders(
         try:
             verdict = screen_tender(_tender_to_dict(tender), capabilities, provider)
         except ScreeningError as exc:
-            logger.error("Screening failed for tender %s (%s): %s", tender.id, tender.tender_ref, exc)
+            logger.error(
+                "Screening failed for tender %s (%s): %s",
+                tender["_id"],
+                tender.get("tender_ref"),
+                exc,
+            )
             summary.failed += 1
             continue
 
-        session.add(
-            ScreeningResult(
-                tender_id=tender.id,
-                priority=Priority(verdict.priority),
-                relevance_score=verdict.relevance_score,
-                category=verdict.category,
-                reason=verdict.reason,
-                eligibility_concerns=verdict.eligibility_concerns,
-                missing_information=verdict.missing_information,
-                recommended_action=verdict.recommended_action,
-                model_used=getattr(provider, "_model", settings.ai_provider),
-                screened_at=dt.datetime.now(dt.timezone.utc),
-            )
+        screening_entry = {
+            "priority": verdict.priority,
+            "relevance_score": verdict.relevance_score,
+            "category": verdict.category,
+            "reason": verdict.reason,
+            "eligibility_concerns": verdict.eligibility_concerns,
+            "missing_information": verdict.missing_information,
+            "recommended_action": verdict.recommended_action,
+            "model_used": getattr(provider, "_model", settings.ai_provider),
+            "screened_at": dt.datetime.now(dt.timezone.utc),
+        }
+        collection.update_one(
+            {"_id": tender["_id"]}, {"$push": {"screenings": screening_entry}}
         )
+
         summary.screened += 1
         summary.by_priority[verdict.priority] = summary.by_priority.get(verdict.priority, 0) + 1
         if verdict.relevance_score >= threshold:

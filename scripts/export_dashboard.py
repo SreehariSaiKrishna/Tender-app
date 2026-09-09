@@ -16,12 +16,11 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import get_settings  # noqa: E402
-from app.database import session_scope  # noqa: E402
-from app.models import Tender  # noqa: E402
+from app.database import get_collection  # noqa: E402
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "dashboard_export.json"
 
@@ -30,63 +29,83 @@ def _sanitize_doc_id(dedup_key: str) -> str:
     return re.sub(r"[^A-Za-z0-9_\-.~:@+]", "_", dedup_key)[:200]
 
 
-def _iso_date(d: dt.date | None) -> str | None:
-    return d.isoformat() if d else None
+def _iso_date(value: dt.datetime | dt.date | None) -> str | None:
+    """closing_date/published_date are stored as UTC-midnight datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value.date().isoformat()
+    return value.isoformat()
 
 
-def _iso_dt(d: dt.datetime | None) -> str | None:
-    return d.isoformat() if d else None
+def _iso_dt(value: dt.datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _screening_summary(screenings: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The most recent screening verdict (screenings is append-only, so the
+    last element is always the latest), or None if never screened.
+    """
+    if not screenings:
+        return None
+    latest = screenings[-1]
+    return {
+        "priority": latest.get("priority"),
+        "relevance_score": latest.get("relevance_score"),
+        "category": latest.get("category"),
+        "reason": latest.get("reason"),
+        "recommended_action": latest.get("recommended_action"),
+    }
 
 
 def build_export() -> dict:
-    with session_scope() as session:
-        tenders = session.query(Tender).filter(Tender.disappeared.is_(False)).all()
+    collection = get_collection()
+    tenders = list(collection.find({"disappeared": False}))
 
-        docs = []
-        counts: dict[str, int] = {}
-        cross_query_matches = 0
-        all_queries: set[str] = set()
+    docs = []
+    counts: dict[str, int] = {}
+    cross_query_matches = 0
+    all_queries: set[str] = set()
 
-        for t in tenders:
-            query_names = sorted({m.query_name for m in t.query_matches})
-            all_queries.update(query_names)
-            if len(query_names) > 1:
-                cross_query_matches += 1
+    for t in tenders:
+        query_names = sorted({m["query_name"] for m in t.get("query_matches", [])})
+        all_queries.update(query_names)
+        if len(query_names) > 1:
+            cross_query_matches += 1
 
-            status_value = t.status.value if hasattr(t.status, "value") else str(t.status)
-            counts[status_value] = counts.get(status_value, 0) + 1
+        status_value = t.get("status")
+        counts[status_value] = counts.get(status_value, 0) + 1
 
-            data = {
-                "tender_ref": t.tender_ref,
-                "dedup_key": t.dedup_key,
-                "title": t.title,
-                "organisation": t.organisation,
-                "location": t.location,
-                "state": t.state,
-                "closing_date": _iso_date(t.closing_date),
-                "published_date": _iso_date(t.published_date),
-                "tender_value": t.tender_value,
-                "earnest_money": t.earnest_money,
-                "source_url": t.source_url,
-                "status": status_value,
-                "times_found": t.times_found,
-                "first_seen": _iso_dt(t.first_seen),
-                "last_seen": _iso_dt(t.last_seen),
-                "disappeared": t.disappeared,
-                "deadline_changed": t.deadline_changed,
-                "query_names": query_names,
-                # Filled in once Phase 5 (AI screening) is built.
-                "screening": None,
-            }
-            docs.append({"doc_id": _sanitize_doc_id(t.dedup_key), "data": data})
-
-        meta = {
-            "last_synced": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "total": len(tenders),
-            "counts": counts,
-            "cross_query_matches": cross_query_matches,
-            "queries": sorted(all_queries),
+        data = {
+            "tender_ref": t.get("tender_ref"),
+            "dedup_key": t["dedup_key"],
+            "title": t.get("title"),
+            "organisation": t.get("organisation"),
+            "location": t.get("location"),
+            "state": t.get("state"),
+            "closing_date": _iso_date(t.get("closing_date")),
+            "published_date": _iso_date(t.get("published_date")),
+            "tender_value": t.get("tender_value"),
+            "earnest_money": t.get("earnest_money"),
+            "source_url": t.get("source_url"),
+            "status": status_value,
+            "times_found": t.get("times_found"),
+            "first_seen": _iso_dt(t.get("first_seen")),
+            "last_seen": _iso_dt(t.get("last_seen")),
+            "disappeared": t.get("disappeared"),
+            "deadline_changed": t.get("deadline_changed"),
+            "query_names": query_names,
+            "screening": _screening_summary(t.get("screenings", [])),
         }
+        docs.append({"doc_id": _sanitize_doc_id(t["dedup_key"]), "data": data})
+
+    meta = {
+        "last_synced": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "total": len(tenders),
+        "counts": counts,
+        "cross_query_matches": cross_query_matches,
+        "queries": sorted(all_queries),
+    }
 
     return {"meta": meta, "tenders": docs}
 

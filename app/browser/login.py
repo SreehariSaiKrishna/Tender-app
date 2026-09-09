@@ -25,6 +25,7 @@ message this module raises or logs.
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -129,6 +130,13 @@ def ensure_logged_in(
                 "Login form submitted, but the dashboard isn't showing yet - "
                 "complete any additional step (OTP, verification) manually."
             )
+            debug_path = os.environ.get("TENDERDETAIL_DEBUG_SCREENSHOT_PATH")
+            if debug_path:
+                try:
+                    page.screenshot(path=debug_path, full_page=True)
+                    logger.info("Saved debug screenshot to %s", debug_path)
+                except Exception as exc:  # noqa: BLE001 - diagnostic only, never fatal
+                    logger.error("Could not save debug screenshot: %s", exc)
 
     print()
     print("=" * 70)

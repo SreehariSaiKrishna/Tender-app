@@ -19,13 +19,12 @@ data/browser_profile*/
 playwright-report/
 test-results/
 
-# Data (private downloads, processed exports, DB)
+# Data (private downloads, processed exports) - the database itself is
+# MongoDB Atlas now, nothing local to ignore for it.
 data/raw/*
 data/processed/*
-data/database/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-!data/database/.gitkeep
 
 # Logs
 logs/*
@@ -36,3 +35,9 @@ logs/*
 Thumbs.db
 .vscode/
 .idea/
+
+# AWS SAM - build artifacts and per-machine local secrets, never commit.
+# samconfig.toml itself is tracked - it holds no secrets, just deploy
+# config (stack name, region, capabilities).
+.aws-sam/
+env.json

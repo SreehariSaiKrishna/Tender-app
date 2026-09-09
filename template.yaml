@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Tender Intelligence Agent - pipeline Lambda, scheduled 2x/day, with
+  secrets sourced from SSM Parameter Store and a CloudWatch alarm on
+  failure. The report email itself (Phase 6) isn't built yet - the evening
+  run already passes include_report:true so nothing needs to change here
+  once it is.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: >
+      Email address to receive a notification when a scheduled pipeline
+      run fails (login broke, Atlas unreachable, etc).
+
+Resources:
+  PipelineFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 600
+      MemorySize: 1536
+      Architectures:
+        - x86_64
+      # SecureString parameters require an explicit version in the dynamic
+      # reference (CloudFormation won't default to "latest" for these) -
+      # rotating a secret in SSM means bumping the version number here too.
+      Environment:
+        Variables:
+          TENDERDETAIL_BASE_URL: "https://www.tenderdetail.com"
+          TENDERDETAIL_LOGIN_URL: "https://www.tenderdetail.com/registeruser/dashboard"
+          TENDERDETAIL_USERNAME: "{{resolve:ssm:/tender-agent/tenderdetail-username:1}}"
+          TENDERDETAIL_PASSWORD: "{{resolve:ssm-secure:/tender-agent/tenderdetail-password:1}}"
+          TENDERDETAIL_PROFILE_DIR: "/tmp/browser_profile"
+          BROWSER_HEADLESS: "true"
+          MONGODB_URI: "{{resolve:ssm-secure:/tender-agent/mongodb-uri:1}}"
+          MONGODB_DB_NAME: "tender_intelligence"
+          AI_PROVIDER: "openai"
+          OPENAI_API_KEY: "{{resolve:ssm-secure:/tender-agent/openai-api-key:1}}"
+          OPENAI_MODEL: "gpt-4o-mini"
+          AI_RELEVANCE_THRESHOLD: "60"
+          LOG_LEVEL: "INFO"
+          DOWNLOAD_DIR: "/tmp/raw"
+          PROCESSED_DIR: "/tmp/processed"
+      Events:
+        MorningRun:
+          Type: Schedule
+          Properties:
+            Name: tender-agent-morning
+            Description: 08:00 IST daily run
+            Schedule: cron(30 2 * * ? *)
+            Input: '{"include_report": false}'
+        EveningRun:
+          Type: Schedule
+          Properties:
+            Name: tender-agent-evening
+            Description: 18:00 IST daily run - the one that also emails the report
+            Schedule: cron(30 12 * * ? *)
+            Input: '{"include_report": true}'
+    Metadata:
+      DockerTag: pipeline-latest
+      DockerContext: .
+      Dockerfile: Dockerfile
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: tender-agent-alerts
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  PipelineErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A scheduled pipeline run failed (see the PipelineFunction CloudWatch Logs for why).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PipelineFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+Outputs:
+  PipelineFunctionName:
+    Value: !Ref PipelineFunction
+  AlertTopicArn:
+    Value: !Ref AlertTopic

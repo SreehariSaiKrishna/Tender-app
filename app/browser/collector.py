@@ -1,12 +1,19 @@
 """Collector orchestration: log in, run each saved query, download its Live
 export, save it with a timestamp, and record status per query - without
 letting one failure crash the whole run.
+
+Run/download history used to be written to a `CollectionRun`/
+`DownloadRecord` table; nothing in the app ever reads that back
+programmatically, so it's now emitted as structured log lines instead
+(picked up by CloudWatch Logs once this runs in Lambda).
 """
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,8 +27,6 @@ from app.browser.dashboard import (
 )
 from app.browser.login import ensure_logged_in
 from app.config import Settings, get_settings, load_saved_queries
-from app.database import session_scope
-from app.models import CollectionRun, DownloadRecord
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +48,10 @@ def _timestamp() -> str:
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _log_event(event: str, **fields) -> None:
+    logger.info(json.dumps({"event": event, **fields}, default=str))
+
+
 def run_collection(settings: Settings | None = None) -> list[DownloadOutcome]:
     """Run the full collector: login, then download each enabled saved
     query's Live export. Returns per-query outcomes. Never raises for an
@@ -57,60 +66,66 @@ def run_collection(settings: Settings | None = None) -> list[DownloadOutcome]:
     profile_dir = settings.resolved_path(settings.tenderdetail_profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
+    run_id = uuid.uuid4().hex
+    started_at = dt.datetime.now(dt.timezone.utc)
+    _log_event("collection_run_started", run_id=run_id, started_at=started_at)
+
     outcomes: list[DownloadOutcome] = []
 
-    with session_scope() as session:
-        run = CollectionRun()
-        session.add(run)
-        session.flush()  # obtain run.id
-        run_id = run.id
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            str(profile_dir),
+            headless=settings.browser_headless,
+            viewport={"width": 1400, "height": 900},
+            accept_downloads=True,
+        )
+        page = context.new_page()
 
-        with sync_playwright() as p:
-            context = p.chromium.launch_persistent_context(
-                str(profile_dir),
-                headless=settings.browser_headless,
-                viewport={"width": 1400, "height": 900},
-                accept_downloads=True,
+        try:
+            logged_in = ensure_logged_in(
+                page,
+                settings.tenderdetail_login_url,
+                username=settings.tenderdetail_username,
+                password=settings.tenderdetail_password,
             )
-            page = context.new_page()
+        except Exception as exc:  # noqa: BLE001 - fatal, stop safely
+            logger.error("Login raised an unexpected error: %s", exc)
+            logged_in = False
 
-            try:
-                logged_in = ensure_logged_in(
-                    page,
-                    settings.tenderdetail_login_url,
-                    username=settings.tenderdetail_username,
-                    password=settings.tenderdetail_password,
-                )
-            except Exception as exc:  # noqa: BLE001 - fatal, stop safely
-                logger.error("Login raised an unexpected error: %s", exc)
-                logged_in = False
-
-            if not logged_in:
-                run.success = False
-                run.notes = "Login failed or was not completed in time."
-                context.close()
-                logger.error("Stopping: could not confirm login.")
-                return outcomes
-
-            for query in queries:
-                outcome = _collect_one_query(page, settings, query.name, download_dir)
-                outcomes.append(outcome)
-                session.add(
-                    DownloadRecord(
-                        run_id=run_id,
-                        query_name=outcome.query_name,
-                        file_path=outcome.file_path,
-                        status=outcome.status,
-                        error_message=outcome.error_message,
-                    )
-                )
-                # Return to the dashboard before the next query.
-                page.goto(settings.tenderdetail_login_url)
-
+        if not logged_in:
             context.close()
+            _log_event(
+                "collection_run_finished",
+                run_id=run_id,
+                success=False,
+                notes="Login failed or was not completed in time.",
+                finished_at=dt.datetime.now(dt.timezone.utc),
+            )
+            logger.error("Stopping: could not confirm login.")
+            return outcomes
 
-        run.success = any(o.status == "success" for o in outcomes)
-        run.finished_at = dt.datetime.now(dt.timezone.utc)
+        for query in queries:
+            outcome = _collect_one_query(page, settings, query.name, download_dir)
+            outcomes.append(outcome)
+            _log_event(
+                "download_record",
+                run_id=run_id,
+                query_name=outcome.query_name,
+                file_path=outcome.file_path,
+                status=outcome.status,
+                error_message=outcome.error_message,
+            )
+            # Return to the dashboard before the next query.
+            page.goto(settings.tenderdetail_login_url)
+
+        context.close()
+
+    _log_event(
+        "collection_run_finished",
+        run_id=run_id,
+        success=any(o.status == "success" for o in outcomes),
+        finished_at=dt.datetime.now(dt.timezone.utc),
+    )
 
     return outcomes
 

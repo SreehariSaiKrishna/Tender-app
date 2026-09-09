@@ -1,60 +1,54 @@
-"""Database engine/session setup."""
+"""MongoDB client/collection setup.
+
+A single module-level `MongoClient` is created lazily and reused for the
+life of the process - on a warm Lambda invocation this means the TCP/TLS
+connection to Atlas is reused across runs instead of reconnecting every
+time, the same benefit the old SQLAlchemy engine singleton gave locally.
+
+There is no `session_scope()` equivalent here on purpose: every write in
+this app is a single-document upsert, which MongoDB already makes atomic,
+so there's no multi-document transaction to wrap.
+"""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from pathlib import Path
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.collection import Collection
 
 from app.config import get_settings
-from app.models import Base
+
+_client: MongoClient | None = None
 
 
-def _ensure_sqlite_dir(database_url: str) -> None:
-    if database_url.startswith("sqlite:///"):
-        db_path = database_url.replace("sqlite:///", "", 1)
-        Path(db_path).resolve().parent.mkdir(parents=True, exist_ok=True)
+def get_client() -> MongoClient:
+    global _client
+    if _client is None:
+        settings = get_settings()
+        if not settings.mongodb_uri:
+            raise RuntimeError(
+                "MONGODB_URI is not set. Add it to .env before running anything "
+                "that touches the database."
+            )
+        _client = MongoClient(settings.mongodb_uri)
+    return _client
 
 
-def get_engine():
+def get_collection() -> Collection:
     settings = get_settings()
-    _ensure_sqlite_dir(settings.database_url)
-    connect_args = (
-        {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-    )
-    return create_engine(settings.database_url, connect_args=connect_args)
+    return get_client()[settings.mongodb_db_name]["tenders"]
 
 
-_engine = None
-_SessionLocal: sessionmaker | None = None
-
-
-def init_db() -> None:
-    """Create all tables if they don't already exist."""
-    global _engine, _SessionLocal
-    _engine = get_engine()
-    Base.metadata.create_all(_engine)
-    _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
-
-
-def get_session_factory() -> sessionmaker:
-    if _SessionLocal is None:
-        init_db()
-    assert _SessionLocal is not None
-    return _SessionLocal
-
-
-@contextmanager
-def session_scope() -> Session:
-    """Provide a transactional scope around a series of operations."""
-    factory = get_session_factory()
-    session = factory()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+def ensure_indexes() -> None:
+    """Create the indexes the query helpers rely on, if they don't already
+    exist. Safe to call every cold start - `create_index` is idempotent.
+    """
+    collection = get_collection()
+    collection.create_index("dedup_key", unique=True)
+    collection.create_index("tender_ref")
+    collection.create_index("closing_date")
+    collection.create_index("disappeared")
+    collection.create_index("first_seen")
+    collection.create_index("deadline_changed")
+    collection.create_index("query_match_count")
+    collection.create_index("query_matches.query_name")
+    collection.create_index([("last_seen", DESCENDING)])
+    collection.create_index([("status", ASCENDING)])

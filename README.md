@@ -15,12 +15,15 @@ This project is being built in phases. See "Build phases" below for what's
 done and what's next.
 
 - [x] Phase 1 - project skeleton, config, database models, basic CLI
-- [ ] Phase 2 - Playwright collector (login + download)
-- [ ] Phase 3 - Excel processing pipeline
-- [ ] Phase 4 - deduplication & history tracking
-- [ ] Phase 5 - AI screening
+- [x] Phase 2 - Playwright collector (login + download)
+- [x] Phase 3 - Excel processing pipeline
+- [x] Phase 4 - deduplication & history tracking
+- [x] Phase 5 - AI screening
 - [ ] Phase 6 - daily report + email
-- [ ] Phase 7 - n8n / API integration
+- [ ] Phase 7 - n8n / API integration / AWS deployment
+
+Database: MongoDB Atlas (migrated from the original SQLite/SQLAlchemy setup
+as part of the AWS deployment work - see `app/database.py`).
 
 ## Requirements
 
@@ -107,8 +110,9 @@ python main.py status
 tender-intelligence-agent/
 ├── app/
 │   ├── config.py          # Pydantic settings + config/*.json loaders
-│   ├── database.py         # SQLAlchemy engine/session setup
-│   ├── models.py            # ORM models (Tender, dedup, screening, etc.)
+│   ├── database.py         # MongoDB client/collection + index setup
+│   ├── models.py            # Shared enums (TenderStatus, Priority)
+│   ├── pipeline.py           # collect/process/screen orchestration, shared by the CLI and (later) Lambda
 │   ├── cli.py                # Click CLI: init-db, status, collect, process, screen, report, run
 │   ├── browser/              # Phase 2: Playwright login/dashboard/collector
 │   ├── processing/           # Phase 3/4: Excel reading, normalizing, dedup
@@ -120,7 +124,6 @@ tender-intelligence-agent/
 ├── data/
 │   ├── raw/                  # Original downloaded Excel files (gitignored)
 │   ├── processed/            # Normalized data (gitignored)
-│   ├── database/             # SQLite file (gitignored)
 │   └── browser_profile/      # Persistent login session (gitignored, NEVER share)
 ├── tests/
 ├── scripts/
@@ -135,19 +138,18 @@ tender-intelligence-agent/
 Available now:
 
 ```bash
-python main.py init-db     # create the SQLite database
+python main.py init-db     # create the MongoDB indexes this app relies on
 python main.py status      # show configured queries, capabilities, settings
+python main.py collect     # log in, download each saved query's latest export
+python main.py process     # normalize the latest downloads, dedupe, merge into MongoDB
+python main.py screen      # Phase 5 - AI screening against config/capabilities.json
+python main.py run         # chains collect -> process -> screen (report once Phase 6 exists)
 ```
 
-Coming in later phases (already present as stubs so the interface is
-stable, but not yet functional):
+Still a stub, pending Phase 6:
 
 ```bash
-python main.py collect     # Phase 2 - log in, download latest exports
-python main.py process     # Phase 3/4 - parse Excel, normalize, dedup
-python main.py screen      # Phase 5 - AI screening
 python main.py report      # Phase 6 - generate + email daily report
-python main.py run         # full pipeline: collect -> process -> screen -> report
 ```
 
 ## Running tests
@@ -156,8 +158,9 @@ python main.py run         # full pipeline: collect -> process -> screen -> repo
 pytest
 ```
 
-Tests do not require a real TenderDetail login or network access - they use
-mock Excel files and a throwaway SQLite database.
+Tests do not require a real TenderDetail login, network access, or a real
+MongoDB instance - they use mock Excel files and `mongomock`, an in-memory
+fake of the MongoDB driver.
 
 ## n8n integration (planned, Phase 7)
 

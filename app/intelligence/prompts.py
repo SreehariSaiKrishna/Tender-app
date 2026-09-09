@@ -69,8 +69,9 @@ def build_user_prompt(tender: dict[str, Any]) -> str:
     """Render one tender's known fields into a plain-text block.
 
     `tender` is expected to carry the canonical normalized fields (see
-    app.processing.normalizer.NormalizedTender / app.models.Tender): title,
-    organisation, location, state, closing_date, published_date,
+    app.processing.normalizer.NormalizedTender / the `tenders` MongoDB
+    collection in app.database): title, organisation, location, state,
+    closing_date, published_date,
     tender_value, earnest_money, description, source_url. Any field absent
     from the source data must already be None here - this function does not
     guess a replacement value.

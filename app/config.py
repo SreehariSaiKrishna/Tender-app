@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     browser_headless: bool = False
 
     # Database
-    database_url: str = "sqlite:///./data/database/tenders.db"
+    mongodb_uri: str = ""
+    mongodb_db_name: str = "tender_intelligence"
 
     # AI
     ai_provider: str = "openai"
