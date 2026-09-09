@@ -52,3 +52,4 @@ def ensure_indexes() -> None:
     collection.create_index("query_matches.query_name")
     collection.create_index([("last_seen", DESCENDING)])
     collection.create_index([("status", ASCENDING)])
+    collection.create_index([("latest_priority", ASCENDING)])

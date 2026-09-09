@@ -170,6 +170,10 @@ def test_screen_tenders_persists_results(collection):
     result = docs[0]["screenings"][0]
     assert result["priority"] == "High"
     assert result["relevance_score"] == 85
+    # Denormalized onto the document itself so the read-only API can filter/
+    # sort by priority without unpacking the screenings array.
+    assert docs[0]["latest_priority"] == "High"
+    assert docs[0]["latest_relevance_score"] == 85
 
 
 def test_screen_tenders_skips_already_screened_unchanged_tenders(collection):

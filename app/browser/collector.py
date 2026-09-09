@@ -78,6 +78,20 @@ def run_collection(settings: Settings | None = None) -> list[DownloadOutcome]:
             headless=settings.browser_headless,
             viewport={"width": 1400, "height": 900},
             accept_downloads=True,
+            # AWS Lambda's restricted syscall sandbox blocks the fork()
+            # Chromium's zygote process needs for its normal multi-process
+            # model (crashes with SIGSEGV, not a clear permissions error) -
+            # --single-process/--no-zygote route around it entirely. Local
+            # Docker testing never hit this because Docker Desktop's
+            # containers are far less restrictive than real Lambda.
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--single-process",
+                "--no-zygote",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+            ],
         )
         page = context.new_page()
 

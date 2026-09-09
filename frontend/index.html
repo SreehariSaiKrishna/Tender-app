@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tender Dashboard</title>
+<style>
+  :root {
+    --ink: #1a1d21;
+    --ink-soft: #5b6169;
+    --ink-faint: #8b9199;
+    --paper: #f6f7f8;
+    --paper-raised: #ffffff;
+    --rule: #e2e5e9;
+    --accent: #2f5d62;
+    --high: #b3341f;
+    --high-bg: #fbe9e6;
+    --medium: #93641a;
+    --medium-bg: #f6ecd8;
+    --low: #3d5a80;
+    --low-bg: #e8eef5;
+    --none: #6b7178;
+    --none-bg: #ececee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  header {
+    padding: 24px 32px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper-raised);
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 21px;
+    font-weight: 700;
+  }
+  header p {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 13.5px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .stat-card {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat-card .num { font-size: 24px; font-weight: 700; line-height: 1.1; }
+  .stat-card .label {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 4px;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  select, .checkbox-label {
+    font-size: 13.5px;
+    padding: 7px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper-raised);
+    color: var(--ink);
+  }
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  #refreshBtn {
+    margin-left: auto;
+    font-size: 13px;
+    padding: 7px 14px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper-raised);
+    cursor: pointer;
+    color: var(--ink-soft);
+  }
+  #refreshBtn:hover { color: var(--ink); border-color: var(--accent); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--paper-raised);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 720px; }
+  thead th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.tender-row { cursor: pointer; }
+  tbody tr.tender-row:hover { background: var(--paper); }
+  .title-cell { max-width: 420px; }
+  .title-cell .t { font-weight: 500; }
+  .title-cell .o { color: var(--ink-soft); font-size: 12.5px; margin-top: 2px; }
+
+  .badge {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .badge.High { color: var(--high); background: var(--high-bg); }
+  .badge.Medium { color: var(--medium); background: var(--medium-bg); }
+  .badge.Low { color: var(--low); background: var(--low-bg); }
+  .badge.Not-Relevant, .badge.none { color: var(--none); background: var(--none-bg); }
+
+  .detail-row td {
+    background: var(--paper);
+    padding: 16px 24px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .detail-row dl { margin: 0; display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; }
+  .detail-row dt { color: var(--ink-faint); }
+  .detail-row dd { margin: 0; color: var(--ink); }
+  .detail-row a { color: var(--accent); }
+
+  .pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 16px 0 40px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .pagination button {
+    font-size: 13px;
+    padding: 6px 14px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper-raised);
+    cursor: pointer;
+  }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+
+  .empty, .loading {
+    padding: 40px;
+    text-align: center;
+    color: var(--ink-faint);
+    font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Tender Dashboard</h1>
+    <p>AI-screened tenders from TenderDetail - research only, never submits a bid.</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <select id="filterPriority">
+      <option value="">All priorities</option>
+      <option value="High">High</option>
+      <option value="Medium">Medium</option>
+      <option value="Low">Low</option>
+      <option value="Not Relevant">Not Relevant</option>
+    </select>
+    <select id="filterStatus">
+      <option value="">All statuses</option>
+      <option value="new">New</option>
+      <option value="seen">Seen</option>
+      <option value="updated">Updated</option>
+      <option value="closing_soon">Closing soon</option>
+      <option value="closed">Closed</option>
+    </select>
+    <label class="checkbox-label">
+      <input type="checkbox" id="filterClosingSoon"> Closing within 7 days
+    </label>
+    <button id="refreshBtn">Refresh</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Tender</th>
+          <th>Priority</th>
+          <th>Score</th>
+          <th>Closing</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tenderBody">
+        <tr><td colspan="5" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <span id="pageInfo"></span>
+    <div>
+      <button id="prevBtn">&larr; Previous</button>
+      <button id="nextBtn">Next &rarr;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Filled in once the API is deployed - see the stack's ApiUrl output.
+  const API_BASE_URL = "REPLACE_WITH_API_URL";
+
+  const PAGE_SIZE = 25;
+  let skip = 0;
+  let expandedId = null;
+
+  const el = (id) => document.getElementById(id);
+
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    return new Date(iso).toISOString().slice(0, 10);
+  }
+
+  function badgeClass(priority) {
+    return priority ? priority.replace(" ", "-") : "none";
+  }
+
+  async function loadStats() {
+    const res = await fetch(`${API_BASE_URL}/stats`);
+    const data = await res.json();
+    const cards = [
+      { label: "Total tracked", num: data.total },
+      { label: "High priority", num: data.by_priority?.High || 0 },
+      { label: "Closing within 7 days", num: data.closing_soon },
+      { label: "Found in >1 query", num: data.cross_query },
+    ];
+    el("stats").innerHTML = cards
+      .map((c) => `<div class="stat-card"><div class="num">${c.num}</div><div class="label">${c.label}</div></div>`)
+      .join("");
+  }
+
+  async function loadTenders() {
+    const params = new URLSearchParams({ limit: PAGE_SIZE, skip });
+    const priority = el("filterPriority").value;
+    const status = el("filterStatus").value;
+    if (priority) params.set("priority", priority);
+    if (status) params.set("status", status);
+    if (el("filterClosingSoon").checked) params.set("closing_soon", "true");
+
+    el("tenderBody").innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
+
+    const res = await fetch(`${API_BASE_URL}/tenders?${params}`);
+    const data = await res.json();
+    renderTenders(data);
+  }
+
+  function renderTenders(data) {
+    const body = el("tenderBody");
+    if (!data.tenders.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No tenders match these filters.</td></tr>';
+    } else {
+      body.innerHTML = data.tenders.map(rowHtml).join("");
+      body.querySelectorAll("tr.tender-row").forEach((row) => {
+        row.addEventListener("click", () => toggleDetail(row.dataset.id, data.tenders));
+      });
+    }
+
+    const start = data.total === 0 ? 0 : skip + 1;
+    const end = Math.min(skip + PAGE_SIZE, data.total);
+    el("pageInfo").textContent = `${start}–${end} of ${data.total}`;
+    el("prevBtn").disabled = skip === 0;
+    el("nextBtn").disabled = end >= data.total;
+  }
+
+  function rowHtml(t) {
+    const latest = t.screenings?.[t.screenings.length - 1];
+    const priority = t.latest_priority || (latest ? latest.priority : null);
+    const score = t.latest_relevance_score ?? (latest ? latest.relevance_score : "—");
+    return `
+      <tr class="tender-row" data-id="${t.id}">
+        <td class="title-cell">
+          <div class="t">${escapeHtml(t.title)}</div>
+          <div class="o">${escapeHtml(t.organisation || "")}</div>
+        </td>
+        <td><span class="badge ${badgeClass(priority)}">${priority || "Unscreened"}</span></td>
+        <td>${score}</td>
+        <td>${fmtDate(t.closing_date)}</td>
+        <td>${t.status}</td>
+      </tr>
+    `;
+  }
+
+  function toggleDetail(id, tenders) {
+    document.querySelectorAll(".detail-row").forEach((r) => r.remove());
+    if (expandedId === id) { expandedId = null; return; }
+    expandedId = id;
+
+    const t = tenders.find((x) => x.id === id);
+    const latest = t.screenings?.[t.screenings.length - 1];
+    const row = document.querySelector(`tr[data-id="${id}"]`);
+    const detail = document.createElement("tr");
+    detail.className = "detail-row";
+    detail.innerHTML = `
+      <td colspan="5">
+        <dl>
+          <dt>Reason</dt><dd>${escapeHtml(latest?.reason || "Not yet screened")}</dd>
+          <dt>Missing info</dt><dd>${(latest?.missing_information || []).map(escapeHtml).join(", ") || "—"}</dd>
+          <dt>Recommended</dt><dd>${escapeHtml(latest?.recommended_action || "—")}</dd>
+          <dt>Tender value</dt><dd>${t.tender_value ?? "Not disclosed in listing"}</dd>
+          <dt>Source</dt><dd><a href="${t.source_url}" target="_blank" rel="noopener">View on TenderDetail &rarr;</a></dd>
+        </dl>
+      </td>
+    `;
+    row.after(detail);
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s ?? "";
+    return div.innerHTML;
+  }
+
+  el("filterPriority").addEventListener("change", () => { skip = 0; loadTenders(); });
+  el("filterStatus").addEventListener("change", () => { skip = 0; loadTenders(); });
+  el("filterClosingSoon").addEventListener("change", () => { skip = 0; loadTenders(); });
+  el("refreshBtn").addEventListener("click", () => { loadStats(); loadTenders(); });
+  el("prevBtn").addEventListener("click", () => { skip = Math.max(0, skip - PAGE_SIZE); loadTenders(); });
+  el("nextBtn").addEventListener("click", () => { skip += PAGE_SIZE; loadTenders(); });
+
+  loadStats();
+  loadTenders();
+</script>
+</body>
+</html>

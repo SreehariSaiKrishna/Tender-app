@@ -235,7 +235,17 @@ def screen_tenders(
             "screened_at": dt.datetime.now(dt.timezone.utc),
         }
         collection.update_one(
-            {"_id": tender["_id"]}, {"$push": {"screenings": screening_entry}}
+            {"_id": tender["_id"]},
+            {
+                "$push": {"screenings": screening_entry},
+                # Denormalized onto the document (matching the existing
+                # query_match_count pattern) so the read-only API can filter/
+                # sort by priority directly instead of unpacking the array.
+                "$set": {
+                    "latest_priority": verdict.priority,
+                    "latest_relevance_score": verdict.relevance_score,
+                },
+            },
         )
 
         summary.screened += 1

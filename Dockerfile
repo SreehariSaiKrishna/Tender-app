@@ -20,7 +20,18 @@ FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 # silent even while the pipeline is actively running.
 ENV PYTHONUNBUFFERED=1
 
+# Real Lambda only allows writes under /tmp - everything else (including
+# whatever $HOME would otherwise resolve to) is read-only. Without this,
+# fontconfig and other cache-writing libraries fail (usually just noisily,
+# but it's one less variable when debugging a real browser crash).
+ENV HOME=/tmp
+
 RUN pip install --no-cache-dir awslambdaric
+
+# The base image bundles Chromium, Firefox, and WebKit - app/browser only
+# ever launches Chromium, so the other two are pure dead weight (roughly
+# half the image size), slowing down every build/push for no benefit.
+RUN rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-*
 
 WORKDIR /var/task
 

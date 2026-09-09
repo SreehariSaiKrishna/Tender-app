@@ -1,11 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Tender Intelligence Agent - pipeline Lambda, scheduled 2x/day, with
-  secrets sourced from SSM Parameter Store and a CloudWatch alarm on
-  failure. The report email itself (Phase 6) isn't built yet - the evening
-  run already passes include_report:true so nothing needs to change here
-  once it is.
+  Tender Intelligence Agent - BACKEND stack: the pipeline Lambda (scheduled
+  2x/day), the read-only API Lambda + HTTP API, secrets from SSM Parameter
+  Store, and a CloudWatch alarm on failure. The frontend (S3 + CloudFront)
+  is a deliberately separate stack - see frontend/template.yaml - so the
+  two can be deployed and reasoned about independently. The report email
+  itself (Phase 6) isn't built yet - the evening run already passes
+  include_report:true so nothing needs to change here once it is.
 
 Parameters:
   AlertEmail:
@@ -23,6 +25,11 @@ Resources:
       MemorySize: 1536
       Architectures:
         - x86_64
+      # Not primarily about cost - this makes it structurally impossible for
+      # a manual test invoke to overlap with a real scheduled run (which
+      # would mean two simultaneous Chromium sessions logging into
+      # TenderDetail and double the OpenAI calls for that pass).
+      ReservedConcurrentExecutions: 1
       # All SSM params here are plain String, not SecureString - CloudFormation
       # does not support resolving ssm-secure references inside a Lambda's
       # Environment.Variables at all (a hard limitation, not a config
@@ -67,6 +74,36 @@ Resources:
       DockerContext: .
       Dockerfile: Dockerfile
 
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 30
+      MemorySize: 512
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          MONGODB_URI: "{{resolve:ssm:/tender-agent/mongodb-uri:2}}"
+          MONGODB_DB_NAME: "tender_intelligence"
+      # Root ("/") and every subpath need separate event mappings - API
+      # Gateway's {proxy+} wildcard does not also match the bare root path.
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+    Metadata:
+      DockerTag: api-latest
+      DockerContext: .
+      Dockerfile: app/api/Dockerfile
+
   AlertTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -102,3 +139,6 @@ Outputs:
     Value: !Ref PipelineFunction
   AlertTopicArn:
     Value: !Ref AlertTopic
+  ApiUrl:
+    Description: Base URL for the read-only tender API (try /health, /stats, /tenders)
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

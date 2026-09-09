@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Tender Intelligence Agent - FRONTEND stack: S3 (private, holds the static
+  dashboard files) + CloudFront (public HTTPS in front of it). Deliberately
+  its own stack, separate from ../template.yaml (the backend: pipeline
+  Lambda, API Lambda, schedules, alarm) - the two are unrelated at the
+  infrastructure level; the dashboard's only link to the backend is one
+  API URL baked into index.html as a plain static value at upload time
+  (see scripts/deploy-frontend.sh), not a CloudFormation reference.
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tender-agent-frontend-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Origin Access Control - the current recommended way to let CloudFront
+  # read a private S3 bucket (replaces the older, deprecated OAI pattern).
+  # The bucket itself stays fully private; only this specific distribution
+  # can read from it, enforced by the bucket policy's Condition below.
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        Origins:
+          - Id: FrontendS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          # AWS managed "CachingOptimized" policy - a fixed, documented ID,
+          # not something this account needs to define itself.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        PriceClass: PriceClass_100
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+Outputs:
+  FrontendBucketName:
+    Description: Upload the dashboard's static files here (aws s3 sync/cp)
+    Value: !Ref FrontendBucket
+  FrontendDistributionId:
+    Description: Needed to invalidate the CloudFront cache after an upload
+    Value: !Ref FrontendDistribution
+  FrontendUrl:
+    Description: The dashboard's public URL
+    Value: !Sub "https://${FrontendDistribution.DomainName}"
