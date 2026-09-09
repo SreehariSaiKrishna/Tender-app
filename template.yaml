@@ -74,6 +74,21 @@ Resources:
       DockerContext: .
       Dockerfile: Dockerfile
 
+  # Explicit (not the SAM-implicit one) specifically so it can carry a Cors
+  # config: the browser dashboard (a CloudFront origin) calling this API
+  # (an execute-api origin) is a cross-origin request, and unlike curl/
+  # Invoke-RestMethod - which don't enforce CORS at all, it's purely a
+  # browser-side check - a real browser silently blocks the response
+  # without these headers. Read-only, no auth, nothing sensitive returned,
+  # so allowing any origin is a reasonable choice here.
+  TenderHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["GET"]
+        AllowHeaders: ["content-type"]
+
   ApiFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -92,11 +107,13 @@ Resources:
         ApiRoot:
           Type: HttpApi
           Properties:
+            ApiId: !Ref TenderHttpApi
             Path: /
             Method: ANY
         ApiProxy:
           Type: HttpApi
           Properties:
+            ApiId: !Ref TenderHttpApi
             Path: /{proxy+}
             Method: ANY
     Metadata:
@@ -141,4 +158,4 @@ Outputs:
     Value: !Ref AlertTopic
   ApiUrl:
     Description: Base URL for the read-only tender API (try /health, /stats, /tenders)
-    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Value: !Sub "https://${TenderHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

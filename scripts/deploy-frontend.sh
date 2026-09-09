@@ -22,7 +22,19 @@ aws sts get-caller-identity --query 'Arn' --output text
 
 echo
 echo "== Deploying frontend infrastructure (S3 + CloudFront) =="
-(cd frontend && sam build && sam deploy)
+(cd frontend && sam build)
+# `sam deploy` exits non-zero when there's nothing new to deploy - a normal,
+# frequent case here (the HTML upload below still needs to happen even when
+# the infra itself hasn't changed), not a real failure. Only abort on an
+# actual error.
+DEPLOY_OUTPUT="$(cd frontend && sam deploy 2>&1)" || {
+  if ! grep -q "No changes to deploy" <<< "$DEPLOY_OUTPUT"; then
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  fi
+  echo "No infrastructure changes - continuing to re-upload the dashboard."
+}
+echo "$DEPLOY_OUTPUT"
 
 echo
 echo "== Reading stack outputs =="

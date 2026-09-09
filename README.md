@@ -44,8 +44,9 @@ as part of the AWS deployment work - see `app/database.py`).
 #    Windows cmd:
 .\venv\Scripts\activate.bat
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Install dependencies (requirements-dev.txt adds pytest/mongomock/etc -
+#    neither Lambda container image ships these, only requirements.txt)
+pip install -r requirements.txt -r requirements-dev.txt
 
 # 3. Install Playwright browsers (needed from Phase 2 onward)
 python -m playwright install chromium

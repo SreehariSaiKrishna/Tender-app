@@ -1,0 +1,10 @@
+# Test-only - never shipped into either Lambda container image, so they
+# add nothing to build time or image size in production. Install alongside
+# requirements.txt for local development:
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+
+pytest>=8.3
+pytest-mock>=3.14
+freezegun>=1.5
+mongomock>=4.2

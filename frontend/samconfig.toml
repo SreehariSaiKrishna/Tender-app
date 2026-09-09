@@ -3,5 +3,6 @@ version = 0.1
 [default.deploy.parameters]
 stack_name = "tender-agent-frontend"
 region = "ap-south-1"
-resolve_s3 = true
+s3_bucket = "oaks-sam"
+s3_prefix = "tender-agent-frontend"
 confirm_changeset = true
