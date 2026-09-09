@@ -23,21 +23,25 @@ Resources:
       MemorySize: 1536
       Architectures:
         - x86_64
-      # SecureString parameters require an explicit version in the dynamic
-      # reference (CloudFormation won't default to "latest" for these) -
-      # rotating a secret in SSM means bumping the version number here too.
+      # All SSM params here are plain String, not SecureString - CloudFormation
+      # does not support resolving ssm-secure references inside a Lambda's
+      # Environment.Variables at all (a hard limitation, not a config
+      # mistake); access control instead comes from IAM restricting who can
+      # call ssm:GetParameter on this path. Dynamic references require an
+      # explicit version - rotating a secret in SSM means bumping the
+      # version number here too.
       Environment:
         Variables:
           TENDERDETAIL_BASE_URL: "https://www.tenderdetail.com"
           TENDERDETAIL_LOGIN_URL: "https://www.tenderdetail.com/registeruser/dashboard"
           TENDERDETAIL_USERNAME: "{{resolve:ssm:/tender-agent/tenderdetail-username:1}}"
-          TENDERDETAIL_PASSWORD: "{{resolve:ssm-secure:/tender-agent/tenderdetail-password:1}}"
+          TENDERDETAIL_PASSWORD: "{{resolve:ssm:/tender-agent/tenderdetail-password:2}}"
           TENDERDETAIL_PROFILE_DIR: "/tmp/browser_profile"
           BROWSER_HEADLESS: "true"
-          MONGODB_URI: "{{resolve:ssm-secure:/tender-agent/mongodb-uri:1}}"
+          MONGODB_URI: "{{resolve:ssm:/tender-agent/mongodb-uri:2}}"
           MONGODB_DB_NAME: "tender_intelligence"
           AI_PROVIDER: "openai"
-          OPENAI_API_KEY: "{{resolve:ssm-secure:/tender-agent/openai-api-key:1}}"
+          OPENAI_API_KEY: "{{resolve:ssm:/tender-agent/openai-api-key:2}}"
           OPENAI_MODEL: "gpt-4o-mini"
           AI_RELEVANCE_THRESHOLD: "60"
           LOG_LEVEL: "INFO"
