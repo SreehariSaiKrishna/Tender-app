@@ -79,14 +79,15 @@ Resources:
   # (an execute-api origin) is a cross-origin request, and unlike curl/
   # Invoke-RestMethod - which don't enforce CORS at all, it's purely a
   # browser-side check - a real browser silently blocks the response
-  # without these headers. Read-only, no auth, nothing sensitive returned,
-  # so allowing any origin is a reasonable choice here.
+  # without these headers. No auth, nothing sensitive returned/accepted (the
+  # only write is toggling a single boolean by tender id), so allowing any
+  # origin is a reasonable choice here.
   TenderHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       CorsConfiguration:
         AllowOrigins: ["*"]
-        AllowMethods: ["GET"]
+        AllowMethods: ["GET", "POST", "PUT", "DELETE"]
         AllowHeaders: ["content-type"]
 
   ApiFunction:

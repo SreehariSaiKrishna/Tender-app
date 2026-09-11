@@ -35,6 +35,6 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     logging.basicConfig(level=settings.log_level, format="%(levelname)s %(message)s")
     include_report = bool((event or {}).get("include_report", False))
 
-    summary = run_pipeline(settings, include_report=include_report)
+    summary = run_pipeline(settings, include_report=include_report, trigger="scheduled")
 
     return dataclasses.asdict(summary)

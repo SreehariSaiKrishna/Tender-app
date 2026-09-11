@@ -37,6 +37,25 @@ def get_collection() -> Collection:
     return get_client()[settings.mongodb_db_name]["tenders"]
 
 
+def get_eligibility_criteria_collection() -> Collection:
+    """The company's own bid-eligibility profile (see
+    app.processing.eligibility) - a single seeded document, not per-tender
+    data, kept in its own collection so it's editable independently of the
+    tenders pipeline.
+    """
+    settings = get_settings()
+    return get_client()[settings.mongodb_db_name]["eligibility_criteria"]
+
+
+def get_automation_runs_collection() -> Collection:
+    """One document per app.pipeline.run_pipeline() call - what the
+    scheduled (or manual) automation did on that pass, so the dashboard can
+    show a run history instead of relying on CloudWatch Logs.
+    """
+    settings = get_settings()
+    return get_client()[settings.mongodb_db_name]["automation_runs"]
+
+
 def ensure_indexes() -> None:
     """Create the indexes the query helpers rely on, if they don't already
     exist. Safe to call every cold start - `create_index` is idempotent.
@@ -53,3 +72,22 @@ def ensure_indexes() -> None:
     collection.create_index([("last_seen", DESCENDING)])
     collection.create_index([("status", ASCENDING)])
     collection.create_index([("latest_priority", ASCENDING)])
+    collection.create_index([("eligibility_match", DESCENDING)])
+    # Supports GET /tenders' default sort (app.api.main).
+    collection.create_index(
+        [
+            ("eligibility_match", DESCENDING),
+            ("latest_priority_rank", ASCENDING),
+            ("closing_date", ASCENDING),
+        ]
+    )
+    # Supports app.processing.cleanup's stale-closed-tender query.
+    collection.create_index(
+        [
+            ("disappeared", ASCENDING),
+            ("closing_date", ASCENDING),
+            ("applied", ASCENDING),
+        ]
+    )
+
+    get_automation_runs_collection().create_index([("started_at", DESCENDING)])
