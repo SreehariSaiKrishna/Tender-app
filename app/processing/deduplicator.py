@@ -32,7 +32,8 @@ from pymongo import ReplaceOne, UpdateOne
 from pymongo.collection import Collection
 
 from app.database import get_collection
-from app.models import TenderStatus
+from app.models import UNSCREENED_PRIORITY_RANK, TenderStatus
+from app.processing.eligibility import compute_eligibility_match, load_match_keywords
 from app.processing.normalizer import NormalizedTender
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ def ingest_batch(
     summary = IngestSummary(queries_processed=list(query_results.keys()))
     now = _utcnow()
     today = now.date()
+    # Loaded once per pass (not per tender) - see app.processing.eligibility.
+    eligibility_keywords = load_match_keywords()
 
     keys_this_pass: dict[str, set[str]] = {}
     latest_by_key: dict[str, NormalizedTender] = {}
@@ -159,6 +162,15 @@ def ingest_batch(
                 "query_matches": [],
                 "query_match_count": 0,
                 "screenings": [],
+                # Set by app.api.main's apply endpoint when the user pursues
+                # this tender - also what protects it from
+                # app.processing.cleanup's auto-delete of stale closed ones.
+                "applied": False,
+                "applied_at": None,
+                # Kept in sync with `latest_priority` once AI screening runs
+                # (see app.intelligence.scorer) - defaults to "unscreened"
+                # rank so a never-screened tender sorts last, not first.
+                "latest_priority_rank": UNSCREENED_PRIORITY_RANK,
             }
         else:
             doc = existing
@@ -192,6 +204,11 @@ def ingest_batch(
             doc["last_seen"] = now
             doc["times_found"] = doc.get("times_found", 0) + 1
             doc["disappeared"] = False
+
+        doc["eligibility_match"] = compute_eligibility_match(
+            f"{doc.get('title') or ''} {doc.get('description') or ''}",
+            eligibility_keywords,
+        )
 
         tenders_seen_keys.add(dedup_key)
         if len(matched_queries) > 1:

@@ -24,6 +24,7 @@ from pymongo.collection import Collection
 from app.config import Settings, get_settings, load_business_capabilities
 from app.database import get_collection
 from app.intelligence.prompts import build_system_prompt, build_user_prompt
+from app.models import priority_rank
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,7 @@ def screen_tenders(
                 "$set": {
                     "latest_priority": verdict.priority,
                     "latest_relevance_score": verdict.relevance_score,
+                    "latest_priority_rank": priority_rank(verdict.priority),
                 },
             },
         )

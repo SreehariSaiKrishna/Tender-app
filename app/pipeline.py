@@ -7,6 +7,8 @@ duplicates it, and neither has to go through the other.
 """
 from __future__ import annotations
 
+import dataclasses
+import datetime as dt
 import json
 import logging
 import re
@@ -15,7 +17,9 @@ from pathlib import Path
 
 from app.browser.collector import DownloadOutcome, run_collection
 from app.config import Settings, load_saved_queries
+from app.database import get_automation_runs_collection
 from app.intelligence.scorer import ScreenSummary, ScreeningError, get_provider, screen_tenders
+from app.processing.cleanup import CleanupSummary, cleanup_stale_closed_tenders
 from app.processing.deduplicator import IngestSummary, ingest_batch
 from app.processing.excel_reader import ExcelReadError, read_raw_rows
 from app.processing.normalizer import NormalizedTender, normalize_rows
@@ -119,23 +123,51 @@ def run_screen(
 
 
 @dataclass
+class CleanupOutcome:
+    summary: CleanupSummary | None = None
+    error: str | None = None
+
+
+def run_cleanup(settings: Settings) -> CleanupOutcome:
+    """Delete tenders that are confirmed closed, past their closing_date by
+    the grace period, and never marked applied (see
+    app.processing.cleanup). Errors are caught here (like run_screen) so a
+    cleanup failure never fails the whole pipeline run.
+    """
+    try:
+        return CleanupOutcome(summary=cleanup_stale_closed_tenders())
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Cleanup step failed")
+        return CleanupOutcome(error=str(exc))
+
+
+@dataclass
 class PipelineSummary:
     collect_outcomes: list[DownloadOutcome] = field(default_factory=list)
     process_result: ProcessResult | None = None
     screen_outcome: ScreenOutcome | None = None
+    cleanup_outcome: CleanupOutcome | None = None
     reported: bool = False
 
 
-def run_pipeline(settings: Settings, include_report: bool = False) -> PipelineSummary:
-    """Run the full pipeline: collect -> process -> screen -> (report).
+def run_pipeline(
+    settings: Settings, include_report: bool = False, trigger: str = "manual"
+) -> PipelineSummary:
+    """Run the full pipeline: collect -> process -> cleanup -> screen -> (report).
 
     This is the single function both `python main.py run` and the Lambda
-    handler call, so neither duplicates the orchestration.
+    handler call, so neither duplicates the orchestration. `trigger`
+    ("manual" | "scheduled") is recorded alongside the run so the dashboard's
+    automation history can tell a CLI run from an EventBridge-triggered one.
     """
     summary = PipelineSummary()
+    started_at = dt.datetime.now(dt.timezone.utc)
 
     summary.collect_outcomes = run_collection(settings)
     summary.process_result = run_process(settings)
+    # Runs right after ingestion so a tender newly marked `disappeared` this
+    # same pass is already eligible for cleanup.
+    summary.cleanup_outcome = run_cleanup(settings)
     summary.screen_outcome = run_screen(settings)
 
     if include_report:
@@ -143,4 +175,41 @@ def run_pipeline(settings: Settings, include_report: bool = False) -> PipelineSu
         logger.info("Report requested but Phase 6 (app/reports/) isn't built yet - skipping.")
         summary.reported = False
 
+    _persist_run(summary, started_at, trigger)
+
     return summary
+
+
+def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str) -> None:
+    """Record what this run did/found, for the dashboard's automation
+    history tab. Best-effort: a logging failure here must never fail the
+    pipeline run itself, since the run already succeeded by this point.
+    """
+    finished_at = dt.datetime.now(dt.timezone.utc)
+    any_screen_error = bool(summary.screen_outcome and summary.screen_outcome.error)
+    any_cleanup_error = bool(summary.cleanup_outcome and summary.cleanup_outcome.error)
+    status = (
+        "failed"
+        if (summary.process_result and summary.process_result.any_failed)
+        or any_screen_error
+        or any_cleanup_error
+        else "ok"
+    )
+
+    doc = {
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "duration_seconds": (finished_at - started_at).total_seconds(),
+        "trigger": trigger,
+        "status": status,
+        "collect_outcomes": [dataclasses.asdict(o) for o in summary.collect_outcomes],
+        "process_result": dataclasses.asdict(summary.process_result) if summary.process_result else None,
+        "cleanup_outcome": dataclasses.asdict(summary.cleanup_outcome) if summary.cleanup_outcome else None,
+        "screen_outcome": dataclasses.asdict(summary.screen_outcome) if summary.screen_outcome else None,
+        "reported": summary.reported,
+    }
+
+    try:
+        get_automation_runs_collection().insert_one(doc)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist automation run history - continuing anyway.")

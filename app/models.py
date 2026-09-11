@@ -39,3 +39,23 @@ class Priority(str, enum.Enum):
     MEDIUM = "Medium"
     LOW = "Low"
     NOT_RELEVANT = "Not Relevant"
+
+
+# Denormalized onto tender docs as `latest_priority_rank` (see
+# app.intelligence.scorer.screen_tenders and
+# app.processing.deduplicator.ingest_batch) so MongoDB can sort by priority
+# directly - the raw string sorts alphabetically ("High" < "Low" < "Medium"),
+# not by actual priority.
+PRIORITY_RANK: dict[str, int] = {
+    Priority.HIGH.value: 0,
+    Priority.MEDIUM.value: 1,
+    Priority.LOW.value: 2,
+    Priority.NOT_RELEVANT.value: 3,
+}
+UNSCREENED_PRIORITY_RANK = 4
+
+
+def priority_rank(priority: str | None) -> int:
+    if priority is None:
+        return UNSCREENED_PRIORITY_RANK
+    return PRIORITY_RANK.get(priority, UNSCREENED_PRIORITY_RANK)
