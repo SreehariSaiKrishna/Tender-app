@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.browser.collector import DownloadOutcome, run_collection
+from app.browser.document_collector import DocumentDownloadSummary, run_document_collection
 from app.config import Settings, load_saved_queries
 from app.database import get_automation_runs_collection
+from app.intelligence.document_summarizer import SummarizeSummary, summarize_pending_documents
 from app.intelligence.scorer import ScreenSummary, ScreeningError, get_provider, screen_tenders
 from app.processing.cleanup import CleanupSummary, cleanup_stale_closed_tenders
 from app.processing.deduplicator import IngestSummary, ingest_batch
@@ -142,18 +144,58 @@ def run_cleanup(settings: Settings) -> CleanupOutcome:
 
 
 @dataclass
+class DocumentDownloadOutcome:
+    summary: DocumentDownloadSummary | None = None
+    error: str | None = None
+
+
+def run_document_download(settings: Settings) -> DocumentDownloadOutcome:
+    """Download attached documents (Tender Document/BOQ/Notice) for every
+    eligible tender that doesn't have them yet. Errors are caught here
+    (like run_screen/run_cleanup) so a failure never fails the whole
+    pipeline run.
+    """
+    try:
+        return DocumentDownloadOutcome(summary=run_document_collection(settings))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Document download step failed")
+        return DocumentDownloadOutcome(error=str(exc))
+
+
+@dataclass
+class DocumentSummarizeOutcome:
+    summary: SummarizeSummary | None = None
+    error: str | None = None
+
+
+def run_document_summarize(settings: Settings) -> DocumentSummarizeOutcome:
+    """Summarize every tender that has downloaded documents but no
+    up-to-date AI summary yet. Errors are caught here so a failure never
+    fails the whole pipeline run.
+    """
+    try:
+        return DocumentSummarizeOutcome(summary=summarize_pending_documents(settings))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Document summarize step failed")
+        return DocumentSummarizeOutcome(error=str(exc))
+
+
+@dataclass
 class PipelineSummary:
     collect_outcomes: list[DownloadOutcome] = field(default_factory=list)
     process_result: ProcessResult | None = None
     screen_outcome: ScreenOutcome | None = None
     cleanup_outcome: CleanupOutcome | None = None
+    document_download_outcome: DocumentDownloadOutcome | None = None
+    document_summarize_outcome: DocumentSummarizeOutcome | None = None
     reported: bool = False
 
 
 def run_pipeline(
     settings: Settings, include_report: bool = False, trigger: str = "manual"
 ) -> PipelineSummary:
-    """Run the full pipeline: collect -> process -> cleanup -> screen -> (report).
+    """Run the full pipeline: collect -> process -> cleanup ->
+    download_documents -> summarize_documents -> screen -> (report).
 
     This is the single function both `python main.py run` and the Lambda
     handler call, so neither duplicates the orchestration. `trigger`
@@ -168,6 +210,10 @@ def run_pipeline(
     # Runs right after ingestion so a tender newly marked `disappeared` this
     # same pass is already eligible for cleanup.
     summary.cleanup_outcome = run_cleanup(settings)
+    # Runs after cleanup so this pass's eligibility_match (set during
+    # ingestion above) is already in place before deciding what to download.
+    summary.document_download_outcome = run_document_download(settings)
+    summary.document_summarize_outcome = run_document_summarize(settings)
     summary.screen_outcome = run_screen(settings)
 
     if include_report:
@@ -188,11 +234,19 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
     finished_at = dt.datetime.now(dt.timezone.utc)
     any_screen_error = bool(summary.screen_outcome and summary.screen_outcome.error)
     any_cleanup_error = bool(summary.cleanup_outcome and summary.cleanup_outcome.error)
+    any_document_download_error = bool(
+        summary.document_download_outcome and summary.document_download_outcome.error
+    )
+    any_document_summarize_error = bool(
+        summary.document_summarize_outcome and summary.document_summarize_outcome.error
+    )
     status = (
         "failed"
         if (summary.process_result and summary.process_result.any_failed)
         or any_screen_error
         or any_cleanup_error
+        or any_document_download_error
+        or any_document_summarize_error
         else "ok"
     )
 
@@ -205,6 +259,16 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
         "collect_outcomes": [dataclasses.asdict(o) for o in summary.collect_outcomes],
         "process_result": dataclasses.asdict(summary.process_result) if summary.process_result else None,
         "cleanup_outcome": dataclasses.asdict(summary.cleanup_outcome) if summary.cleanup_outcome else None,
+        "document_download_outcome": (
+            dataclasses.asdict(summary.document_download_outcome)
+            if summary.document_download_outcome
+            else None
+        ),
+        "document_summarize_outcome": (
+            dataclasses.asdict(summary.document_summarize_outcome)
+            if summary.document_summarize_outcome
+            else None
+        ),
         "screen_outcome": dataclasses.asdict(summary.screen_outcome) if summary.screen_outcome else None,
         "reported": summary.reported,
     }

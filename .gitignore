@@ -41,3 +41,6 @@ Thumbs.db
 # config (stack name, region, capabilities).
 .aws-sam/
 env.json
+
+# Tender documents downloaded at runtime by the document collector
+data/documents/

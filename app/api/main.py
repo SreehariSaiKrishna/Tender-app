@@ -1,9 +1,12 @@
 """Read-mostly API over the `tenders` collection - serves the dashboard
-(Step 5). Deliberately narrow: the only writes are the "mark applied" and
-"decline" endpoints below, and it only imports app.config/app.database (not
-app.processing/app.intelligence/app.browser), so this Lambda's image never
-needs Playwright, pandas, or the OpenAI SDK - just fastapi, mangum, and
-pymongo.
+(Step 5). Deliberately narrow: the only writes are the "mark applied",
+"decline" and "generate bid" endpoints below. Everything except that last
+one only needs app.config/app.database - fastapi, mangum, pymongo - to keep
+this Lambda's image light. POST /tenders/{id}/generate-bid is the one
+exception: it needs reportlab/pypdf (PDF rendering, app.reports.bid_generator)
+and, for its AI-drafted documents, the OpenAI SDK via
+app.intelligence.bid_drafter/scorer - all three are declared in
+app/api/requirements.txt.
 
 Runs locally the same way the CLI does, alongside app.lambda_handler:
     uvicorn app.api.main:app --reload
@@ -11,23 +14,42 @@ Runs locally the same way the CLI does, alongside app.lambda_handler:
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 from typing import Any
+from urllib.parse import quote
 
+import gridfs
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from mangum import Mangum
 from pydantic import BaseModel
 from pymongo import DESCENDING
 
-from app.config import load_saved_queries
+from app.config import CONFIG_DIR, load_company_profile, load_saved_queries
 from app.database import (
     get_automation_runs_collection,
     get_collection,
+    get_company_documents_bucket,
+    get_company_documents_files_collection,
     get_eligibility_criteria_collection,
+    get_generated_bids_bucket,
+    get_generated_bids_files_collection,
 )
+from app.intelligence.bid_drafter import BidDraftingError, draft_bid_documents
+from app.reports.bid_generator import (
+    BidGenerationError,
+    CompanyDocumentRef,
+    build_compliance_matrix,
+    company_background_text,
+    established_facts,
+    generate_bid_package,
+)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tender Intelligence API")
 
@@ -77,11 +99,15 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
         "first_seen",
         "last_seen",
         "published_date",
+        "opening_date",
         "closing_date",
         "previous_closing_date",
         "content_last_changed",
         "applied_at",
         "declined_at",
+        "documents_downloaded_at",
+        "document_summary_generated_at",
+        "bid_generated_at",
     ):
         if out.get(key) is not None:
             out[key] = _iso(out[key])
@@ -92,6 +118,9 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
 
     for screening in out.get("screenings", []):
         screening["screened_at"] = _iso(screening.get("screened_at"))
+
+    for document in out.get("documents", []):
+        document["downloaded_at"] = _iso(document.get("downloaded_at"))
 
     return out
 
@@ -143,15 +172,13 @@ def list_tenders(
     # Eligibility-matched tenders (see app.processing.eligibility) sort
     # first even when not filtered down to them exclusively, so the
     # dashboard surfaces likely-relevant tenders without hiding the rest.
-    # Within that, High priority before Medium/Low/Not Relevant/unscreened
-    # (see app.models.priority_rank), then soonest-closing first.
+    # Within that, most recently published tenders first (today's on top).
     cursor = (
         collection.find(filt)
         .sort(
             [
                 ("eligibility_match", -1),
-                ("latest_priority_rank", 1),
-                ("closing_date", 1),
+                ("published_date", DESCENDING),
             ]
         )
         .skip(skip)
@@ -237,6 +264,144 @@ def mark_declined(tender_id: str, body: DeclineRequest) -> dict[str, Any]:
 
     doc = collection.find_one({"_id": object_id})
     return _serialize(doc)
+
+
+def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
+    """The documents library (see the Documents tab section below), reshaped
+    for app.reports.bid_generator - `open_bytes` is lazy so generating a bid
+    pack only reads the bytes of documents it actually ends up referencing.
+    """
+    bucket = get_company_documents_bucket()
+    refs = []
+    for grid_out in bucket.find():
+        metadata = grid_out.metadata or {}
+        file_id = grid_out._id
+        refs.append(
+            CompanyDocumentRef(
+                id=str(file_id),
+                name=metadata.get("display_name") or grid_out.filename,
+                filename=grid_out.filename,
+                content_type=metadata.get("content_type") or "application/octet-stream",
+                open_bytes=lambda fid=file_id: bucket.open_download_stream(fid).read(),
+            )
+        )
+    return refs
+
+
+@app.post("/tenders/{tender_id}/generate-bid")
+def generate_bid(tender_id: str) -> dict[str, Any]:
+    """Drafts a bid pack PDF for this tender (see app.reports.bid_generator)
+    from the tender's own AI-extracted document_summary, the company's
+    eligibility profile, config/company_profile.json, and whatever's in the
+    documents library - then stores it in GridFS (get_generated_bids_bucket,
+    one file per tender, replacing any previous draft) and marks the tender
+    applied, same one-way protection POST /tenders/{id}/apply gives against
+    app.processing.cleanup's stale-closed-tender deletion.
+
+    This never contacts the tendering authority or any external system -
+    see this project's stated scope in README.md. It only drafts a local
+    PDF for a human to review, complete and sign before anything is
+    actually submitted.
+    """
+    collection = get_collection()
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+
+    tender = collection.find_one({"_id": object_id})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    criteria_doc = get_eligibility_criteria_collection().find_one({"_id": CRITERIA_DOC_ID})
+    eligibility_criteria = (criteria_doc or {}).get("criteria", [])
+    company_profile = load_company_profile()
+    company_documents = _load_company_documents_for_generation()
+
+    # AI-draft the individual bid documents this tender's own paperwork
+    # calls for (see app.intelligence.bid_drafter) - `facts` tells the
+    # drafting prompt which company facts are already established, from the
+    # exact same compliance matrix the pack itself renders further down, so
+    # the two never disagree with each other. Never a hard failure: if
+    # drafting is unavailable (no OPENAI_API_KEY, a bad response, a slow
+    # provider) the pack still generates with a plain templated covering
+    # letter (see generate_bid_package's `drafted_documents=None` fallback).
+    company_rows = build_compliance_matrix(eligibility_criteria, company_profile, company_documents)
+    facts = established_facts(company_rows)
+    drafted_documents = None
+    drafting_note = None
+    # The brochure and other reference documents are never enclosed in the
+    # pack - their text only gives the drafter descriptive background.
+    background = company_background_text(company_documents, company_profile)
+    try:
+        drafted_documents = draft_bid_documents(
+            tender, eligibility_criteria, company_profile, facts, company_background=background
+        )
+    except BidDraftingError as exc:
+        logger.warning("AI bid-document drafting unavailable for tender %s: %s", tender_id, exc)
+        drafting_note = (
+            f"AI-assisted document drafting was unavailable for this run ({exc}). A basic covering letter "
+            "has been included below; prepare any other required declarations manually using the "
+            "compliance matrix further down as your checklist."
+        )
+
+    letterhead = None
+    if company_profile.get("letterhead_image"):
+        candidate = CONFIG_DIR / company_profile["letterhead_image"]
+        letterhead = candidate if candidate.is_file() else None
+        if letterhead is None:
+            logger.warning("Letterhead image %s not found - bid pack will use plain pages", candidate)
+
+    try:
+        pdf_bytes = generate_bid_package(
+            tender,
+            eligibility_criteria,
+            company_profile,
+            company_documents,
+            drafted_documents=drafted_documents,
+            drafting_note=drafting_note,
+            letterhead_image=letterhead,
+        )
+    except BidGenerationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    bids_bucket = get_generated_bids_bucket()
+    # One bid pack per tender - delete any previous draft before uploading
+    # the new one (rather than accumulating a version per click).
+    for existing in get_generated_bids_files_collection().find({"metadata.tender_id": tender_id}):
+        bids_bucket.delete(existing["_id"])
+
+    now = dt.datetime.now(dt.timezone.utc)
+    file_id = bids_bucket.upload_from_stream(
+        f"bid-pack-{tender_id}.pdf",
+        pdf_bytes,
+        metadata={"tender_id": tender_id, "content_type": "application/pdf", "generated_at": now},
+    )
+
+    update: dict[str, Any] = {
+        "bid_document_id": str(file_id),
+        "bid_generated_at": now,
+    }
+    if not tender.get("applied"):
+        update["applied"] = True
+        update["applied_at"] = now
+    collection.update_one({"_id": object_id}, {"$set": update})
+
+    doc = collection.find_one({"_id": object_id})
+    return _serialize(doc)
+
+
+@app.get("/tenders/{tender_id}/bid-document")
+def download_bid_document(tender_id: str) -> Response:
+    doc = get_generated_bids_files_collection().find_one({"metadata.tender_id": tender_id})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No bid pack has been generated for this tender yet")
+    grid_out = get_generated_bids_bucket().open_download_stream(doc["_id"])
+    return Response(
+        content=grid_out.read(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition("attachment", grid_out.filename)},
+    )
 
 
 # --- Eligibility criteria ---------------------------------------------------
@@ -364,6 +529,255 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
     return {"status": "deleted"}
 
 
+# --- Documents -----------------------------------------------------------
+# A small document library the user manages by hand from the dashboard
+# (company certificates, licenses, etc) - upload, rename, delete, view and
+# download. Distinct from the `documents` array on a tender, which is
+# attachments collected automatically by the pipeline. Stored in GridFS
+# (see app.database.get_company_documents_bucket) since there's no
+# general-purpose S3 bucket in this stack and Mongo is already provisioned.
+#
+# Capped well under API Gateway's payload limit: Mangum returns the response
+# base64-encoded, which inflates size by ~33%, and a synchronous Lambda
+# invoke response tops out at 6 MB - 4 MB raw keeps the encoded response
+# safely under that even for a download of the largest allowed file.
+MAX_DOCUMENT_SIZE = 4 * 1024 * 1024
+
+
+def _serialize_document(grid_out: Any) -> dict[str, Any]:
+    metadata = grid_out.metadata or {}
+    return {
+        "id": str(grid_out._id),
+        "name": metadata.get("display_name") or grid_out.filename,
+        "filename": grid_out.filename,
+        "content_type": metadata.get("content_type") or "application/octet-stream",
+        "size": grid_out.length,
+        "uploaded_at": _iso(grid_out.upload_date),
+    }
+
+
+def _content_disposition(kind: str, filename: str) -> str:
+    # RFC 5987: an ASCII fallback for older clients plus a UTF-8 filename*
+    # for everything else - filename is user-supplied, so both are also
+    # stripped of control characters (incl. CR/LF) to avoid header injection.
+    ascii_fallback = re.sub(r"[^\x20-\x7e]", "_", filename).replace('"', "'") or "document"
+    return f'{kind}; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quote(filename)}'
+
+
+def _get_document_or_404(document_id: str) -> Any:
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+    try:
+        return get_company_documents_bucket().open_download_stream(object_id)
+    except gridfs.errors.NoFile:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.get("/documents")
+def list_documents() -> dict[str, Any]:
+    cursor = get_company_documents_bucket().find(sort=[("uploadDate", DESCENDING)])
+    return {"documents": [_serialize_document(d) for d in cursor]}
+
+
+@app.post("/documents")
+async def upload_document(
+    file: UploadFile = File(...), name: str | None = Form(None)
+) -> dict[str, Any]:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="File is empty")
+    if len(content) > MAX_DOCUMENT_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_DOCUMENT_SIZE // (1024 * 1024)} MB limit",
+        )
+    display_name = (name or file.filename or "Untitled").strip() or "Untitled"
+    filename = file.filename or display_name
+
+    file_id = get_company_documents_bucket().upload_from_stream(
+        filename,
+        content,
+        metadata={
+            "display_name": display_name,
+            "content_type": file.content_type or "application/octet-stream",
+        },
+    )
+    grid_out = get_company_documents_bucket().open_download_stream(file_id)
+    return _serialize_document(grid_out)
+
+
+class DocumentRenameRequest(BaseModel):
+    name: str
+
+
+@app.put("/documents/{document_id}")
+def rename_document(document_id: str, body: DocumentRenameRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+
+    result = get_company_documents_files_collection().update_one(
+        {"_id": object_id}, {"$set": {"metadata.display_name": name}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    grid_out = get_company_documents_bucket().open_download_stream(object_id)
+    return _serialize_document(grid_out)
+
+
+@app.put("/documents/{document_id}/replace")
+async def replace_document(
+    document_id: str, file: UploadFile = File(...), name: str | None = Form(None)
+) -> dict[str, Any]:
+    """Swap out a document's file while keeping it as the same row in the
+    list - as opposed to DELETE+POST, which would also work but loses the
+    display name unless the caller re-types it. Uploads the replacement
+    before deleting the old file (rather than the other way round) so a
+    failed upload never leaves the document missing its content; the row's
+    id does change, but the frontend always reloads the full list after a
+    write, so that's invisible to the user.
+    """
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+    existing = get_company_documents_files_collection().find_one({"_id": object_id})
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="File is empty")
+    if len(content) > MAX_DOCUMENT_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_DOCUMENT_SIZE // (1024 * 1024)} MB limit",
+        )
+
+    existing_name = (existing.get("metadata") or {}).get("display_name")
+    display_name = (name or existing_name or file.filename or "Untitled").strip() or "Untitled"
+    filename = file.filename or display_name
+
+    bucket = get_company_documents_bucket()
+    new_file_id = bucket.upload_from_stream(
+        filename,
+        content,
+        metadata={
+            "display_name": display_name,
+            "content_type": file.content_type or "application/octet-stream",
+        },
+    )
+    bucket.delete(object_id)
+    grid_out = bucket.open_download_stream(new_file_id)
+    return _serialize_document(grid_out)
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: str) -> dict[str, Any]:
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+    try:
+        get_company_documents_bucket().delete(object_id)
+    except gridfs.errors.NoFile:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "deleted"}
+
+
+@app.get("/documents/{document_id}/download")
+def download_document(document_id: str) -> Response:
+    grid_out = _get_document_or_404(document_id)
+    content_type = (grid_out.metadata or {}).get("content_type") or "application/octet-stream"
+    return Response(
+        content=grid_out.read(),
+        media_type=content_type,
+        headers={"Content-Disposition": _content_disposition("attachment", grid_out.filename)},
+    )
+
+
+@app.get("/documents/{document_id}/view")
+def view_document(document_id: str) -> Response:
+    grid_out = _get_document_or_404(document_id)
+    content_type = (grid_out.metadata or {}).get("content_type") or "application/octet-stream"
+    return Response(
+        content=grid_out.read(),
+        media_type=content_type,
+        headers={"Content-Disposition": _content_disposition("inline", grid_out.filename)},
+    )
+
+
+def _per_query_counts(
+    collection,
+    today: dt.datetime,
+    extra_conditions: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Live-tender `total`/`eligible`/`fresh` counts grouped by saved query
+    name (a tender matched to N saved queries is counted once per query, so
+    summing across queries can exceed a straight distinct-tender count -
+    see stats() and stats_by_query() below, which both build on this so
+    their numbers agree with each other).
+
+    `fresh` means "published today and an eligibility-criteria match" -
+    `today` is the caller's UTC-midnight cutoff (see stats()) so every
+    caller in one request agrees on what "today" means.
+    """
+    extra_conditions = extra_conditions or []
+    tomorrow = today + dt.timedelta(days=1)
+
+    def _bucket_cond(*base: dict[str, Any]) -> dict[str, Any]:
+        return {"$and": [*base, *extra_conditions]}
+
+    pipeline = [
+        {"$unwind": "$query_matches"},
+        {
+            "$group": {
+                "_id": "$query_matches.query_name",
+                "fresh": {
+                    "$sum": {
+                        "$cond": [
+                            _bucket_cond(
+                                {"$eq": ["$disappeared", False]},
+                                {"$eq": ["$eligibility_match", True]},
+                                {"$gte": ["$published_date", today]},
+                                {"$lt": ["$published_date", tomorrow]},
+                            ),
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "total": {
+                    "$sum": {
+                        "$cond": [_bucket_cond({"$eq": ["$disappeared", False]}), 1, 0]
+                    }
+                },
+                "eligible": {
+                    "$sum": {
+                        "$cond": [
+                            _bucket_cond(
+                                {"$eq": ["$eligibility_match", True]},
+                                {"$eq": ["$disappeared", False]},
+                            ),
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "last_checked": {"$max": "$query_matches.last_seen"},
+            }
+        },
+    ]
+    return {r["_id"]: r for r in collection.aggregate(pipeline)}
+
+
 @app.get("/stats")
 def stats() -> dict[str, Any]:
     collection = get_collection()
@@ -373,7 +787,6 @@ def stats() -> dict[str, Any]:
         {"$match": base_filter},
         {
             "$facet": {
-                "total": [{"$count": "count"}],
                 "by_status": [{"$group": {"_id": "$status", "count": {"$sum": 1}}}],
                 "by_priority": [
                     {"$group": {"_id": "$latest_priority", "count": {"$sum": 1}}}
@@ -382,7 +795,6 @@ def stats() -> dict[str, Any]:
         },
     ]
     result = next(iter(collection.aggregate(pipeline)), {})
-    total = result.get("total", [{}])[0].get("count", 0) if result.get("total") else 0
     by_status = {r["_id"]: r["count"] for r in result.get("by_status", []) if r["_id"]}
     by_priority = {
         r["_id"]: r["count"] for r in result.get("by_priority", []) if r["_id"]
@@ -393,11 +805,26 @@ def stats() -> dict[str, Any]:
     ).replace(tzinfo=dt.timezone.utc)
     cutoff = today + dt.timedelta(days=CLOSING_SOON_DAYS)
     closing_soon = collection.count_documents(
-        {**base_filter, "closing_date": {"$ne": None, "$gte": today, "$lte": cutoff}}
+        {
+            **base_filter,
+            "eligibility_match": True,
+            "closing_date": {"$ne": None, "$gte": today, "$lte": cutoff},
+        }
     )
     cross_query = collection.count_documents(
         {**base_filter, "query_match_count": {"$gt": 1}}
     )
+
+    # "Total tenders"/"Eligible"/"Fresh tenders" are the sum of the
+    # per-saved-query breakdown (see /stats/by-query) rather than a
+    # distinct-tender count, so the two views always agree - a tender
+    # matched to more than one saved query is counted once per query, both
+    # here and in that table.
+    by_name = _per_query_counts(collection, today)
+    enabled_names = [saved.name for saved in load_saved_queries() if saved.enabled]
+    total = sum(by_name.get(name, {}).get("total", 0) for name in enabled_names)
+    eligible = sum(by_name.get(name, {}).get("eligible", 0) for name in enabled_names)
+    fresh = sum(by_name.get(name, {}).get("fresh", 0) for name in enabled_names)
 
     return {
         "total": total,
@@ -405,15 +832,20 @@ def stats() -> dict[str, Any]:
         "by_priority": by_priority,
         "closing_soon": closing_soon,
         "cross_query": cross_query,
+        "eligible": eligible,
+        "fresh": fresh,
     }
 
 
 @app.get("/stats/by-query")
 def stats_by_query(shortlisted_only: bool = False, eligible_only: bool = False) -> dict[str, Any]:
     """One row per saved query (config/queries.json), for the dashboard's
-    grouped landing view - `total` (live + closed) and `eligible` (of
-    those, an eligibility-criteria match) counts, plus currently-live
-    tenders split into `fresh` (status=new) vs. the rest (`live`).
+    grouped landing view - `total` (currently-live tenders matched to this
+    query) and `eligible` (of those, an eligibility-criteria match) counts,
+    plus `fresh` (published today and an eligibility-criteria match). The
+    "Total tenders"/"Eligible"/"Fresh tenders" summary cards (see stats()
+    above) are the sum of these same per-query counts, so the two views
+    always agree.
 
     `shortlisted_only` additionally restricts every count except `eligible`
     to tenders the AI screening rated High/Medium priority (see
@@ -430,56 +862,10 @@ def stats_by_query(shortlisted_only: bool = False, eligible_only: bool = False) 
     if eligible_only:
         extra_conditions.append({"$eq": ["$eligibility_match", True]})
 
-    def _bucket_cond(*base: dict[str, Any]) -> dict[str, Any]:
-        return {"$and": [*base, *extra_conditions]}
-
-    pipeline = [
-        {"$unwind": "$query_matches"},
-        {
-            "$group": {
-                "_id": "$query_matches.query_name",
-                "fresh": {
-                    "$sum": {
-                        "$cond": [
-                            _bucket_cond(
-                                {"$eq": ["$disappeared", False]},
-                                {"$eq": ["$status", "new"]},
-                            ),
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "live": {
-                    "$sum": {
-                        "$cond": [
-                            _bucket_cond({"$eq": ["$disappeared", False]}),
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Every tender matched to this query under the current
-                # filters, live or closed - what "Total" shows.
-                "total": {"$sum": {"$cond": [_bucket_cond(), 1, 0]}},
-                # How many of those are eligibility matches (see
-                # app.processing.eligibility) - always shown regardless of
-                # the eligible_only toggle, so it stays informative even
-                # when that filter is off.
-                "eligible": {
-                    "$sum": {
-                        "$cond": [
-                            _bucket_cond({"$eq": ["$eligibility_match", True]}),
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "last_checked": {"$max": "$query_matches.last_seen"},
-            }
-        },
-    ]
-    by_name = {r["_id"]: r for r in collection.aggregate(pipeline)}
+    today = dt.datetime.combine(
+        dt.datetime.now(dt.timezone.utc).date(), dt.time.min
+    ).replace(tzinfo=dt.timezone.utc)
+    by_name = _per_query_counts(collection, today, extra_conditions)
 
     rows = []
     for saved in load_saved_queries():
@@ -492,7 +878,6 @@ def stats_by_query(shortlisted_only: bool = False, eligible_only: bool = False) 
                 "total": r.get("total", 0),
                 "eligible": r.get("eligible", 0),
                 "fresh": r.get("fresh", 0),
-                "live": r.get("live", 0),
                 "last_checked": _iso(r.get("last_checked")),
             }
         )

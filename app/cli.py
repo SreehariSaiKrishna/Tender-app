@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from pathlib import Path
 
 import click
@@ -16,6 +17,17 @@ import click
 from app.config import get_settings, load_business_capabilities, load_saved_queries
 
 logger = logging.getLogger(__name__)
+
+# Windows' default console codepage (cp1252) can't encode characters this
+# CLI legitimately prints (₹ in amounts, arrows in a relayed Playwright
+# request log) - confirmed live (2026-09-17): a PARTIAL download outcome's
+# error message containing "→"/"←" crashed click.secho with
+# UnicodeEncodeError mid-run. Reconfiguring to UTF-8 (replacing anything
+# even UTF-8 can't represent, rather than raising) is a no-op on platforms
+# whose stdout is already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def _mask_mongo_uri(uri: str) -> str:
@@ -195,6 +207,89 @@ def screen_command(limit: int | None, rescreen_all: bool) -> None:
         raise SystemExit(1)
 
 
+@cli.command("download-documents")
+@click.option("--limit", default=None, type=int, help="Download documents for at most N tenders this run.")
+def download_documents_command(limit: int | None) -> None:
+    """Download each eligible tender's attached documents (Tender Document,
+    BOQ, Notice) from its detail page on TenderDetail.
+    """
+    from app.browser.document_collector import run_document_collection
+
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+
+    click.echo("Starting document collector. A browser window will open now.")
+    click.echo("If this is the first run (or the session expired), log in")
+    click.echo("manually in that window, including any OTP.")
+    click.echo("")
+
+    summary = run_document_collection(limit=limit)
+
+    click.echo("=== Document download summary ===")
+    click.echo(f"  Checked: {summary.checked}")
+    failures = 0
+    for outcome in summary.outcomes:
+        label = outcome.tender_ref or outcome.tender_id
+        if outcome.status == "success":
+            click.secho(f"  OK      {label}: {', '.join(outcome.downloaded)}", fg="green")
+        elif outcome.status == "partial":
+            click.secho(
+                f"  PARTIAL {label}: got {', '.join(outcome.downloaded)}; {outcome.error_message}",
+                fg="yellow",
+            )
+        elif outcome.status == "skipped":
+            click.secho(f"  SKIPPED {label}: {outcome.error_message}", fg="yellow")
+        else:
+            failures += 1
+            click.secho(f"  FAIL    {label}: {outcome.error_message}", fg="red")
+
+    if failures:
+        click.secho(f"{failures} of {len(summary.outcomes)} tenders failed.", fg="yellow")
+        raise SystemExit(1)
+
+
+@cli.command("backfill-key-dates")
+@click.option("--limit", default=None, type=int, help="Check at most N tenders this run.")
+def backfill_key_dates_command(limit: int | None) -> None:
+    """Visit each eligible tender's detail page to scrape its "Key Dates"
+    table (Publish/Submission/Opening dates) - for tenders downloaded
+    before this field existed. Never re-fetches document files.
+    """
+    from app.browser.document_collector import run_key_dates_backfill
+
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+
+    click.echo("Starting Key Dates backfill. A browser window will open now.")
+    click.echo("")
+
+    summary = run_key_dates_backfill(limit=limit)
+
+    click.echo("=== Key Dates backfill summary ===")
+    click.echo(f"  Checked: {summary.checked}")
+    click.echo(f"  Found:   {summary.found}")
+    click.echo(f"  Failed:  {summary.failed}")
+
+    if summary.failed:
+        raise SystemExit(1)
+
+
+@cli.command("summarize-documents")
+@click.option("--limit", default=None, type=int, help="Summarize at most N tenders this run.")
+def summarize_documents_command(limit: int | None) -> None:
+    """Run AI summarization over each tender's downloaded documents."""
+    from app.intelligence.document_summarizer import summarize_pending_documents
+
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+
+    summary = summarize_pending_documents(limit=limit)
+
+    click.echo("=== Document summarization summary ===")
+    click.echo(f"  Summarized: {summary.summarized}")
+    click.echo(f"  Failed:     {summary.failed}")
+
+    if summary.failed:
+        raise SystemExit(1)
+
+
 @cli.command("report")
 def report_command() -> None:
     """Generate and email the daily report (Phase 6)."""
@@ -225,6 +320,27 @@ def run_command() -> None:
     click.echo("")
     if summary.process_result is not None:
         _print_process_result(summary.process_result)
+
+    click.echo("")
+    outcome = summary.document_download_outcome
+    if outcome is not None:
+        click.echo("=== Document download summary ===")
+        if outcome.error:
+            click.secho(outcome.error, fg="red")
+        elif outcome.summary is not None:
+            click.echo(f"  Checked:    {outcome.summary.checked}")
+            click.echo(f"  Succeeded:  {outcome.summary.succeeded}")
+            click.echo(f"  Failed:     {outcome.summary.failed}")
+
+    click.echo("")
+    doc_summary_outcome = summary.document_summarize_outcome
+    if doc_summary_outcome is not None:
+        click.echo("=== Document summarization summary ===")
+        if doc_summary_outcome.error:
+            click.secho(doc_summary_outcome.error, fg="red")
+        elif doc_summary_outcome.summary is not None:
+            click.echo(f"  Summarized: {doc_summary_outcome.summary.summarized}")
+            click.echo(f"  Failed:     {doc_summary_outcome.summary.failed}")
 
     click.echo("")
     if summary.screen_outcome is not None:

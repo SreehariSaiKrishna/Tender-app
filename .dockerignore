@@ -1,0 +1,14 @@
+venv/
+.venv/
+.git/
+.aws-sam/
+frontend/
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.example
+env.json
+env.json.example
+README.md
+data/

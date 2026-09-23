@@ -11,6 +11,7 @@ so there's no multi-document transaction to wrap.
 """
 from __future__ import annotations
 
+import gridfs
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.collection import Collection
 
@@ -54,6 +55,47 @@ def get_automation_runs_collection() -> Collection:
     """
     settings = get_settings()
     return get_client()[settings.mongodb_db_name]["automation_runs"]
+
+
+def get_company_documents_bucket() -> gridfs.GridFSBucket:
+    """Storage for the Documents tab (app.api.main) - reference documents the
+    user uploads and manages by hand (certificates, licenses, etc), as
+    opposed to the `documents` array on a tender (attachments collected by
+    the pipeline - see app.browser.document_collector). Backed by GridFS
+    (Mongo) rather than S3 since there's no general-purpose bucket in this
+    stack yet and the files involved are small.
+    """
+    settings = get_settings()
+    return gridfs.GridFSBucket(get_client()[settings.mongodb_db_name], bucket_name="company_documents")
+
+
+def get_company_documents_files_collection() -> Collection:
+    """The `<bucket>.files` collection GridFS maintains alongside
+    get_company_documents_bucket() - metadata only (no chunk data), used to
+    rename a document without re-uploading its bytes.
+    """
+    settings = get_settings()
+    return get_client()[settings.mongodb_db_name]["company_documents.files"]
+
+
+def get_generated_bids_bucket() -> gridfs.GridFSBucket:
+    """Storage for the PDF bid packs app.reports.bid_generator produces
+    (one per tender, see POST /tenders/{id}/generate-bid) - a separate
+    bucket from get_company_documents_bucket() since these are generated
+    output tied to a specific tender_id, not user-managed reference
+    documents.
+    """
+    settings = get_settings()
+    return gridfs.GridFSBucket(get_client()[settings.mongodb_db_name], bucket_name="generated_bids")
+
+
+def get_generated_bids_files_collection() -> Collection:
+    """The `<bucket>.files` collection GridFS maintains alongside
+    get_generated_bids_bucket() - used to find/replace a tender's existing
+    bid pack by its `metadata.tender_id` without scanning file contents.
+    """
+    settings = get_settings()
+    return get_client()[settings.mongodb_db_name]["generated_bids.files"]
 
 
 def ensure_indexes() -> None:
