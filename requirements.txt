@@ -19,6 +19,30 @@ playwright==1.62.0
 pandas>=2.2
 openpyxl>=3.1
 python-dateutil>=2.9
+xlrd>=2.0.1
+
+# Tender document text extraction (app.intelligence.document_summarizer)
+pypdf>=4.0
+beautifulsoup4>=4.12
+
+# Bid pack generation (app.reports.bid_generator, POST /tenders/{id}/generate-bid)
+reportlab>=4.0
+# OCR fallback for scanned/image-only tender-notice PDFs - pymupdf rasterizes
+# the page (no external binary needed), pytesseract then reads it via the
+# Tesseract OCR engine, which IS a separate system install (not pip-only):
+# Windows: winget install --id UB-Mannheim.TesseractOCR
+# Debian/Lambda base image: apt-get install tesseract-ocr
+pymupdf>=1.24
+pytesseract>=0.3.10
+pillow>=10.0
+
+# .docx / .zip / .rar tender attachments (real tenders bundle the RFP, SLA,
+# corrigendum etc. this way) - python-docx and zipfile need no external
+# tool, but rarfile is only a wrapper: it shells out to an actual UnRAR
+# binary (WinRAR's install on Windows; the `unrar` apt package in the
+# Lambda image - see Dockerfile).
+python-docx>=1.1
+rarfile>=4.1
 
 # AI
 openai>=1.50
@@ -30,3 +54,6 @@ jinja2>=3.1
 fastapi>=0.115
 uvicorn>=0.30
 mangum>=0.19
+# Documents tab file uploads (app.api.main) - FastAPI's UploadFile/Form
+# parsing needs this even though nothing here imports it directly.
+python-multipart>=0.0.9

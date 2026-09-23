@@ -1,0 +1,133 @@
+{
+  "_comment": "Verified company/legal facts for Oaks Solutions Pvt Ltd, used by app.reports.bid_generator to draft the covering letter and declarations of a generated bid pack. Every field here is transcribed from an actual issued certificate (see the company documents library for the source PDFs/scans) - nothing here is estimated or invented. Fields the source documents don't establish (turnover figures, bank details, current employee count) are deliberately left out or flagged 'to_be_verified' rather than guessed; app.reports.bid_generator must never fill those from anywhere but an uploaded company document.",
+
+  "legal_name": "OAKS SOLUTIONS PRIVATE LIMITED",
+  "trade_name": "Oaks Solutions Pvt Ltd",
+  "former_name": "OVI Learning Private Limited",
+  "cin": "U85499TS2025PTC199477",
+  "gstin": "36AAECO7562J1Z1",
+  "pan": "AAECO7562J",
+  "pan_derivation_note": "Characters 3-12 of the GSTIN above - verify against the actual PAN card in the company documents library before relying on this for a submission.",
+  "date_of_incorporation": "2025-06-05",
+
+  "registered_office": "H. No. 8-2-293/82/A/233, 234, 235, Road No. 36, Jubilee Hills, Shaikpet, Hyderabad, Telangana 500033, India",
+  "correspondence_address": "F2, Empire Square, Road Number 36, Jubilee Hills, Hyderabad/Secunderabad, Telangana 500033",
+  "email": "info@oaks.guru",
+  "phone": "+91-7207633633",
+
+  "directors": [
+    {"name": "Suman Matcha", "designation": "Director"},
+    {"name": "Vijaya Kumari Matcha", "designation": "Director"}
+  ],
+  "authorized_signatory": {
+    "name": "Suman Matcha",
+    "designation": "Director",
+    "signature_document_name": "Suman_Signature",
+    "seal_document_name": "Oaks Stamp",
+    "place": "Hyderabad"
+  },
+
+  "_letterhead_comment": "Full-page A4 letterhead image (relative to config/) drawn behind every page of a bid pack that goes to the tendering authority. The content area is inset to clear its header logo/address and footer contact strip - see app.reports.bid_generator.LETTERHEAD_MARGINS.",
+  "letterhead_image": "letterhead.jpg",
+
+  "_reference_documents_comment": "Documents-library entries (by display name) that are background reading for drafting only - their text is fed to the AI drafter as company context, but they are never merged into or listed as enclosures of a bid pack. Any document whose name contains 'brochure' is treated this way too.",
+  "reference_documents": ["Oaks Brochure", "Oaks Contact details"],
+
+  "registrations": [
+    {
+      "name": "UDYAM (MSME) Registration",
+      "number": "UDYAM-TS-02-0269007",
+      "enterprise_type": "Micro",
+      "classification_date": "2025-09-09",
+      "major_activity": "Services"
+    },
+    {
+      "name": "DPIIT Start-up Recognition",
+      "certificate_no": "DIPP222769",
+      "date_of_issue": "2025-09-23",
+      "valid_upto": "2035-06-04",
+      "industry": "Education",
+      "sector": "Education Technology"
+    }
+  ],
+
+  "certifications": [
+    {
+      "name": "ISO/IEC 27001:2022",
+      "certificate_no": "26EQRG27",
+      "scope": "Information security for education technology including digital learning, assessment and analytics",
+      "initial_registration_date": "2026-06-26",
+      "valid_until": "2029-06-25"
+    },
+    {
+      "name": "CMMI Maturity Level 3",
+      "certificate_no": "UQ-2026062708",
+      "scope": "Information security for education technology including digital learning, assessment and analytics",
+      "date_of_certification": "2029-06-27",
+      "valid_until": "2029-06-26"
+    }
+  ],
+
+  "past_experience": [
+    {
+      "client": "Vidura Digital Learning Pvt. Ltd.",
+      "financial_year": "2022-23",
+      "work_order_date": "2022-04-25",
+      "value_inr_lakh": 15.00,
+      "description": "Design and development of a digital education platform/application with interactive multimedia modules and structured digital content delivery.",
+      "evidence_status": "Agreement; Ongoing"
+    },
+    {
+      "client": "District Social Welfare Office (DSWO), Palamu",
+      "routed_through": "Sunitha Infovision Ltd.",
+      "financial_year": "2023-24",
+      "work_order_date": "2023-05-23",
+      "value_inr_lakh": 247.47,
+      "description": "Development and deployment of an interactive gamified learning platform with software configuration, platform-based digital content delivery, MIS dashboards, progress monitoring and customised reporting.",
+      "evidence_status": "Work Order; Ongoing"
+    },
+    {
+      "client": "District Social Welfare Office (DSWO), Dumka",
+      "routed_through": "Sunitha Infovision Ltd.",
+      "financial_year": "2024-25",
+      "work_order_date": "2024-05-17",
+      "value_inr_lakh": 265.46,
+      "description": "Development and implementation of an interactive digital learning platform for curriculum digitisation, including software configuration, digital content integration, dashboard-based monitoring and customised reporting.",
+      "evidence_status": "Work Order; Ongoing"
+    },
+    {
+      "client": "Pandit Sunderlal Sharma Central Institute of Vocational Education (PSSCIVE), Bhopal",
+      "routed_through": "EdCIL (India) Ltd.",
+      "financial_year": "2024-25",
+      "work_order_date": "2024-06-03",
+      "value_inr_lakh": 125.68,
+      "description": "Design and development of Virtual Skill Lab solutions delivered through a digital platform, including interactive 2D/3D learning modules, multimedia interfaces, digital content integration, testing/acceptance stages and upload to the DIKSHA platform.",
+      "evidence_status": "Work Order; Ongoing"
+    },
+    {
+      "client": "NCERT",
+      "routed_through": "EdCIL (India) Ltd.",
+      "financial_year": "2025-26",
+      "work_order_date": "2025-08-28",
+      "value_inr_lakh": 156.00,
+      "description": "Design and development of NCERT-aligned Online Labs (OLabs) as interactive digital applications, including storyboard-led solution design, multimedia integration, user-interaction flows, testing, acceptance and deployment on the DIKSHA platform.",
+      "evidence_status": "Work Order; Ongoing"
+    },
+    {
+      "client": "Department of Farmer Welfare & Agriculture Development, Government of Madhya Pradesh",
+      "routed_through": "Sunitha Infovision Ltd.",
+      "financial_year": "2025-26",
+      "work_order_date": "2026-01-28",
+      "value_inr_lakh": 302.50,
+      "description": "Implementation of a technology-enabled outreach and engagement solution involving digital campaign systems, analytics dashboards, monitoring and reporting, digital content workflows and multi-channel online platforms.",
+      "evidence_status": "Work Order; Ongoing"
+    }
+  ],
+
+  "to_be_verified": [
+    "Current full-time employee headcount (last documented at 45 as of 16.09.2026 - reconfirm against current payroll/HR records before every submission)",
+    "Audited turnover / CA-certified turnover figures for the relevant financial years",
+    "Bank account and IFSC details for any bank guarantee/EMD instrument",
+    "TAN, if the tender's prescribed tax declaration format requires it"
+  ]
+}

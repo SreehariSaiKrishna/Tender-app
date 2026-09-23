@@ -21,7 +21,12 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      Timeout: 600
+      # Was 600s before the download_documents/summarize_documents steps
+      # were added (each eligible tender now costs an extra detail-page
+      # navigation + file downloads + an AI call) - raised to the Lambda
+      # maximum so a batch of DOCUMENTS_BATCH_LIMIT tenders has room to
+      # finish instead of being killed mid-run.
+      Timeout: 900
       MemorySize: 1536
       Architectures:
         - x86_64
@@ -54,6 +59,8 @@ Resources:
           LOG_LEVEL: "INFO"
           DOWNLOAD_DIR: "/tmp/raw"
           PROCESSED_DIR: "/tmp/processed"
+          DOCUMENTS_DIR: "/tmp/documents"
+          DOCUMENTS_BATCH_LIMIT: "15"
       Events:
         MorningRun:
           Type: Schedule
@@ -94,6 +101,14 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
+      # 30s is this function's own execution limit, not the client-visible
+      # one: TenderHttpApi (an HTTP API) has a hard, non-configurable 30s
+      # integration timeout of its own that this Timeout can't raise - a
+      # POST /tenders/{id}/generate-bid that runs long still 504s the
+      # caller at 30s regardless. Kept at the max this Lambda's own timeout
+      # can usefully reach so a run that's already lost the client still
+      # gets to finish writing the bid pack to GridFS rather than being
+      # killed mid-write.
       Timeout: 30
       MemorySize: 512
       Architectures:
@@ -102,6 +117,12 @@ Resources:
         Variables:
           MONGODB_URI: "{{resolve:ssm:/tender-agent/mongodb-uri:2}}"
           MONGODB_DB_NAME: "tender_intelligence"
+          # POST /tenders/{id}/generate-bid's AI-drafted documents (see
+          # app.intelligence.bid_drafter) - same parameters PipelineFunction
+          # uses for AI screening.
+          AI_PROVIDER: "openai"
+          OPENAI_API_KEY: "{{resolve:ssm:/tender-agent/openai-api-key:2}}"
+          OPENAI_MODEL: "gpt-4o-mini"
       # Root ("/") and every subpath need separate event mappings - API
       # Gateway's {proxy+} wildcard does not also match the bare root path.
       Events:

@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     download_dir: str = "./data/raw"
     processed_dir: str = "./data/processed"
+    documents_dir: str = "./data/documents"
+    documents_batch_limit: int = 15
 
     @property
     def base_dir(self) -> Path:
@@ -90,3 +92,12 @@ def load_business_capabilities() -> list[str]:
     path = CONFIG_DIR / "capabilities.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     return list(data.get("capabilities", []))
+
+
+def load_company_profile() -> dict:
+    """Load the verified company/legal profile (config/company_profile.json)
+    used by app.reports.bid_generator to draft a bid pack's covering letter
+    and declarations - see that file's _comment for what "verified" means
+    here."""
+    path = CONFIG_DIR / "company_profile.json"
+    return json.loads(path.read_text(encoding="utf-8"))

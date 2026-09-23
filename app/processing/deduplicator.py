@@ -33,7 +33,13 @@ from pymongo.collection import Collection
 
 from app.database import get_collection
 from app.models import UNSCREENED_PRIORITY_RANK, TenderStatus
-from app.processing.eligibility import compute_eligibility_match, load_match_keywords
+from app.processing.eligibility import (
+    compute_eligibility_match,
+    emd_in_range,
+    load_match_keywords,
+    tender_fee_in_range,
+    tender_value_in_range,
+)
 from app.processing.normalizer import NormalizedTender
 
 logger = logging.getLogger(__name__)
@@ -141,11 +147,13 @@ def ingest_batch(
                 "location": normalized.location,
                 "state": normalized.state,
                 "published_date": _date_to_dt(normalized.published_date),
+                "opening_date": _date_to_dt(normalized.opening_date),
                 "closing_date": new_closing_date,
                 "previous_closing_date": None,
                 "deadline_changed": False,
                 "tender_value": normalized.tender_value,
                 "earnest_money": normalized.earnest_money,
+                "document_fees": normalized.document_fees,
                 "document_url": normalized.document_url,
                 "source_url": normalized.source_url,
                 "description": normalized.description,
@@ -195,19 +203,39 @@ def ingest_batch(
             doc["organisation"] = normalized.organisation or doc.get("organisation")
             doc["location"] = normalized.location or doc.get("location")
             doc["state"] = normalized.state or doc.get("state")
+            if normalized.opening_date is not None:
+                doc["opening_date"] = _date_to_dt(normalized.opening_date)
             if normalized.tender_value is not None:
                 doc["tender_value"] = normalized.tender_value
             if normalized.earnest_money is not None:
                 doc["earnest_money"] = normalized.earnest_money
+            if normalized.document_fees is not None:
+                doc["document_fees"] = normalized.document_fees
             doc["source_url"] = normalized.source_url or doc.get("source_url")
             doc["raw_data"] = normalized.raw_data
             doc["last_seen"] = now
             doc["times_found"] = doc.get("times_found", 0) + 1
             doc["disappeared"] = False
 
-        doc["eligibility_match"] = compute_eligibility_match(
+        # domain_match: cheap keyword-only relevance check, with no opinion on
+        # the value ranges - this is what gates document download (see
+        # app.browser.document_collector._pending_tenders), since a tender's
+        # EMD/tender fee/tender value is often only discoverable BY reading
+        # its documents, and can't gate the very step that would reveal it.
+        doc["domain_match"] = compute_eligibility_match(
             f"{doc.get('title') or ''} {doc.get('description') or ''}",
             eligibility_keywords,
+        )
+        # eligibility_match: the strict final decision surfaced on the
+        # dashboard - domain-relevant AND every one of the three value
+        # ranges is both disclosed (in the listing, or later merged in from
+        # app.intelligence.document_summarizer's extraction - see
+        # summarize_pending_documents) and within range.
+        doc["eligibility_match"] = (
+            doc["domain_match"]
+            and tender_value_in_range(doc.get("tender_value"))
+            and emd_in_range(doc.get("earnest_money"))
+            and tender_fee_in_range(doc.get("document_fees"))
         )
 
         tenders_seen_keys.add(dedup_key)

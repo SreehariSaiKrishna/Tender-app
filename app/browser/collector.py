@@ -25,6 +25,7 @@ from app.browser.dashboard import (
     has_zero_results,
     open_live_results,
 )
+from app.browser.launch import chromium_launch_args
 from app.browser.login import ensure_logged_in
 from app.config import Settings, get_settings, load_saved_queries
 
@@ -78,20 +79,9 @@ def run_collection(settings: Settings | None = None) -> list[DownloadOutcome]:
             headless=settings.browser_headless,
             viewport={"width": 1400, "height": 900},
             accept_downloads=True,
-            # AWS Lambda's restricted syscall sandbox blocks the fork()
-            # Chromium's zygote process needs for its normal multi-process
-            # model (crashes with SIGSEGV, not a clear permissions error) -
-            # --single-process/--no-zygote route around it entirely. Local
-            # Docker testing never hit this because Docker Desktop's
-            # containers are far less restrictive than real Lambda.
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--single-process",
-                "--no-zygote",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-            ],
+            # See app.browser.launch: Lambda-only sandbox workaround args -
+            # applying them outside Lambda crashes Chromium on real sites.
+            args=chromium_launch_args(),
         )
         page = context.new_page()
 

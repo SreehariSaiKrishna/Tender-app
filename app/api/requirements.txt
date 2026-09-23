@@ -8,3 +8,12 @@ pymongo>=4.6,<4.9
 pydantic>=2.9
 pydantic-settings>=2.5
 python-dotenv>=1.0.1
+# Documents tab file uploads (app.api.main) - FastAPI's UploadFile/Form
+# parsing needs this even though nothing here imports it directly.
+python-multipart>=0.0.9
+# Bid pack generation (app.reports.bid_generator, POST /tenders/{id}/generate-bid) -
+# reportlab draws the cover pages, pypdf merges in PDF company documents as an appendix,
+# openai drafts the individual bid documents (app.intelligence.bid_drafter/scorer).
+reportlab>=4.0
+pypdf>=4.0
+openai>=1.50

@@ -36,6 +36,7 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "location": ["Location", "City"],
     "state": ["State"],
     "closing_date": ["DueDate", "Due Date", "Closing Date"],
+    "opening_date": ["Opening Date", "Tender Opening Date"],
     "tender_no": ["TenderNo", "Tender No", "Tender Number"],
     "address": ["Address"],
     "contact_email": ["ContactEmail", "Contact Email"],
@@ -118,6 +119,28 @@ def parse_amount(value: Any) -> float | None:
         return None
 
 
+AMOUNT_IN_TEXT_RE = re.compile(r"[\d][\d,]*(?:\.\d+)?")
+
+
+def parse_amount_from_text(value: Any) -> float | None:
+    """Extract the first numeric amount embedded in free text, e.g. an AI
+    document summary field like "INR 45,00,000 (estimated)" -> 4500000.0.
+
+    Unlike parse_amount, `value` isn't expected to be pure digits - only
+    the first number found is used (commas stripped). Returns None if no
+    digit appears at all - never raises.
+    """
+    if value is None:
+        return None
+    match = AMOUNT_IN_TEXT_RE.search(str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
 def parse_tender_brief(value: Any) -> tuple[str, str | None]:
     """Extract (title, source_url) from TenderDetail's "Tender Brief" cell,
     which is exported as a literal =HYPERLINK("url","title") formula string
@@ -173,8 +196,12 @@ class NormalizedTender(BaseModel):
     state: str | None = None
     closing_date: dt.date | None = None
     published_date: dt.date | None = None
+    # No confirmed column for this in the real TenderDetail export (see
+    # COLUMN_ALIASES) - stays None unless a future export type provides it.
+    opening_date: dt.date | None = None
     tender_value: float | None = None
     earnest_money: float | None = None
+    document_fees: float | None = None
     document_url: str | None = None
     source_url: str | None = None
     description: str | None = None
@@ -215,8 +242,10 @@ def normalize_row(
         state=_clean_text(get("state")),
         closing_date=closing_date,
         published_date=parse_indian_date(get("published_date")),
+        opening_date=parse_indian_date(get("opening_date")),
         tender_value=parse_amount(get("tender_value")),
         earnest_money=parse_amount(get("earnest_money")),
+        document_fees=parse_amount(get("document_fees")),
         # Not present as a separate column in this export type - the
         # attachment links seen on the website aren't included in the
         # Download Excel output. Left as None rather than guessed.

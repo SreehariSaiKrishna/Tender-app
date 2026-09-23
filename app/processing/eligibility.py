@@ -23,6 +23,21 @@ from app.database import get_eligibility_criteria_collection
 
 CRITERIA_DOC_ID = "company_eligibility_profile"
 
+# Mirrors the "tender-value-range" criterion below (₹70 Lakhs to ₹5 Crore).
+# Kept as separate constants - rather than parsed out of the criterion's free
+# -text `requirement` - because tender_value is a plain rupee float and this
+# range is actually enforced (see tender_value_in_range), not just displayed.
+MIN_TENDER_VALUE_INR = 70_00_000.0
+MAX_TENDER_VALUE_INR = 5_00_00_000.0
+
+# Mirrors the "emd-range" criterion below (₹0 to ₹1,50,000).
+MIN_EMD_INR = 0.0
+MAX_EMD_INR = 1_50_000.0
+
+# Mirrors the "tender-fee-range" criterion below (₹0 to ₹15,000).
+MIN_TENDER_FEE_INR = 0.0
+MAX_TENDER_FEE_INR = 15_000.0
+
 # Seed content transcribed from Eligibility.pdf.
 DEFAULT_CRITERIA: dict = {
     "_id": CRITERIA_DOC_ID,
@@ -180,6 +195,33 @@ DEFAULT_CRITERIA: dict = {
             ],
         },
         {
+            "id": "tender-value-range",
+            "criterion": "Tender Value Range",
+            "requirement": (
+                "Preferred tender value range: ₹70 Lakhs to ₹5 Crore."
+            ),
+            "supporting_documents": [],
+            "match_keywords": [],
+        },
+        {
+            "id": "emd-range",
+            "criterion": "EMD Range",
+            "requirement": (
+                "Preferred EMD (Earnest Money Deposit) range: ₹0 to ₹1,50,000."
+            ),
+            "supporting_documents": [],
+            "match_keywords": [],
+        },
+        {
+            "id": "tender-fee-range",
+            "criterion": "Tender Fee Range",
+            "requirement": (
+                "Preferred tender fee range: ₹0 to ₹15,000."
+            ),
+            "supporting_documents": [],
+            "match_keywords": [],
+        },
+        {
             "id": "msme-registration",
             "criterion": "MSME Registration",
             "requirement": "Registered under MSME/Udyam provisions.",
@@ -243,3 +285,49 @@ def compute_eligibility_match(text: str, keywords: list[str]) -> bool:
         return False
     haystack = text.lower()
     return any(re.search(rf"\b{re.escape(kw)}\b", haystack) for kw in keywords)
+
+
+def tender_value_in_range(
+    tender_value: float | None,
+    min_value: float = MIN_TENDER_VALUE_INR,
+    max_value: float = MAX_TENDER_VALUE_INR,
+) -> bool:
+    """True if `tender_value` is either undisclosed, or disclosed and within
+    the preferred range.
+
+    An undisclosed value (None, common on this data source - see
+    app.processing.normalizer.parse_amount) doesn't rule the tender out: in
+    practice a tender's value, EMD and tender fee are rarely all disclosed
+    in the same listing, so requiring every one of them to be both known and
+    in range (the original, stricter design) left almost nothing eligible.
+    A value that IS disclosed must still actually be in range - this only
+    changes how "not known" is treated, not "known to be out of range".
+    """
+    if tender_value is None:
+        return True
+    return min_value <= tender_value <= max_value
+
+
+def emd_in_range(
+    earnest_money: float | None,
+    min_value: float = MIN_EMD_INR,
+    max_value: float = MAX_EMD_INR,
+) -> bool:
+    """True if `earnest_money` (EMD) is either undisclosed, or disclosed and
+    within range - see tender_value_in_range for why undisclosed passes."""
+    if earnest_money is None:
+        return True
+    return min_value <= earnest_money <= max_value
+
+
+def tender_fee_in_range(
+    document_fees: float | None,
+    min_value: float = MIN_TENDER_FEE_INR,
+    max_value: float = MAX_TENDER_FEE_INR,
+) -> bool:
+    """True if `document_fees` (tender fee) is either undisclosed, or
+    disclosed and within range - see tender_value_in_range for why
+    undisclosed passes."""
+    if document_fees is None:
+        return True
+    return min_value <= document_fees <= max_value
