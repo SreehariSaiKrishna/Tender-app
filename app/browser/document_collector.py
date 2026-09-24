@@ -114,14 +114,52 @@ def _extract_and_store_key_dates(page, tender: dict[str, Any], collection: Colle
     collection.update_one({"_id": tender["_id"]}, {"$set": update})
 
 
-def _pending_tenders(collection: Collection, limit: int | None) -> list[dict[str, Any]]:
+# Tenders summarised before app.intelligence.document_summarizer kept each
+# tender's `document_text` have only their summary left - the downloaded
+# files were deleted once summarised. The submission checklist needs the
+# documents' own text (annexure numbers, prescribed formats), so these are
+# downloaded again; the summarizer then re-reads them (documents_downloaded_at
+# is newer than the summary) and stores the text.
+_MISSING_DOCUMENT_TEXT = {
+    "document_summary_generated_at": {"$ne": None},
+    "$or": [{"document_text": {"$exists": False}}, {"document_text": {"$in": [None, ""]}}],
+}
+
+
+def _pending_tenders(
+    collection: Collection, limit: int | None, tender_ids: list[Any] | None = None
+) -> list[dict[str, Any]]:
+    """In order: tenders whose documents a checklist is waiting on (see
+    app.api.main's `document_text_requested_at` - even if no longer live,
+    since the checklist was asked for regardless), new/changed tenders, then
+    tenders whose document text was never kept. `tender_ids` restricts the
+    pass to just those tenders, downloaded whether or not they'd otherwise
+    be due."""
+    has_url = {"source_url": {"$nin": [None, ""]}}
+    # document_text is large and never needed here - only whether it exists.
+    projection = {"document_text": 0}
+    if tender_ids is not None:
+        pending = list(collection.find({**has_url, "_id": {"$in": tender_ids}}, projection))
+        return pending[:limit] if limit else pending
+
+    requested = list(
+        collection.find(
+            {**has_url, **_MISSING_DOCUMENT_TEXT, "document_text_requested_at": {"$ne": None}}, projection
+        ).sort("document_text_requested_at", 1)
+    )
     # Every live tender, not just domain-relevant ones - the dashboard shows
     # EMD/tender fee/tender value for every tender, and those are often only
     # discoverable by reading the tender's own documents.
-    candidates = collection.find(
-        {"disappeared": False, "source_url": {"$nin": [None, ""]}}
-    )
-    pending = [doc for doc in candidates if _needs_download(doc)]
+    live = {**has_url, "disappeared": False}
+    due = [doc for doc in collection.find(live, projection) if _needs_download(doc)]
+    missing_text = list(collection.find({**live, **_MISSING_DOCUMENT_TEXT}, projection))
+
+    pending: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for doc in requested + due + missing_text:
+        if doc["_id"] not in seen:
+            seen.add(doc["_id"])
+            pending.append(doc)
     return pending[:limit] if limit else pending
 
 
@@ -214,10 +252,11 @@ def run_key_dates_backfill(
 
 
 def run_document_collection(
-    settings: Settings | None = None, limit: int | None = None
+    settings: Settings | None = None, limit: int | None = None, tender_ids: list[Any] | None = None
 ) -> DocumentDownloadSummary:
     """Download attached documents for every eligible tender that doesn't
-    have them yet (or whose listing changed since the last download).
+    have them yet (or whose listing changed since the last download, or
+    whose document text was never kept) - or just for `tender_ids`.
 
     Never raises for an individual tender's failure - only for login
     failure or a fatal browser error, which stop the whole run safely (same
@@ -227,7 +266,7 @@ def run_document_collection(
     collection = get_collection()
     limit = settings.documents_batch_limit if limit is None else limit
 
-    pending = _pending_tenders(collection, limit)
+    pending = _pending_tenders(collection, limit, tender_ids)
     summary = DocumentDownloadSummary(checked=len(pending))
     if not pending:
         return summary

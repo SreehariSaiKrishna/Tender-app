@@ -115,6 +115,43 @@ def test_pending_tenders_excludes_already_downloaded_and_unchanged(collection):
     assert [t["dedup_key"] for t in pending] == ["ref:2"]
 
 
+def test_pending_tenders_redownloads_summarized_tenders_without_document_text(collection):
+    now = dt.datetime.now(dt.timezone.utc)
+    downloaded = {"documents_downloaded_at": now, "content_last_changed": now - dt.timedelta(days=1)}
+    make_tender(collection, dedup_key="ref:1", document_summary_generated_at=now, **downloaded)  # text never kept
+    make_tender(collection, dedup_key="ref:2", document_summary_generated_at=now, document_text="", **downloaded)
+    make_tender(collection, dedup_key="ref:3", document_summary_generated_at=now, document_text="RFP", **downloaded)
+    make_tender(collection, dedup_key="ref:4", **downloaded)  # never summarized - nothing to recover
+
+    pending = _pending_tenders(collection, limit=None)
+
+    assert [t["dedup_key"] for t in pending] == ["ref:1", "ref:2"]
+    assert all("document_text" not in t for t in pending)
+
+
+def test_pending_tenders_puts_checklist_requests_first_even_when_closed(collection):
+    now = dt.datetime.now(dt.timezone.utc)
+    make_tender(collection, dedup_key="ref:new")  # never downloaded
+    make_tender(
+        collection, dedup_key="ref:asked", disappeared=True, documents_downloaded_at=now,
+        document_summary_generated_at=now, document_text_requested_at=now,
+    )
+
+    pending = _pending_tenders(collection, limit=None)
+
+    assert [t["dedup_key"] for t in pending] == ["ref:asked", "ref:new"]
+
+
+def test_pending_tenders_with_tender_ids_returns_just_those(collection):
+    now = dt.datetime.now(dt.timezone.utc)
+    make_tender(collection, dedup_key="ref:1")
+    wanted = make_tender(collection, dedup_key="ref:2", documents_downloaded_at=now, document_text="RFP")
+
+    pending = _pending_tenders(collection, limit=None, tender_ids=[wanted["_id"]])
+
+    assert [t["dedup_key"] for t in pending] == ["ref:2"]
+
+
 def test_pending_tenders_respects_limit(collection):
     for i in range(5):
         make_tender(collection, dedup_key=f"ref:{i}")
