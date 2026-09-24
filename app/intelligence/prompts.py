@@ -218,70 +218,120 @@ def build_document_user_prompt(
     return "\n".join(lines)
 
 
-# --- Bid document drafting (app.intelligence.bid_drafter) ------------------
-# Two calls, not one per document - POST /tenders/{id}/generate-bid
-# (app.api.main) is a synchronous request behind an AWS HTTP API, which has
-# a hard, non-configurable 30-second integration timeout; one AI call per
-# document (there can be several) risks blowing that budget. Call 1 decides
-# which documents this tender's own paperwork calls for; call 2 drafts all
-# of them together. Same anti-invention stance as the prompts above.
+# --- Submission checklist + bid document drafting (app.intelligence.bid_drafter)
+# POST /tenders/{id}/checklist and /generate-bid (app.api.main) are
+# synchronous requests behind an AWS HTTP API, which has a hard,
+# non-configurable 30-second integration timeout. So: one call builds the
+# whole submission checklist (short rows only - no verbatim formats, which
+# would make the response too long to finish in time), and the documents
+# the bidder must write are drafted in small batches run in parallel, each
+# batch re-reading the tender text for its own prescribed formats. Same
+# anti-invention stance as the prompts above.
 
-BID_PLAN_SYSTEM_PROMPT = """You are a bid-documentation assistant. You are given the details of ONE \
-tender a business is preparing to bid on - its listing, the requirements \
-extracted from its own tender documents, and the bidder's general \
-eligibility profile.
+# The full text of a tender's own documents (see document_summarizer's
+# `document_text`) can be long - capped per prompt so a single call stays
+# well inside both the model's context and the request timeout.
+MAX_TENDER_TEXT_CHARS = 60_000
 
-Your only job here is to decide which individual documents the bidder needs \
-to DRAFT AND SIGN as part of this submission - not which existing \
-certificates/records need to be attached as evidence.
+SUBMISSION_CHECKLIST_SYSTEM_PROMPT = """You are a bid-documentation assistant for an Indian \
+government/PSU/GeM tender. You are given ONE tender's details - its listing, \
+the requirements extracted from its own documents and, when available, the \
+full text of those documents - plus the bidder's profile and the names of the \
+documents already in the bidder's documents library.
 
-Follow these rules strictly:
-1. Only propose documents that are letters, declarations, undertakings, or \
-   short narrative certificates the bidder itself must write and sign for \
-   this specific tender - e.g. a covering letter, a non-blacklisting \
-   declaration, a no-deviation certificate, a manpower/deployment \
-   declaration, an authorized-signatory declaration.
-2. Never propose an item that is really just an existing record to attach \
-   as-is - e.g. "PAN Card", "GST Registration Certificate", "Incorporation \
-   Certificate", "Audited Financial Statements", "Company Brochure", "CA \
-   Certificate". Those are evidence attachments, handled separately, not \
-   documents to draft.
-3. Always include exactly one "Covering Letter" as the first document.
-4. Base every other proposed document on what this tender's own \
-   requirements (documents to submit / eligibility requirements / \
-   technical eligibility criteria, given below) actually ask for, or on \
-   standard practice for a government/PSU tender bid ONLY when the \
-   tender's own requirements are too thin to tell either way. Do not \
-   invent tender-specific annexure numbers or clause references you have \
-   not been given.
-5. Propose at most 6 documents in total, ordered logically (covering \
-   letter first).
-6. If the given information is too thin to identify anything beyond a \
-   covering letter, propose just the covering letter - do not pad the list.
+Build the bidder's MASTER BID SUBMISSION CHECKLIST: every document this \
+tender requires the bidder to submit, one row each. Follow these rules \
+strictly:
+1. List every item the tender's own text asks to be submitted/uploaded - \
+   eligibility evidence (experience, turnover, registrations, PAN, GST, \
+   returns, MSME/Startup certificates...), EMD / bid security, every \
+   annexure / appendix / form / format the tender prescribes, technical \
+   proposal / methodology / presentation, the commercial / price bid, \
+   compliance items, and the signed tender document / terms acceptance - in \
+   the order the tender itself lists them where it gives an order.
+2. Use the tender's own names and numbers for annexures and forms (e.g. \
+   "Annexure 5") ONLY when the given tender text states them - never invent \
+   an annexure number or clause reference.
+3. If the tender does not prescribe its own covering letter / bid submission \
+   form, include a "Covering Letter" row first.
+4. "document": a short name (e.g. "Bidder Turnover", "PAN", "Annexure 3"). \
+   "what_to_upload": one sentence saying exactly what to provide, including \
+   any threshold, period or attestation the tender states (e.g. "CA \
+   certificate showing average turnover of Rs. 50 lakh over the last 3 \
+   financial years"). "where": where it goes, e.g. "Technical Upload", \
+   "Financial Bid", "Portal / Technical", "GeM / Physical as applicable", \
+   "Post-award", "Technical Presentation".
+5. "source": "draft" when the bidder itself writes the document (a letter, \
+   undertaking, declaration, affidavit-style format, an annexure/form to fill \
+   in, a technical proposal or methodology, the price bid format); "upload" \
+   when it is an existing record or certificate (PAN, GST certificate, \
+   incorporation certificate, work orders, CA certificates, audited \
+   financials, returns, MSME/DPIIT certificates, EMD instrument).
+6. "library_document": for an "upload" row, the EXACT name of the matching \
+   document from the documents library list given below, or null when none \
+   of them is that document. Never pick a document just because it is \
+   loosely related.
+7. "letterhead" / "signature" / "stamp": what the document needs when \
+   submitted. Bidder-written letters, undertakings, declarations and filled \
+   annexures: all three true unless the tender says otherwise. Copies of \
+   the bidder's own records/certificates (PAN, GST, incorporation, work \
+   orders, MSME...): signature and stamp true (self-attested), letterhead \
+   false. Third-party-signed documents such as CA certificates or audited \
+   statements, and portal-only items: all three false - unless the tender \
+   text explicitly asks for them to be signed/stamped or on letterhead.
+8. "format_hint": for a "draft" row whose format the tender prescribes, a \
+   short pointer to it (e.g. "Annexure 5 format - Particulars of Bidder's \
+   Organisation, 12 fields"); otherwise an empty string. Do NOT copy the \
+   format itself here.
+9. "notes": anything the bidder must watch for on this row (an exemption \
+   that applies, a validity period, an amount) in at most one sentence, or \
+   an empty string.
+10. "bid_number": the GeM bid number / tender ID exactly as stated in the \
+   tender text (e.g. "GEM/2026/B/6045377"), or null if the text does not \
+   state one. "bid_end": the bid end / submission deadline date and time \
+   exactly as stated (e.g. "28-09-2026, 19:00 Hrs"), or null.
+11. Keep every string short. Do not pad the list with documents this tender \
+   does not ask for.
 
 Respond with ONLY a single JSON object, no markdown fences and no extra \
 text, matching exactly this shape:
 {
-  "documents": [
+  "bid_number": <string or null>,
+  "bid_end": <string or null>,
+  "rows": [
     {
-      "title": <short string, e.g. "Non-Blacklisting Declaration">,
-      "purpose": <one sentence: what this document must establish and why this tender calls for it>,
-      "kind": "covering_letter" | "declaration" | "undertaking" | "certificate_narrative" | "technical_note"
+      "document": <string>,
+      "what_to_upload": <string>,
+      "where": <string>,
+      "source": "upload" | "draft",
+      "library_document": <string or null>,
+      "letterhead": <true|false>,
+      "signature": <true|false>,
+      "stamp": <true|false>,
+      "format_hint": <string>,
+      "notes": <string>
     }
   ]
 }"""
 
 
-def build_bid_plan_system_prompt() -> str:
-    return BID_PLAN_SYSTEM_PROMPT
+def build_submission_checklist_system_prompt() -> str:
+    return SUBMISSION_CHECKLIST_SYSTEM_PROMPT
 
 
-def build_bid_plan_user_prompt(tender: dict[str, Any], eligibility_criteria: list[dict[str, Any]]) -> str:
-    """Render one tender's own requirements plus the bidder's general
-    eligibility profile - enough context to decide which documents to draft,
-    without yet drafting any of them (see build_bid_draft_user_prompt for
-    that, which additionally needs verified company facts).
-    """
+def _tender_text_block(tender: dict[str, Any]) -> list[str]:
+    """The tender's own document text (document_summarizer's
+    `document_text`), capped - or a note that only the summary is known."""
+    text = (tender.get("document_text") or "").strip()
+    if not text:
+        return ["Full tender document text: (not available - work from the extracted requirements above)"]
+    lines = ["Full tender document text:", text[:MAX_TENDER_TEXT_CHARS]]
+    if len(text) > MAX_TENDER_TEXT_CHARS:
+        lines.append(f"[... truncated, {len(text) - MAX_TENDER_TEXT_CHARS} more characters omitted ...]")
+    return lines
+
+
+def _tender_requirement_lines(tender: dict[str, Any]) -> list[str]:
     document_summary = tender.get("document_summary") or {}
 
     def _list(label: str, items: list[str]) -> list[str]:
@@ -293,40 +343,68 @@ def build_bid_plan_user_prompt(tender: dict[str, Any], eligibility_criteria: lis
         f"Title: {_field(tender.get('title'))}",
         f"Organisation: {_field(tender.get('organisation'))}",
         f"Tender Reference: {_field(tender.get('tender_ref'))}",
+        f"Closing Date: {_field(tender.get('closing_date'))}",
+        f"EMD: {_field(document_summary.get('emd_amount') or tender.get('earnest_money'))}",
+        f"Tender fee: {_field(document_summary.get('tender_fee_amount') or tender.get('document_fees'))}",
         "",
     ]
-    lines += _list("Documents to submit (from the tender's own documents)", document_summary.get("documents_to_submit", []))
-    lines.append("")
-    lines += _list("Eligibility requirements (from the tender's own documents)", document_summary.get("eligibility_requirements", []))
-    lines.append("")
-    lines += _list("Technical eligibility criteria (from the tender's own documents)", document_summary.get("eligibility_technical_criteria", []))
-    lines.append("")
+    lines += _list("Documents to submit (extracted)", document_summary.get("documents_to_submit", []))
+    lines += _list("Eligibility requirements (extracted)", document_summary.get("eligibility_requirements", []))
+    lines += _list(
+        "Technical eligibility criteria (extracted)", document_summary.get("eligibility_technical_criteria", [])
+    )
+    for row in document_summary.get("technical_criteria_table", []) or []:
+        lines.append(
+            f"  - Technical criterion {row.get('ref') or ''}: {row.get('criterion', '')}"
+            f" (evidence: {row.get('expected_evidence') or '-'}; marks: {row.get('marks') or '-'})"
+        )
     lines.append(f"Tender summary: {_field(document_summary.get('summary_text'))}")
-    lines.append("")
-    lines.append("Bidder's general eligibility profile (criteria this bidder is normally assessed against):")
-    for c in eligibility_criteria:
-        lines.append(f"  - {c['criterion']}: {c['requirement']}")
+    return lines
 
+
+def build_submission_checklist_user_prompt(
+    tender: dict[str, Any],
+    eligibility_criteria: list[dict[str, Any]],
+    company_profile: dict[str, Any],
+    library_document_names: list[str],
+) -> str:
+    lines = _tender_requirement_lines(tender)
+    lines.append("")
+    lines += _tender_text_block(tender)
+    lines.append("")
+    lines.append("Bidder:")
+    lines.append(f"  - Legal name: {_field(company_profile.get('legal_name'))}")
+    for reg in company_profile.get("registrations", []):
+        lines.append(f"  - {reg.get('name', 'Registration')}: {reg.get('number') or reg.get('certificate_no') or '-'}")
+    for c in eligibility_criteria:
+        lines.append(f"  - Usually assessed on {c['criterion']}: {c['requirement']}")
+    lines.append("")
+    lines.append("Documents library (exact names):")
+    lines += [f"  - {name}" for name in library_document_names] or ["  (empty)"]
     return "\n".join(lines)
 
 
 BID_DRAFT_SYSTEM_PROMPT = """You are a bid-documentation assistant. You are given: (1) a list of \
-documents already identified as needed for ONE tender submission, (2) the \
-tender's own known details, and (3) the bidder company's verified profile \
-facts and which of its eligibility criteria already have evidence on file.
+documents from ONE tender's submission checklist that the bidder must write \
+itself, (2) the tender's own details and, when available, the full text of \
+its documents, and (3) the bidder company's verified profile facts.
 
 Draft the full body text of EVERY document listed, in the order given. \
 Follow these rules strictly:
-1. Never invent a fact - no certificate number, date, monetary figure, \
+1. Where the tender text prescribes a format for a document (an annexure, \
+   form, undertaking or bid letter wording), reproduce that format's \
+   wording and fields faithfully, filling in the bidder's details. Where \
+   it prescribes none, draft a standard one for its stated purpose.
+2. Never invent a fact - no certificate number, date, monetary figure, \
    client name, or legal detail may appear unless it is explicitly given to \
    you below. Where a document would normally need such a fact and none is \
    given, write the exact placeholder text \
    "[TO BE FILLED FROM COMPANY RECORDS: <what is missing>]" in its place, \
    and also list that gap in "open_items" for that document.
-2. Address each document to the tendering organisation named below and \
+3. Address each document to the tendering organisation named below and \
    reference the tender by its reference number where relevant, in the \
    formal register of an Indian government/PSU tender bid.
-3. Start each letter/declaration with its addressee ("To," then the \
+4. Start each letter/declaration with its addressee ("To," then the \
    organisation's name as separate paragraphs) and a "Subject: ..." \
    paragraph, then "Dear Sir/Madam," where the form is a letter. End each \
    document's body with a short closing line appropriate to its own \
@@ -336,39 +414,33 @@ Follow these rules strictly:
    yourself - the date is printed above every document and "For <company>" \
    plus the signature block below it, automatically, so adding your own \
    would duplicate them.
-4. Write each paragraph as a separate string in "body_paragraphs", in \
-   reading order - do not use markdown, bullet characters, or HTML.
-5. Keep each document focused only on its own stated purpose - do not \
+5. Write each paragraph as a separate string in "body_paragraphs", in \
+   reading order - do not use markdown, bullet characters, or HTML. For a \
+   form of numbered fields, write one "<field>: <value>" string per field.
+6. Keep each document focused only on its own stated purpose - do not \
    repeat the entire covering letter's content inside every other document.
-6. Do not claim any qualification, certification, or compliance outcome as \
+7. Do not claim any qualification, certification, or compliance outcome as \
    met unless the "Established company facts" section below actually \
-   states it. This applies even when only the exact figure is missing: if \
-   a document would need to say a numeric threshold (turnover, experience \
-   value, headcount, etc.) is satisfied but the actual figure isn't an \
-   established fact, do NOT write that the requirement "is met" or \
-   "meets the minimum" - state only the placeholder for the missing \
-   figure (e.g. "Our audited average annual turnover for the relevant \
-   years is [TO BE FILLED FROM COMPANY RECORDS: turnover figures], as \
-   certified by our Chartered Accountant.") and let the open item speak \
-   for itself, rather than asserting the conclusion the missing number \
-   would need to support.
-7. An established fact only supports the exact claim it states. General \
-   industry experience (e.g. "years in EdTech/IT") does NOT establish \
-   experience in a narrower field a tender asks about (e.g. social media \
-   management, digital marketing) - for those, use a placeholder unless a \
-   fact below states that field explicitly.
-8. The "Company background" section (when present) is descriptive text \
+   states it. If a document would need to say a numeric threshold \
+   (turnover, experience value, headcount, etc.) is satisfied but the \
+   actual figure isn't an established fact, state only the placeholder for \
+   the missing figure and let the open item speak for itself.
+8. An established fact only supports the exact claim it states. General \
+   industry experience does NOT establish experience in a narrower field a \
+   tender asks about - use a placeholder unless a fact states it explicitly.
+9. The "Company background" section (when present) is descriptive text \
    from the company's own brochure. You may use it to describe the \
-   company's services, capabilities and track record in general terms, \
-   but never as proof that a tender requirement is met, and never refer \
-   to "the brochure" or any document as enclosed or available for review.
+   company's services and capabilities in general terms, but never as \
+   proof that a tender requirement is met, and never refer to "the \
+   brochure" or any document as enclosed or available for review.
 
 Respond with ONLY a single JSON object, no markdown fences and no extra \
 text, matching exactly this shape:
 {
   "documents": [
     {
-      "title": <string, matching the corresponding input document's title exactly>,
+      "id": <string, the corresponding input document's id exactly>,
+      "title": <string, the document's heading>,
       "body_paragraphs": [<strings, one per paragraph, in order>],
       "open_items": [<strings - facts this document still needs that weren't available; empty list if none>]
     }
@@ -382,37 +454,39 @@ def build_bid_draft_system_prompt() -> str:
 
 def build_bid_draft_user_prompt(
     tender: dict[str, Any],
-    planned_documents: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
     company_profile: dict[str, Any],
     established_facts: list[str],
     company_background: str = "",
 ) -> str:
-    """Render the plan (from build_bid_plan_user_prompt's response) plus
-    verified company facts, and optionally `company_background` (brochure
-    text - descriptive only, see BID_DRAFT_SYSTEM_PROMPT rule 8) - `established_facts` is a flat list of
-    already-true statements (e.g. "Legal Status: evidence available (CIN
-    U85499TS2025PTC199477)") the caller has already worked out from
-    config/company_profile.json and the eligibility compliance matrix (see
-    app.reports.bid_generator._build_compliance_matrix), so the model never
-    has to re-derive or guess which facts are actually established.
+    """Render one batch of checklist rows to draft (see
+    app.reports.bid_generator's submission checklist - `source` "draft")
+    plus verified company facts, and optionally `company_background`
+    (brochure text - descriptive only, see BID_DRAFT_SYSTEM_PROMPT rule 9).
+    `established_facts` is a flat list of already-true statements the
+    caller has already worked out from config/company_profile.json and the
+    eligibility compliance matrix, so the model never has to re-derive or
+    guess which facts are actually established.
     """
-    document_summary = tender.get("document_summary") or {}
     signatory = company_profile.get("authorized_signatory", {})
 
-    lines = [
-        f"Title: {_field(tender.get('title'))}",
-        f"Organisation: {_field(tender.get('organisation'))}",
-        f"Tender Reference: {_field(tender.get('tender_ref'))}",
-        f"Tender summary: {_field(document_summary.get('summary_text'))}",
-        "",
-        "Documents to draft, in order:",
-    ]
-    for i, doc in enumerate(planned_documents, start=1):
-        lines.append(f"  {i}. \"{doc['title']}\" ({doc['kind']}) - {doc['purpose']}")
+    lines = _tender_requirement_lines(tender)
+    lines.append("")
+    lines.append("Documents to draft, in order:")
+    for row in rows:
+        detail = f"  - id {row['id']}: \"{row['document']}\" - {row.get('what_to_upload') or ''}"
+        if row.get("format_text"):
+            detail += f" [format: {row['format_text']}]"
+        if row.get("notes"):
+            detail += f" [note: {row['notes']}]"
+        lines.append(detail)
     lines.append("")
     lines.append("Established company facts (only these may be stated as fact):")
     lines.append(f"  - Legal name: {_field(company_profile.get('legal_name'))}")
     lines.append(f"  - Registered office: {_field(company_profile.get('registered_office'))}")
+    lines.append(f"  - CIN: {_field(company_profile.get('cin'))}")
+    lines.append(f"  - PAN / GSTIN: {_field(company_profile.get('pan'))} / {_field(company_profile.get('gstin'))}")
+    lines.append(f"  - Email / phone: {_field(company_profile.get('email'))} / {_field(company_profile.get('phone'))}")
     lines.append(f"  - Authorized signatory: {_field(signatory.get('name'))}, {_field(signatory.get('designation'))}")
     for fact in established_facts:
         lines.append(f"  - {fact}")
@@ -422,4 +496,6 @@ def build_bid_draft_user_prompt(
         lines.append("Company background (descriptive only - not evidence of any requirement):")
         lines.append(company_background.strip())
 
+    lines.append("")
+    lines += _tender_text_block(tender)
     return "\n".join(lines)

@@ -354,6 +354,8 @@ def test_summarize_pending_documents_persists_result(collection, tmp_path):
     stored = collection.find_one({"dedup_key": "ref:1"})
     assert stored["document_summary"]["estimated_bid_amount"] == "INR 45,00,000 (estimated)"
     assert stored["document_summary_generated_at"] is not None
+    # The documents' own text is kept for the submission checklist - the files themselves are deleted.
+    assert stored["document_text"] == "--- Document: notice.txt ---\nTender notice text"
 
 
 def test_summarize_pending_documents_deletes_local_file_after_success(collection, tmp_path):

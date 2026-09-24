@@ -444,6 +444,36 @@
   .cl-del button:hover { color: var(--high); }
   .cl-empty { font-size: 13px; color: var(--ink-faint); padding: 6px 2px; }
   .cl-badge { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--low-bg); color: var(--low); margin-left: 4px; white-space: nowrap; }
+  .cl-doc-title { text-align: center; font-size: 15px; font-weight: 800; color: var(--brand-navy); letter-spacing: 0.02em; }
+  .cl-header-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 18px; margin-top: 10px; }
+  .cl-header-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--ink-faint); }
+  .cl-header-field input { font: inherit; font-size: 13px; font-weight: 600; color: var(--ink); border: 1px solid var(--panel-border); border-radius: 6px; padding: 5px 8px; }
+  .cl-header-field input:focus { outline: none; border-color: var(--brand-blue); }
+  .cl-warning { margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid #facc15; background: #fefce8; color: #a16207; font-size: 12.5px; }
+  .cl-hint { margin: 0 0 10px; font-size: 12.5px; color: var(--ink-soft); }
+  .cl-submission { min-width: 1160px; }
+  .cl-submission input[type="text"] { min-width: 132px; }
+  .cl-table td.cl-sno { width: 1%; text-align: center; vertical-align: middle; font-weight: 700; color: var(--ink-soft); }
+  .cl-table th.cl-mark, .cl-table td.cl-mark { width: 1%; text-align: center; vertical-align: middle; }
+  .cl-table td.cl-mark input { width: 16px; height: 16px; cursor: pointer; }
+  .cl-table select { font: inherit; font-size: 12.5px; width: 100%; border: 1px solid var(--panel-border); border-radius: 6px; padding: 4px; background: #fff; color: var(--ink); }
+  .cl-table select.cl-status { font-weight: 600; min-width: 116px; }
+  .cl-table select.status-ok { background: #ebfbee; color: #2f9e44; }
+  .cl-table select.status-prep { background: #fff9db; color: #a16207; }
+  .cl-table select.status-gap { background: #fff5f5; color: var(--high); }
+  .cl-table select.status-na { background: #f1f3f5; color: var(--ink-faint); }
+  .cl-table tr.na textarea, .cl-table tr.na input[type="text"] { color: var(--ink-faint); text-decoration: line-through; }
+  .cl-table td.cl-actions { width: 1%; white-space: nowrap; vertical-align: middle; }
+  .cl-actions button { border: 1px solid transparent; background: none; color: var(--ink-faint); font-size: 14px; cursor: pointer; padding: 2px 4px; border-radius: 4px; line-height: 1; }
+  .cl-actions button:hover:not(:disabled) { border-color: var(--panel-border); color: var(--brand-blue-deep); }
+  .cl-actions button:disabled { opacity: 0.3; cursor: default; }
+  .cl-actions button.has-detail { color: var(--brand-blue-deep); font-weight: 700; }
+  .cl-actions button.cl-del-btn:hover { color: var(--high); }
+  .cl-detail-row td { background: var(--page-bg); }
+  .cl-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cl-detail label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--ink-faint); }
+  .cl-detail textarea { background: #fff !important; border-color: var(--panel-border) !important; }
+  .cl-notes-section + .cl-notes-section { margin-top: 16px; }
 
   .detail-row td {
     background: var(--page-bg);
@@ -1020,8 +1050,8 @@
   </div>
 </div><!-- /documentsPage -->
 
-<!-- Editable review checklist for one tender (#/checklist/{id}) - the
-     same checklist the bid pack PDF prints on its internal review pages. -->
+<!-- Editable Master Bid Submission Checklist for one tender (#/checklist/{id}) -
+     the bid pack PDF is generated from it, one document per row. -->
 <div id="checklistPage" hidden>
   <div class="drill-header">
     <button class="back-link" id="checklistBackBtn">
@@ -1031,11 +1061,13 @@
     <div class="drill-heading">Tender Checklist</div>
   </div>
   <div id="checklistContent"><div class="loading">Loading...</div></div>
-  <datalist id="checklistStatuses">
-    <option value="Evidence available">
-    <option value="Identifier verified - scan not yet uploaded">
-    <option value="TO BE FILLED FROM COMPANY RECORDS">
-    <option value="TO BE VERIFIED BEFORE SIGNING">
+  <datalist id="checklistWhere">
+    <option value="Technical Upload">
+    <option value="Financial Bid">
+    <option value="Portal / Technical">
+    <option value="Technical Presentation">
+    <option value="GeM / Physical as applicable">
+    <option value="Post-award">
   </datalist>
 </div><!-- /checklistPage -->
 
@@ -1111,9 +1143,10 @@
   <div class="modal-card">
     <h2 id="generateModalTitle">Generate a bid pack for this tender?</h2>
     <p>
-      This drafts a bid submission PDF (covering letter, company profile and a requirement-to-evidence
-      compliance matrix) from this tender's documents and the company's profile/documents library, and marks
-      this tender as Applied. Review and complete every flagged item before actually submitting anything.
+      This builds a bid submission PDF from this tender's submission checklist: the checklist page, then every
+      document in S.No order - library documents attached and each document the bidder writes AI-drafted from
+      the tender, with the letterhead, signature and stamp each row has ticked - and marks this tender as
+      Applied. Review and complete every placeholder before actually submitting anything.
     </p>
     <div class="modal-error" id="generateError"></div>
     <div class="modal-actions">
@@ -1921,24 +1954,30 @@
   }
 
   // --- Tender checklist page ---------------------------------------------
-  // The bid pack's internal review checklist as editable data (see
+  // The Master Bid Submission Checklist as editable data (see
   // app.reports.bid_generator.build_checklist): POST /tenders/{id}/checklist
-  // builds it, GET loads it, PUT saves the edited rows. Generating the bid
-  // pack prints this saved version into the PDF's checklist pages.
+  // builds it from the tender, GET loads it, PUT saves the edits. Generating
+  // the bid pack then produces one document per row, in this order - with
+  // the letterhead / signature / stamp each row has ticked.
 
-  const CHECKLIST_SECTIONS = [
-    { key: "open_items", title: "Open items before signing", simple: true },
-    { key: "company_eligibility", title: "Compliance matrix — Company eligibility profile" },
-    { key: "tender_requirements", title: "Compliance matrix — Tender-specific requirements" },
-    { key: "missing_information", title: "Missing information flagged in the tender documents", simple: true },
-    { key: "reference_docs", title: "Used for drafting only (not enclosed)", simple: true },
-    { key: "not_enclosed", title: "In the Documents library but not enclosed", simple: true },
+  const CL_STATUSES = ["Enclosed", "To be prepared", "Missing", "Not applicable"];
+  const CL_MARKS = [
+    { field: "letterhead", label: "Letterhead" },
+    { field: "signature", label: "Signature" },
+    { field: "stamp", label: "Stamp" },
+  ];
+  const NOTE_SECTIONS = [
+    { key: "open_items", title: "Open items before signing" },
+    { key: "missing_information", title: "Missing information flagged in the tender documents" },
   ];
 
   // escapeHtml leaves quotes alone - these go inside attribute values.
   const escapeAttr = (s) => escapeHtml(s).replace(/"/g, "&quot;");
 
-  const checklistState = { tenderId: null, tender: null, items: [], dirty: false, saving: false, returnHash: "#/tenders" };
+  const checklistState = {
+    tenderId: null, tender: null, items: [], notes: [], header: {}, library: [], builderNote: null,
+    expanded: new Set(), dirty: false, saving: false, returnHash: "#/tenders",
+  };
 
   // From a tender row's "Generate Checklist" - builds it, then opens it.
   async function generateChecklistFromRow(btn) {
@@ -1991,86 +2030,169 @@
   function setChecklistData(data) {
     checklistState.tender = data.tender;
     checklistState.items = data.checklist.items || [];
+    checklistState.notes = data.checklist.notes || [];
+    checklistState.header = data.checklist.header || {};
+    checklistState.builderNote = data.checklist.builder_note || null;
+    checklistState.library = data.library || [];
     checklistState.updatedAt = data.checklist.updated_at;
     checklistState.dirty = false;
     renderChecklist();
   }
 
   function statusClass(status) {
-    if (status === "Evidence available") return "status-ok";
-    if ((status || "").startsWith("Identifier verified")) return "status-id";
-    return status ? "status-gap" : "";
+    return {
+      "Enclosed": "status-ok", "To be prepared": "status-prep", "Missing": "status-gap", "Not applicable": "status-na",
+    }[status] || "";
   }
 
-  function checklistRowHtml(item, idx, simple) {
-    const done = `<td class="cl-done"><input type="checkbox" data-idx="${idx}" data-field="done"${item.done ? " checked" : ""} title="Mark done"></td>`;
+  // What the pack does with a row: "draft" (AI writes it) or "upload:<id>" (attach that library document).
+  function sourceValue(item) {
+    return item.source === "draft" ? "draft" : `upload:${item.document_id || ""}`;
+  }
+
+  function sourceSelectHtml(item, idx) {
+    const current = sourceValue(item);
+    const known = item.source === "draft" || !item.document_id || checklistState.library.some((d) => d.id === item.document_id);
+    const opts = [
+      `<option value="draft">AI draft</option>`,
+      `<option value="upload:">Attach: — not on file —</option>`,
+      ...checklistState.library.map((d) => `<option value="upload:${escapeAttr(d.id)}">Attach: ${escapeHtml(d.name)}</option>`),
+      known ? "" : `<option value="${escapeAttr(current)}">Attach: (deleted document)</option>`,
+    ];
+    return `<select class="cl-source" data-kind="row" data-idx="${idx}" data-field="source">${opts.join("")}</select>`
+      .replace(`value="${escapeAttr(current)}"`, `value="${escapeAttr(current)}" selected`);
+  }
+
+  function checklistRowHtml(item, idx) {
     const ta = (field, placeholder) =>
-      `<textarea rows="1" data-idx="${idx}" data-field="${field}" placeholder="${placeholder}">${escapeHtml(item[field] || "")}</textarea>`;
-    const del = `<td class="cl-del"><button data-del="${idx}" title="Remove this item">&times;</button></td>`;
-    const badge = item.origin === "user" ? '<span class="cl-badge">Added</span>'
-      : item.origin === "ai_draft" ? '<span class="cl-badge">AI draft</span>' : "";
-    if (simple) {
-      return `<tr class="${item.done ? "done" : ""}">${done}<td>${ta("requirement", "Describe the item…")}${badge}</td><td>${ta("evidence", "Notes")}</td>${del}</tr>`;
-    }
-    return `
-      <tr class="${item.done ? "done" : ""}">
-        ${done}
-        <td>${ta("requirement", "Requirement…")}${badge}</td>
-        <td>${ta("source", "Source")}</td>
-        <td><input type="text" list="checklistStatuses" class="${statusClass(item.status)}" data-idx="${idx}" data-field="status" value="${escapeAttr(item.status || "")}" placeholder="Status"></td>
-        <td>${ta("evidence", "Evidence / notes")}</td>
-        ${del}
+      `<textarea rows="1" data-kind="row" data-idx="${idx}" data-field="${field}" placeholder="${placeholder}">${escapeHtml(item[field] || "")}</textarea>`;
+    const statusOpts = CL_STATUSES.map((s) => `<option${s === item.status ? " selected" : ""}>${s}</option>`).join("");
+    const marks = CL_MARKS.map(({ field, label }) =>
+      `<td class="cl-mark"><input type="checkbox" data-kind="row" data-idx="${idx}" data-field="${field}"${item[field] ? " checked" : ""} title="${label}" aria-label="${label}"></td>`).join("");
+    const badge = item.origin === "user" ? '<span class="cl-badge">Added</span>' : "";
+    const open = checklistState.expanded.has(idx);
+    const hasDetail = item.format_text || item.notes;
+    const last = checklistState.items.length - 1;
+    const row = `
+      <tr class="${item.status === "Not applicable" ? "na" : ""}">
+        <td class="cl-sno">${idx + 1}</td>
+        <td>${ta("document", "Document")}${badge}</td>
+        <td>${ta("what_to_upload", "What to upload…")}</td>
+        <td><input type="text" list="checklistWhere" data-kind="row" data-idx="${idx}" data-field="where" value="${escapeAttr(item.where || "")}" placeholder="Where"></td>
+        <td><select class="cl-status ${statusClass(item.status)}" data-kind="row" data-idx="${idx}" data-field="status">${statusOpts}</select></td>
+        ${marks}
+        <td>${sourceSelectHtml(item, idx)}</td>
+        <td class="cl-actions">
+          <button data-move="${idx}" data-dir="-1" title="Move up"${idx === 0 ? " disabled" : ""}>&uarr;</button>
+          <button data-move="${idx}" data-dir="1" title="Move down"${idx === last ? " disabled" : ""}>&darr;</button>
+          <button data-expand="${idx}" title="Format / notes" class="${hasDetail ? "has-detail" : ""}">${open ? "&minus;" : "&hellip;"}</button>
+          <button data-del-row="${idx}" title="Remove this row" class="cl-del-btn">&times;</button>
+        </td>
+      </tr>`;
+    if (!open) return row;
+    return row + `
+      <tr class="cl-detail-row">
+        <td></td>
+        <td colspan="9">
+          <div class="cl-detail">
+            <label>Format / drafting instructions${item.source === "draft" ? "" : " (used only for AI drafts)"}
+              ${ta("format_text", "e.g. Annexure 5 format - Particulars of Bidder's Organisation")}</label>
+            <label>Notes ${ta("notes", "Anything to watch for on this row")}</label>
+          </div>
+        </td>
       </tr>`;
   }
 
-  function checklistSectionHtml(section) {
-    const rows = checklistState.items
-      .map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => item.section === section.key);
-    const doneCount = rows.filter(({ item }) => item.done).length;
-    const head = section.simple
-      ? "<th>Done</th><th>Item</th><th style=\"width:30%\">Notes</th><th></th>"
-      : "<th>Done</th><th style=\"width:34%\">Requirement</th><th style=\"width:14%\">Source</th><th style=\"width:18%\">Status</th><th>Evidence / Notes</th><th></th>";
-    const body = rows.length
-      ? `<div style="overflow-x:auto"><table class="cl-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(({ item, idx }) => checklistRowHtml(item, idx, section.simple)).join("")}</tbody></table></div>`
-      : '<div class="cl-empty">No items.</div>';
+  function submissionTableHtml() {
+    const items = checklistState.items;
+    const body = items.length
+      ? `<div style="overflow-x:auto"><table class="cl-table cl-submission">
+          <thead><tr>
+            <th>S.No.</th><th style="width:14%">Document</th><th style="width:26%">What to Upload</th>
+            <th style="width:15%">Where</th><th>Status</th>
+            ${CL_MARKS.map(({ label }) => `<th class="cl-mark">${label}</th>`).join("")}
+            <th style="width:15%">Source</th><th></th>
+          </tr></thead>
+          <tbody>${items.map(checklistRowHtml).join("")}</tbody>
+        </table></div>`
+      : '<div class="cl-empty">No documents listed.</div>';
     return `
       <div class="cl-card">
         <div class="cl-section-head">
-          <h3>${escapeHtml(section.title)}</h3>
-          <span class="cl-count">${doneCount} / ${rows.length} done</span>
-          <button class="cl-btn cl-add" data-add="${section.key}">+ Add item</button>
+          <h3>Submission Checklist</h3>
+          <span class="cl-count">${items.filter((i) => i.status === "Enclosed").length} / ${items.length} enclosed</span>
+          <button class="cl-btn cl-add" data-add-row="1">+ Add document</button>
         </div>
+        <p class="cl-hint">Tick <b>Letterhead</b>, <b>Signature</b> and <b>Stamp</b> for what each document needs in the bid pack.
+          <b>AI draft</b> rows are written from the tender; <b>Attach</b> rows use the chosen document from the Documents library.</p>
         ${body}
       </div>`;
   }
 
-  function checklistTenderHtml(t) {
+  function noteRowHtml(item, idx) {
+    const ta = (field, placeholder) =>
+      `<textarea rows="1" data-kind="note" data-idx="${idx}" data-field="${field}" placeholder="${placeholder}">${escapeHtml(item[field] || "")}</textarea>`;
+    const badge = item.origin === "user" ? '<span class="cl-badge">Added</span>'
+      : item.origin === "ai_draft" ? '<span class="cl-badge">AI draft</span>' : "";
+    return `
+      <tr class="${item.done ? "done" : ""}">
+        <td class="cl-done"><input type="checkbox" data-kind="note" data-idx="${idx}" data-field="done"${item.done ? " checked" : ""} title="Mark done"></td>
+        <td>${ta("requirement", "Describe the item…")}${badge}</td>
+        <td>${ta("evidence", "Notes")}</td>
+        <td class="cl-del"><button data-del-note="${idx}" title="Remove this item">&times;</button></td>
+      </tr>`;
+  }
+
+  function notesHtml() {
+    return NOTE_SECTIONS.map((section) => {
+      const rows = checklistState.notes.map((item, idx) => ({ item, idx })).filter(({ item }) => item.section === section.key);
+      const body = rows.length
+        ? `<table class="cl-table"><thead><tr><th>Done</th><th>Item</th><th style="width:30%">Notes</th><th></th></tr></thead>
+            <tbody>${rows.map(({ item, idx }) => noteRowHtml(item, idx)).join("")}</tbody></table>`
+        : '<div class="cl-empty">No items.</div>';
+      return `
+        <div class="cl-notes-section">
+          <div class="cl-section-head">
+            <h3>${escapeHtml(section.title)}</h3>
+            <button class="cl-btn cl-add" data-add-note="${section.key}">+ Add item</button>
+          </div>
+          <div style="overflow-x:auto">${body}</div>
+        </div>`;
+    }).join("");
+  }
+
+  function checklistHeaderHtml(t) {
+    const h = checklistState.header;
     const s = t.document_summary || {};
     const val = (listing, doc) => amountCellHtml(listing, doc) ?? "Not disclosed";
-    const opening = t.opening_date ? fmtDate(t.opening_date) : escapeHtml(s.tender_opening_date || "Not disclosed");
-    const keyDates = (s.key_dates || []).length
-      ? `<ul class="cl-key-dates">${s.key_dates.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : "";
-    const techTable = (s.technical_criteria_table || []).length
-      ? `<div style="margin-top:14px"><h3 style="margin-bottom:8px">Detailed technical criteria (marks-based)</h3>${technicalCriteriaTableHtml(s.technical_criteria_table)}</div>` : "";
+    const field = (key, label) => `
+      <label class="cl-header-field"><span>${label}</span>
+        <input type="text" data-kind="header" data-field="${key}" value="${escapeAttr(h[key] || "")}" placeholder="${label}">
+      </label>`;
+    const warnings = [
+      h.summary_only ? "Built from the tender's summary only - its full document text wasn't kept, so annexure numbers and formats may be missing. Check against the tender document." : "",
+      checklistState.builderNote || "",
+    ].filter(Boolean).map((w) => `<div class="cl-warning">${escapeHtml(w)}</div>`).join("");
     return `
       <div class="cl-card">
-        <h2>${escapeHtml(t.title || "(untitled tender)")}</h2>
-        <div class="cl-meta">
-          ${escapeHtml(t.organisation || "")}
-          ${t.source_url ? ` · <a href="${escapeAttr(t.source_url)}" target="_blank" rel="noopener">View source &rarr;</a>` : ""}
+        <div class="cl-doc-title">${escapeHtml((h.organisation || t.organisation || "").toUpperCase())}</div>
+        <div class="cl-doc-title">MASTER BID SUBMISSION CHECKLIST</div>
+        <div class="cl-meta" style="text-align:center">
+          ${t.source_url ? `<a href="${escapeAttr(t.source_url)}" target="_blank" rel="noopener">View tender source &rarr;</a>` : ""}
         </div>
-        <dl class="cl-snapshot">
-          <div><dt>Tender reference</dt><dd>${escapeHtml(t.tender_ref || "Not disclosed")}</dd></div>
-          <div><dt>Published</dt><dd>${fmtDate(t.published_date)}</dd></div>
+        <div class="cl-header-grid">
+          ${field("bid_number", "GeM Bid No.")}
+          ${field("bid_end", "Bid End Date/Time")}
+          ${field("tender", "Tender")}
+          ${field("bidder", "Bidder")}
+        </div>
+        ${warnings}
+        <dl class="cl-snapshot" style="margin-top:14px">
           <div><dt>Closing</dt><dd>${fmtDate(t.closing_date)} (${escapeHtml(daysLeftLabel(t.closing_date))})</dd></div>
-          <div><dt>Opening</dt><dd>${opening}</dd></div>
           <div><dt>Estimated bid amount</dt><dd>${val(t.tender_value, s.estimated_bid_amount)}</dd></div>
           <div><dt>EMD</dt><dd>${val(t.earnest_money, s.emd_amount)}</dd></div>
           <div><dt>Tender fee</dt><dd>${val(t.document_fees, s.tender_fee_amount)}</dd></div>
         </dl>
-        ${keyDates}
-        ${techTable}
       </div>`;
   }
 
@@ -2085,7 +2207,7 @@
         <span class="cl-progress" id="clProgress"></span>
         <span class="cl-save-state" id="clSaveState"></span>
         <div class="cl-toolbar-actions">
-          <button class="cl-btn" id="clRegenerateBtn" title="Rebuild from the tender's documents, eligibility profile and documents library">Regenerate from tender</button>
+          <button class="cl-btn" id="clRegenerateBtn" title="Rebuild from the tender's documents and the documents library">Regenerate from tender</button>
           <button class="cl-btn primary" id="clSaveBtn">Save</button>
           ${bidBtns}
         </div>
@@ -2096,8 +2218,9 @@
     const content = el("checklistContent");
     content.innerHTML =
       checklistToolbarHtml() +
-      checklistTenderHtml(checklistState.tender) +
-      CHECKLIST_SECTIONS.map(checklistSectionHtml).join("");
+      checklistHeaderHtml(checklistState.tender) +
+      submissionTableHtml() +
+      `<div class="cl-card">${notesHtml()}</div>`;
     content.querySelectorAll("textarea").forEach(autoGrow);
     el("clSaveBtn").addEventListener("click", saveChecklist);
     el("clRegenerateBtn").addEventListener("click", () => regenerateChecklist(true));
@@ -2115,7 +2238,9 @@
 
   function updateChecklistStatus(errorText) {
     const items = checklistState.items;
-    el("clProgress").textContent = `${items.filter((i) => i.done).length} / ${items.length} done`;
+    const missing = items.filter((i) => i.status === "Missing").length;
+    el("clProgress").textContent =
+      `${items.filter((i) => i.status === "Enclosed").length} / ${items.length} enclosed` + (missing ? ` · ${missing} missing` : "");
     const state = el("clSaveState");
     state.className = "cl-save-state" + (errorText ? " error" : checklistState.dirty ? " dirty" : "");
     state.textContent = errorText
@@ -2130,48 +2255,92 @@
     updateChecklistStatus();
   }
 
+  // Switching a row between "AI draft" and "Attach" resets its marks and
+  // status to what that kind of document normally needs.
+  function applySource(item, value) {
+    const [kind, docId] = value === "draft" ? ["draft", null] : ["upload", value.slice("upload:".length) || null];
+    const kindChanged = item.source !== kind;
+    item.source = kind;
+    item.document_id = docId;
+    if (item.status !== "Not applicable") {
+      item.status = kind === "draft" ? "To be prepared" : docId ? "Enclosed" : "Missing";
+    }
+    if (kindChanged) {
+      item.letterhead = kind === "draft";
+      item.signature = true;
+      item.stamp = true;
+    }
+  }
+
   function onChecklistInput(e) {
     const target = e.target;
-    const idx = target.dataset.idx;
-    if (idx === undefined) return;
-    const item = checklistState.items[Number(idx)];
-    const field = target.dataset.field;
-    if (field === "done") {
-      item.done = target.checked;
-      target.closest("tr").classList.toggle("done", item.done);
-      // Refresh this section's "x / y done" count.
-      const card = target.closest(".cl-card");
-      const section = CHECKLIST_SECTIONS.find((s) => s.key === item.section);
-      const sectionItems = checklistState.items.filter((i) => i.section === section.key);
-      card.querySelector(".cl-count").textContent =
-        `${sectionItems.filter((i) => i.done).length} / ${sectionItems.length} done`;
+    const { kind, idx, field } = target.dataset;
+    if (!kind) return;
+    if (kind === "header") {
+      checklistState.header[field] = target.value;
+      markChecklistDirty();
+      return;
+    }
+    const item = (kind === "row" ? checklistState.items : checklistState.notes)[Number(idx)];
+    if (target.type === "checkbox") {
+      item[field] = target.checked;
+      if (kind === "note") target.closest("tr").classList.toggle("done", item.done);
+    } else if (field === "source") {
+      applySource(item, target.value);
+      renderChecklist();
     } else {
       item[field] = target.value;
       if (target.tagName === "TEXTAREA") autoGrow(target);
-      if (field === "status") target.className = statusClass(target.value);
+      if (field === "status") {
+        target.className = `cl-status ${statusClass(target.value)}`;
+        target.closest("tr").classList.toggle("na", target.value === "Not applicable");
+      }
     }
     markChecklistDirty();
   }
 
   function onChecklistClick(e) {
-    const addBtn = e.target.closest("[data-add]");
-    if (addBtn) {
-      const section = CHECKLIST_SECTIONS.find((s) => s.key === addBtn.dataset.add);
-      checklistState.items.push({
-        id: null, section: section.key, requirement: "", source: section.simple ? "" : "Added manually",
-        status: "", evidence: "", done: false, origin: "user",
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const items = checklistState.items;
+    if (btn.dataset.addRow) {
+      items.push({
+        id: null, document: "", what_to_upload: "", where: "Technical Upload", status: "Missing", source: "upload",
+        document_id: null, letterhead: false, signature: true, stamp: true, format_text: "", notes: "",
+        done: false, origin: "user",
       });
-      const newIdx = checklistState.items.length - 1;
+      checklistState.expanded.clear();
       renderChecklist();
       markChecklistDirty();
-      el("checklistContent").querySelector(`textarea[data-idx="${newIdx}"][data-field="requirement"]`)?.focus();
-      return;
-    }
-    const delBtn = e.target.closest("[data-del]");
-    if (delBtn) {
-      const item = checklistState.items[Number(delBtn.dataset.del)];
-      if (item.requirement.trim() && !confirm("Remove this checklist item?")) return;
-      checklistState.items.splice(Number(delBtn.dataset.del), 1);
+      el("checklistContent").querySelector(`textarea[data-kind="row"][data-idx="${items.length - 1}"][data-field="document"]`)?.focus();
+    } else if (btn.dataset.move !== undefined) {
+      const from = Number(btn.dataset.move);
+      const to = from + Number(btn.dataset.dir);
+      if (to < 0 || to >= items.length) return;
+      [items[from], items[to]] = [items[to], items[from]];
+      checklistState.expanded.clear();
+      renderChecklist();
+      markChecklistDirty();
+    } else if (btn.dataset.expand !== undefined) {
+      const idx = Number(btn.dataset.expand);
+      if (!checklistState.expanded.delete(idx)) checklistState.expanded.add(idx);
+      renderChecklist();
+    } else if (btn.dataset.delRow !== undefined) {
+      const idx = Number(btn.dataset.delRow);
+      if (items[idx].document.trim() && !confirm(`Remove "${items[idx].document}" from the checklist?`)) return;
+      items.splice(idx, 1);
+      checklistState.expanded.clear();
+      renderChecklist();
+      markChecklistDirty();
+    } else if (btn.dataset.addNote) {
+      checklistState.notes.push({ id: null, section: btn.dataset.addNote, requirement: "", evidence: "", done: false, origin: "user" });
+      renderChecklist();
+      markChecklistDirty();
+      el("checklistContent").querySelector(`textarea[data-kind="note"][data-idx="${checklistState.notes.length - 1}"][data-field="requirement"]`)?.focus();
+    } else if (btn.dataset.delNote !== undefined) {
+      const idx = Number(btn.dataset.delNote);
+      if (checklistState.notes[idx].requirement.trim() && !confirm("Remove this item?")) return;
+      checklistState.notes.splice(idx, 1);
       renderChecklist();
       markChecklistDirty();
     }
@@ -2184,7 +2353,7 @@
       const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items: checklistState.items }),
+        body: JSON.stringify({ items: checklistState.items, notes: checklistState.notes, header: checklistState.header }),
       });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       checklistState.saving = false;
@@ -2199,14 +2368,18 @@
   }
 
   async function regenerateChecklist(confirmFirst) {
-    if (confirmFirst && !confirm("Rebuild this checklist from the tender? This replaces all your edits, ticks and added items.")) return;
+    if (confirmFirst && !confirm("Rebuild this checklist from the tender? This replaces all your edits and added rows.")) return;
+    const btn = el("clRegenerateBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Rebuilding…"; }
     try {
       const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, { method: "POST" });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      checklistState.expanded.clear();
       setChecklistData(await res.json());
     } catch (err) {
       console.error("Failed to generate checklist:", err);
       alert(`Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = "Regenerate from tender"; }
     }
   }
 
