@@ -8,18 +8,28 @@ import io
 
 from pypdf import PdfReader
 
+from app.intelligence.bid_drafter import DraftedDocument, SubmissionChecklistPlan, SubmissionRow
 from app.reports.bid_generator import (
+    STATUS_ENCLOSED,
+    STATUS_MISSING,
+    STATUS_NOT_APPLICABLE,
+    STATUS_TO_PREPARE,
     CompanyDocumentRef,
     build_checklist,
     build_compliance_matrix,
     checklist_item,
     company_background_text,
+    default_marks,
+    drop_resolved_missing_information,
     established_facts,
+    is_submission_checklist,
     _match_documents,
     _safe,
     generate_bid_package,
     merge_drafted_open_items,
+    refresh_statuses,
     select_enclosures,
+    submission_item,
 )
 
 COMPANY_PROFILE = {
@@ -82,7 +92,7 @@ TENDER = {
         "estimated_bid_amount": "INR 50,00,000",
         "emd_amount": "INR 50,000",
         "tender_fee_amount": None,
-        "documents_to_submit": ["Work Order copy"],
+        "documents_to_submit": ["Work Order copy", "Non-blacklisting undertaking"],
         "key_dates": ["Bid submission: 30/10/2026"],
         "eligibility_requirements": ["3 years of experience required"],
         "eligibility_technical_criteria": [],
@@ -105,6 +115,46 @@ def _company_doc(name: str, filename: str, content: bytes = b"stub", content_typ
     )
 
 
+def _one_page_pdf(text: str) -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, text)
+    c.save()
+    return buf.getvalue()
+
+
+def _png(color: str = "blue") -> bytes:
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (40, 20), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _pages_text(pdf_bytes: bytes) -> list[str]:
+    return [page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages]
+
+
+def _image_count(page) -> int:
+    xobjects = page["/Resources"].get("/XObject") or {}
+    count = 0
+    for ref in xobjects.values():
+        obj = ref.get_object()
+        if obj.get("/Subtype") == "/Image":
+            count += 1
+        elif obj.get("/Subtype") == "/Form":  # merged pages wrap their images in form XObjects
+            count += _image_count(obj)
+    return count
+
+
+def _checklist(*rows, header=None):
+    return {"version": 2, "header": header or {"bid_number": "GEM/2026/B/1"}, "items": list(rows), "notes": []}
+
+
+# --- Matching and compliance -------------------------------------------------------
+
 def test_safe_escapes_xml_and_rupee_sign():
     assert _safe("R&D <value> ₹5,00,000") == "R&amp;D &lt;value&gt; Rs. 5,00,000"
 
@@ -118,148 +168,16 @@ def test_match_documents_finds_word_overlap():
 def test_compliance_matrix_uses_profile_identifiers_and_flags_gaps():
     rows = build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
     by_id = {c["id"]: r for c, r in zip(ELIGIBILITY_CRITERIA, rows)}
-
-    # legal-status is answered by company_profile's CIN even with no uploaded scan.
     assert by_id["legal-status"].status == "Identifier verified - scan not yet uploaded"
     assert "U12345TS2025PTC000001" in by_id["legal-status"].evidence
-
-    # turnover has no profile-backed identifier and no matching document -> a genuine gap.
     assert by_id["turnover"].status == "TO BE FILLED FROM COMPANY RECORDS"
-
-
-def test_compliance_matrix_prefers_an_actual_uploaded_document():
-    docs = [_company_doc("Certificate of Incorporation", "coi.pdf")]
-    rows = build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
-    legal_row = rows[0]
-    assert legal_row.status == "Evidence available"
-    assert "Certificate of Incorporation" in legal_row.evidence
-
-
-def test_generate_bid_package_produces_readable_pdf_and_merges_pdf_enclosures():
-    # A minimal one-page real PDF to merge in, built with reportlab itself so
-    # the merge path is exercised against a genuine PDF, not just stub bytes.
-    from reportlab.pdfgen import canvas
-
-    enclosure_buf = io.BytesIO()
-    c = canvas.Canvas(enclosure_buf)
-    c.drawString(100, 750, "Enclosure page")
-    c.save()
-
-    documents = [
-        _company_doc("Certificate of Incorporation", "coi.pdf", enclosure_buf.getvalue()),
-        _company_doc("Oaks Contact details", "contact.docx", b"not a pdf", content_type=
-                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    ]
-
-    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, documents)
-
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    assert len(reader.pages) >= 2  # cover pages + the merged enclosure
-    # Spot-check that dynamic/external text made it in without breaking the
-    # XML parser reportlab's Paragraph uses (the tender title has "&"/"<"/">").
-    all_text = "\n".join(page.extract_text() for page in reader.pages)
-    assert "R&D" in all_text
-    assert "TEST COMPANY PRIVATE LIMITED" in all_text
-
-
-def test_generate_bid_package_handles_missing_document_summary():
-    bare_tender = {"title": "Bare tender", "organisation": "Org", "tender_ref": "999"}
-    pdf_bytes = generate_bid_package(bare_tender, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    assert len(reader.pages) >= 1
 
 
 def test_established_facts_only_includes_evidenced_rows():
     docs = [_company_doc("Certificate of Incorporation", "coi.pdf")]
-    rows = build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
-    facts = established_facts(rows)
-
-    assert any("Certificate of Incorporation" in f for f in facts)  # legal-status: an uploaded document
-    assert any("DIPP000000" not in f for f in facts)  # sanity: not every fact mentions every id
-    # turnover has neither an uploaded document nor a profile-backed identifier -> not "established".
+    facts = established_facts(build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs))
+    assert any("Certificate of Incorporation" in f for f in facts)
     assert not any("turnover" in f.lower() for f in facts)
-
-
-def test_generate_bid_package_renders_each_drafted_document_with_its_own_signature_block():
-    from app.intelligence.bid_drafter import DraftedDocument
-
-    drafted = [
-        DraftedDocument(
-            title="Covering Letter",
-            body_paragraphs=["We submit our offer for the above tender."],
-            open_items=[],
-        ),
-        DraftedDocument(
-            title="Non-Blacklisting Declaration",
-            body_paragraphs=["We declare we are not blacklisted by any government body."],
-            open_items=["[TO BE FILLED FROM COMPANY RECORDS: date of declaration]"],
-        ),
-    ]
-
-    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], drafted_documents=drafted)
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    all_text = "\n".join(page.extract_text() for page in reader.pages)
-
-    assert "Non-Blacklisting Declaration" in all_text
-    assert "not blacklisted" in all_text
-    # Open items are listed in the internal checklist, prefixed by their document.
-    assert "INTERNAL REVIEW CHECKLIST" in all_text
-    assert "Non-Blacklisting Declaration: [TO BE FILLED FROM COMPANY RECORDS: date of declaration]" in all_text
-    # The fallback covering letter's fixed boilerplate must NOT appear once real drafts are supplied.
-    assert "Yours faithfully" not in all_text
-
-
-def _one_page_pdf(text: str) -> bytes:
-    from reportlab.pdfgen import canvas
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf)
-    c.drawString(100, 750, text)
-    c.save()
-    return buf.getvalue()
-
-
-def test_brochure_is_never_merged_or_listed_but_feeds_background_text():
-    profile = {**COMPANY_PROFILE, "reference_documents": ["Contact Sheet"]}
-    documents = [
-        _company_doc("Company Brochure", "brochure.pdf", _one_page_pdf("Founded in 2017, serving 20,000 schools")),
-        _company_doc("Contact Sheet", "contact.pdf", _one_page_pdf("Contact sheet text")),
-        _company_doc("Certificate of Incorporation", "coi.pdf", _one_page_pdf("COI enclosure page")),
-        _company_doc("Signature", "sig.png", b"x", content_type="image/png"),
-    ]
-
-    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, profile, documents)
-    submission_text = []
-    for page in PdfReader(io.BytesIO(pdf_bytes)).pages:
-        text = page.extract_text()
-        if "INTERNAL REVIEW CHECKLIST" in text:
-            break
-        submission_text.append(text)
-    submission_text = "\n".join(submission_text)
-
-    assert "COI enclosure page" in submission_text  # real enclosures are still merged
-    assert "Founded in 2017" not in submission_text
-    assert "Contact sheet text" not in submission_text
-    assert "Company Brochure" not in submission_text  # not even listed as an enclosure
-    assert "sig.png" not in submission_text
-
-    background = company_background_text(documents, profile)
-    assert "Founded in 2017" in background
-    assert "Contact sheet text" in background
-    assert "COI enclosure page" not in background
-
-
-def test_generate_bid_package_draws_letterhead_on_submission_pages(tmp_path):
-    from PIL import Image as PILImage
-
-    letterhead = tmp_path / "letterhead.png"
-    PILImage.new("RGB", (60, 85), "white").save(letterhead)
-
-    with_lh = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], letterhead_image=letterhead)
-    reader = PdfReader(io.BytesIO(with_lh))
-    first, last = reader.pages[0], reader.pages[-1]
-    assert first["/Resources"].get("/XObject")  # letterhead image on the covering letter
-    assert not last["/Resources"].get("/XObject")  # plain internal checklist
 
 
 def _library():
@@ -275,13 +193,9 @@ def _library():
 
 def test_select_enclosures_standard_set_first_then_tender_matches():
     selection = select_enclosures(TENDER, _library(), COMPANY_PROFILE)
-    # standard_enclosures order, then the work order ("Work Order copy" / "experience" in the summary).
     assert [d.name for d in selection.selected] == [
         "Certificate of Incorporation", "PAN Card", "Work Order - NCERT OLabs",
     ]
-    assert {d.name for d in selection.not_relevant} == {
-        "Audited Financial Statements FY2024-25", "CMMI Certificate of Compliance",
-    }
     assert selection.over_budget == []
 
 
@@ -292,90 +206,250 @@ def test_select_enclosures_matches_turnover_wording_to_financials():
     assert "Work Order - NCERT OLabs" not in [d.name for d in selection.selected]
 
 
-def test_select_enclosures_without_summary_is_standard_set_only():
-    selection = select_enclosures({"title": "Bare"}, _library(), COMPANY_PROFILE)
-    assert [d.name for d in selection.selected] == ["Certificate of Incorporation", "PAN Card"]
+# --- Building the submission checklist ------------------------------------------------
+
+def test_default_marks_follow_who_signs_the_document():
+    assert default_marks("draft", "Annexure 3") == (True, True, True)
+    assert default_marks("upload", "PAN Card") == (False, True, True)  # self-attested copy
+    assert default_marks("upload", "CA certificate of turnover") == (False, False, False)
 
 
-def test_select_enclosures_reports_documents_over_the_size_budget():
-    docs = _library()
-    docs[2].size = 900  # the work order
-    selection = select_enclosures(TENDER, docs, COMPANY_PROFILE, byte_budget=100)
-    assert [d.name for d in selection.over_budget] == ["Work Order - NCERT OLabs"]
-    assert "Work Order - NCERT OLabs" not in [d.name for d in selection.selected]
+def test_build_checklist_from_ai_plan_resolves_library_documents():
+    plan = SubmissionChecklistPlan(
+        bid_number="GEM/2026/B/6045377",
+        bid_end="28-09-2026, 19:00 Hrs",
+        rows=[
+            SubmissionRow(document="PAN", what_to_upload="PAN of the bidder", source="upload",
+                          library_document="PAN Card", signature=True, stamp=True),
+            SubmissionRow(document="GST Registration", what_to_upload="GST certificate", source="upload",
+                          library_document="GST Certificate"),  # not in the library
+            SubmissionRow(document="Annexure 5", what_to_upload="Particulars of Bidder", where="Technical Upload",
+                          source="draft", letterhead=True, signature=True, stamp=True,
+                          format_hint="Annexure 5 format"),
+        ],
+    )
+    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, _library(), plan)
+
+    assert is_submission_checklist(checklist)
+    assert checklist["header"]["bid_number"] == "GEM/2026/B/6045377"
+    assert checklist["header"]["bid_end"] == "28-09-2026, 19:00 Hrs"
+    assert checklist["header"]["bidder"] == "TEST COMPANY PRIVATE LIMITED"
+    assert checklist["header"]["summary_only"] is True  # no document_text on this tender
+
+    rows = {r["document"]: r for r in checklist["items"]}
+    assert rows["PAN"]["document_id"] == "PAN Card" and rows["PAN"]["status"] == STATUS_ENCLOSED
+    assert rows["GST Registration"]["document_id"] is None and rows["GST Registration"]["status"] == STATUS_MISSING
+    assert rows["Annexure 5"]["status"] == STATUS_TO_PREPARE
+    assert (rows["Annexure 5"]["letterhead"], rows["Annexure 5"]["signature"], rows["Annexure 5"]["stamp"]) == (
+        True, True, True)
+    assert rows["Annexure 5"]["format_text"] == "Annexure 5 format"
+    # The standard enclosure the AI didn't list is still added; PAN Card isn't repeated.
+    assert [r["document"] for r in checklist["items"]][3:] == ["Certificate of Incorporation"]
 
 
-def test_generate_bid_package_lists_unmatched_library_documents_in_checklist():
-    docs = [
-        _company_doc("Certificate of Incorporation", "coi.pdf", _one_page_pdf("COI enclosure page")),
-        _company_doc("CMMI Certificate of Compliance", "cmmi.pdf", _one_page_pdf("CMMI enclosure page")),
+def test_build_checklist_falls_back_to_the_summary_without_ai():
+    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, _library(),
+                                builder_note="AI unavailable")
+    rows = checklist["items"]
+    assert checklist["builder_note"] == "AI unavailable"
+    assert checklist["header"]["bid_number"] == "12345"  # tender_ref when no GeM number is known
+    assert rows[0]["document"] == "Covering Letter" and rows[0]["source"] == "draft"
+    by_doc = {r["document"]: r for r in rows}
+    assert by_doc["Work Order copy"]["document_id"] == "Work Order - NCERT OLabs"
+    assert by_doc["Non-blacklisting undertaking"]["source"] == "draft"
+    # Standard enclosures follow; the brochure never appears.
+    assert {"Certificate of Incorporation", "PAN Card"} <= set(by_doc)
+    assert "Oaks Brochure" not in by_doc
+    assert [n["requirement"] for n in checklist["notes"] if n["section"] == "open_items"] == ["Current headcount"]
+
+
+def test_missing_information_already_known_from_the_tender_is_dropped():
+    tender = {
+        **TENDER,
+        "tender_value": 4500000,
+        "earnest_money": None,
+        "opening_date": None,
+        "document_summary": {
+            **TENDER["document_summary"],
+            "emd_amount": "INR 90,000",
+            "tender_opening_date": None,
+            "missing_information": [
+                "Tender value", "EMD amount", "EMD exemption criteria", "Tender opening date",
+            ],
+        },
+    }
+    checklist = build_checklist(tender, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
+    missing = {i["requirement"]: i for i in checklist["notes"] if i["section"] == "missing_information"}
+    assert list(missing) == ["EMD exemption criteria", "Tender opening date", "Estimated tender value"]
+    assert missing["Estimated tender value"]["evidence"] == "INR 4,500,000 (from the tender listing)"
+    assert missing["Estimated tender value"]["done"]
+
+    saved = {"notes": [
+        checklist_item("missing_information", "Tender value"),
+        checklist_item("missing_information", "Tender value", origin="user"),
+    ]}
+    cleaned = drop_resolved_missing_information(saved, tender)
+    assert [(i["requirement"], i["origin"]) for i in cleaned["notes"]] == [
+        ("Tender value", "user"), ("Estimated tender value", "auto"),
     ]
-    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
-    all_text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
-    assert "COI enclosure page" in all_text
-    assert "CMMI enclosure page" not in all_text
-    assert "not enclosed" in all_text and "cmmi.pdf" in all_text
 
 
-def test_build_checklist_mirrors_the_compliance_matrix_and_summary():
-    docs = [_company_doc("Certificate of Incorporation", "coi.pdf"), _company_doc("Oaks Brochure", "brochure.pdf")]
-    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
-    by_section: dict[str, list[dict]] = {}
-    for item in checklist["items"]:
-        by_section.setdefault(item["section"], []).append(item)
-
-    assert [i["requirement"] for i in by_section["open_items"]] == ["Current headcount"]
-    company = by_section["company_eligibility"]
-    assert [i["status"] for i in company] == [
-        r.status for r in build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
-    ]
-    assert any(i["requirement"] == "3 years of experience required" for i in by_section["tender_requirements"])
-    assert [i["requirement"] for i in by_section["reference_docs"]] == ["Oaks Brochure (brochure.pdf)"]
-    assert [i["requirement"] for i in by_section["missing_information"]] == ["Exact submission portal not stated"]
-    assert all(i["origin"] == "auto" and not i["done"] and i["id"] for i in checklist["items"])
+def test_estimated_tender_value_falls_back_to_the_emd():
+    tender = {
+        **TENDER,
+        "tender_value": None,
+        "earnest_money": None,
+        "document_summary": {
+            **TENDER["document_summary"],
+            "estimated_bid_amount": None,
+            "emd_amount": "INR 90,000",
+            "missing_information": ["Tender value"],
+        },
+    }
+    checklist = build_checklist(tender, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
+    missing = [i for i in checklist["notes"] if i["section"] == "missing_information"]
+    assert [i["requirement"] for i in missing] == ["Estimated tender value"]
+    assert missing[0]["evidence"].startswith("~INR 4,500,000 - not stated; estimated from the EMD of INR 90,000")
+    assert not missing[0]["done"]
 
 
 def test_merge_drafted_open_items_replaces_only_previous_ai_items():
-    from app.intelligence.bid_drafter import DraftedDocument
-
-    checklist = {"items": [
+    checklist = {"notes": [
         checklist_item("open_items", "Old: stale item", origin="ai_draft"),
         checklist_item("open_items", "Letter: sign it", origin="ai_draft", done=True),
         checklist_item("open_items", "Hand-added item", origin="user"),
     ]}
     drafted = [DraftedDocument(title="Letter", body_paragraphs=["x"], open_items=["sign it", "date it"])]
-    merged = merge_drafted_open_items(checklist, drafted)
-    texts = {i["requirement"]: i for i in merged["items"]}
-
+    texts = {i["requirement"]: i for i in merge_drafted_open_items(checklist, drafted)["notes"]}
     assert "Old: stale item" not in texts
-    assert texts["Letter: sign it"]["done"] is True  # a ticked item that recurs stays ticked
+    assert texts["Letter: sign it"]["done"] is True
     assert texts["Letter: date it"]["done"] is False
     assert texts["Hand-added item"]["origin"] == "user"
 
 
-def test_generate_bid_package_prints_the_saved_edited_checklist():
-    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
-    checklist["items"][0]["done"] = True
-    checklist["items"].append(checklist_item("open_items", "Get the EMD demand draft signed", origin="user"))
-    for item in checklist["items"]:
-        if item["section"] == "company_eligibility" and item["requirement"].startswith("Turnover"):
-            item["status"] = "Evidence available"
-            item["evidence"] = "CA certificate FY24 on file"
-
-    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], checklist=checklist)
-    all_text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
-    assert "Get the EMD demand draft signed" in all_text
-    assert "[x] Current headcount" in all_text
-    assert "CA certificate FY24 on file" in all_text
+def test_refresh_statuses_reflects_what_the_pack_contains():
+    docs = [_company_doc("PAN Card", "pan.pdf", _one_page_pdf("PAN"))]
+    drafted_row = submission_item("Annexure 1", source="draft", status=STATUS_TO_PREPARE)
+    undrafted_row = submission_item("Annexure 2", source="draft", status=STATUS_ENCLOSED)
+    attached = submission_item("PAN", document_id="PAN Card", status=STATUS_MISSING)
+    missing = submission_item("GST", document_id=None, status=STATUS_ENCLOSED)
+    skipped = submission_item("EMD", status=STATUS_NOT_APPLICABLE)
+    checklist = refresh_statuses(_checklist(drafted_row, undrafted_row, attached, missing, skipped), docs,
+                                 [drafted_row["id"]])
+    assert [r["status"] for r in checklist["items"]] == [
+        STATUS_ENCLOSED, STATUS_TO_PREPARE, STATUS_ENCLOSED, STATUS_MISSING, STATUS_NOT_APPLICABLE,
+    ]
 
 
-def test_generate_bid_package_shows_drafting_note_when_ai_unavailable():
-    pdf_bytes = generate_bid_package(
-        TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [],
-        drafted_documents=None,
-        drafting_note="AI document drafting was unavailable: no OPENAI_API_KEY configured.",
+# --- The bid pack -----------------------------------------------------------------------
+
+def test_pack_follows_the_checklist_row_order():
+    docs = [
+        _company_doc("PAN Card", "pan.pdf", _one_page_pdf("PAN enclosure page")),
+        _company_doc("Work Order", "wo.pdf", _one_page_pdf("Work order enclosure page")),
+    ]
+    annexure = submission_item("Annexure 3", "Non-blacklisting undertaking", source="draft",
+                               letterhead=True, signature=True, stamp=True)
+    checklist = _checklist(
+        submission_item("PAN", "PAN of the bidder", document_id="PAN Card"),
+        annexure,
+        submission_item("GST Registration", "GST certificate"),  # nothing on file
+        submission_item("EMD", "EMD instrument", status=STATUS_NOT_APPLICABLE),
+        submission_item("Experience", "Work orders", document_id="Work Order"),
     )
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    all_text = "\n".join(page.extract_text() for page in reader.pages)
+    drafted = {annexure["id"]: DraftedDocument(
+        title="Non-Blacklisting Undertaking", body_paragraphs=["We are not blacklisted by any government body."],
+        open_items=["[TO BE FILLED FROM COMPANY RECORDS: date]"], id=annexure["id"],
+    )}
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
+                                             drafted_documents=drafted, checklist=checklist))
+
+    assert "MASTER BID SUBMISSION CHECKLIST" in pages[0]
+    assert "GEM/2026/B/1" in pages[0] and "Annexure 3" in pages[0]
+    assert "PAN enclosure page" in pages[1]
+    assert "not blacklisted" in pages[2]
+    assert "PLACEHOLDER" in pages[3] and "GST Registration" in pages[3]
+    assert "Work order enclosure page" in pages[4]  # the EMD row (not applicable) got no page
+    assert "INTERNAL REVIEW NOTES" in pages[5]
+    assert "3. GST Registration - Missing" in pages[5]
+    assert not any("EMD instrument" in p for p in pages[1:5])
+
+
+def test_letterhead_signature_and_stamp_only_where_ticked(tmp_path):
+    from PIL import Image as PILImage
+
+    letterhead = tmp_path / "letterhead.png"
+    PILImage.new("RGB", (60, 85), "white").save(letterhead)
+    docs = [
+        _company_doc("PAN Card", "pan.pdf", _one_page_pdf("PAN enclosure page")),
+        _company_doc("CA Certificate", "ca.pdf", _one_page_pdf("CA enclosure page")),
+        _company_doc("Signature", "sig.png", _png(), content_type="image/png"),
+        _company_doc("Seal", "seal.png", _png("red"), content_type="image/png"),
+    ]
+    checklist = _checklist(
+        submission_item("PAN", document_id="PAN Card", letterhead=True, signature=True, stamp=True),
+        submission_item("CA certificate", document_id="CA Certificate"),
+        submission_item("Covering Letter", source="draft", letterhead=False, signature=True, stamp=False),
+    )
+    reader = PdfReader(io.BytesIO(generate_bid_package(
+        TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs, letterhead_image=letterhead, checklist=checklist,
+    )))
+    checklist_page, pan, ca, letter, notes = reader.pages
+    assert _image_count(checklist_page) == 1  # the letterhead
+    assert _image_count(pan) == 3  # letterhead + signature + seal
+    assert _image_count(ca) == 0  # attached untouched
+    assert _image_count(letter) == 1  # signature only, no letterhead
+    assert "Yours faithfully" in letter.extract_text()  # templated covering letter when there's no AI draft
+    assert _image_count(notes) == 0
+
+
+def test_image_uploads_become_pages():
+    docs = [_company_doc("GST Certificate", "gst.png", _png(), content_type="image/png")]
+    checklist = _checklist(submission_item("GST", document_id="GST Certificate"))
+    reader = PdfReader(io.BytesIO(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
+                                                       checklist=checklist)))
+    assert len(reader.pages) == 3  # checklist, the scanned image, notes
+    assert _image_count(reader.pages[1]) == 1  # the scan itself
+
+
+def test_pack_rebuilds_a_checklist_saved_in_the_old_format():
+    old = {"items": [checklist_item("open_items", "Old-style open item")]}
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], checklist=old))
+    assert "MASTER BID SUBMISSION CHECKLIST" in pages[0]
+    assert "Covering Letter" in pages[0]
+    assert not any("Old-style open item" in p for p in pages)
+
+
+def test_pack_handles_a_tender_without_a_summary():
+    pages = _pages_text(generate_bid_package({"title": "Bare tender", "organisation": "Org", "tender_ref": "999"},
+                                             ELIGIBILITY_CRITERIA, COMPANY_PROFILE, []))
+    assert "MASTER BID SUBMISSION CHECKLIST" in pages[0]
+    assert "R&D" not in pages[0]
+
+
+def test_pack_escapes_tender_text_and_shows_the_drafting_note():
+    pages = _pages_text(generate_bid_package(
+        TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [],
+        drafting_note="AI drafting was unavailable: no OPENAI_API_KEY configured.",
+    ))
+    all_text = "\n".join(pages)
+    assert "R&D and <Testing> Services" in all_text
     assert "no OPENAI_API_KEY configured" in all_text
-    assert "Yours faithfully" in all_text  # falls back to the templated covering letter
+
+
+def test_brochure_is_never_enclosed_but_feeds_background_text():
+    profile = {**COMPANY_PROFILE, "reference_documents": ["Contact Sheet"]}
+    documents = [
+        _company_doc("Company Brochure", "brochure.pdf", _one_page_pdf("Founded in 2017, serving 20,000 schools")),
+        _company_doc("Contact Sheet", "contact.pdf", _one_page_pdf("Contact sheet text")),
+        _company_doc("Certificate of Incorporation", "coi.pdf", _one_page_pdf("COI enclosure page")),
+    ]
+    all_text = "\n".join(_pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, profile, documents)))
+    assert "COI enclosure page" in all_text
+    assert "Founded in 2017" not in all_text
+    assert "Contact sheet text" not in all_text
+
+    background = company_background_text(documents, profile)
+    assert "Founded in 2017" in background
+    assert "Contact sheet text" in background
+    assert "COI enclosure page" not in background

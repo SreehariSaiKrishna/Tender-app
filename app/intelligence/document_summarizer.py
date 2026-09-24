@@ -285,6 +285,20 @@ def extract_text(path: Path) -> str:
         return ""
 
 
+# The downloaded files are deleted once summarised (see
+# _delete_local_documents), so their text is kept on the tender as
+# `document_text` - the submission checklist and bid drafting (see
+# app.intelligence.bid_drafter) read annexure numbers and prescribed
+# formats from it, detail the summary itself doesn't carry. Capped to
+# keep the Mongo document well under its 16 MB limit.
+MAX_DOCUMENT_TEXT_CHARS = 150_000
+
+
+def joined_document_text(file_texts: dict[str, str]) -> str:
+    parts = [f"--- Document: {name} ---\n{text.strip()}" for name, text in file_texts.items() if text.strip()]
+    return "\n\n".join(parts)[:MAX_DOCUMENT_TEXT_CHARS]
+
+
 def summarize_tender_documents(
     tender: dict[str, Any], file_texts: dict[str, str], provider: AIProvider
 ) -> DocumentSummary:
@@ -478,6 +492,7 @@ def summarize_pending_documents(
             {
                 "$set": {
                     "document_summary": result.model_dump(),
+                    "document_text": joined_document_text(file_texts),
                     "document_summary_generated_at": dt.datetime.now(dt.timezone.utc),
                     "documents": cleared_documents,
                     "domain_match": domain_match,

@@ -40,16 +40,23 @@ from app.database import (
     get_generated_bids_bucket,
     get_generated_bids_files_collection,
 )
-from app.intelligence.bid_drafter import BidDraftingError, draft_bid_documents
+from app.intelligence.bid_drafter import BidDraftingError, draft_checklist_documents, plan_submission_checklist
 from app.reports.bid_generator import (
+    CHECKLIST_VERSION,
+    DEFAULT_WHERE,
+    STATUS_NOT_APPLICABLE,
     BidGenerationError,
     CompanyDocumentRef,
     build_checklist,
     build_compliance_matrix,
     company_background_text,
+    drop_resolved_missing_information,
+    enclosure_documents,
     established_facts,
     generate_bid_package,
+    is_submission_checklist,
     merge_drafted_open_items,
+    refresh_statuses,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +104,10 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     out = dict(doc)
     out["id"] = str(out.pop("_id"))
     out.pop("raw_data", None)
-    # The editable review checklist is served on its own (GET
+    # The tender documents' full text (kept for the submission checklist -
+    # see app.intelligence.document_summarizer) is large and UI-irrelevant.
+    out.pop("document_text", None)
+    # The editable submission checklist is served on its own (GET
     # /tenders/{id}/checklist) - rows only need checklist_generated_at.
     out.pop("checklist", None)
 
@@ -181,7 +191,7 @@ def list_tenders(
     # dashboard surfaces likely-relevant tenders without hiding the rest.
     # Within that, most recently published tenders first (today's on top).
     cursor = (
-        collection.find(filt)
+        collection.find(filt, {"document_text": 0})
         .sort(
             [
                 ("eligibility_match", -1),
@@ -318,15 +328,40 @@ def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[Com
     )
 
 
-# --- Editable review checklist ------------------------------------------------
-# The bid pack's internal review checklist as data on the tender (see
-# app.reports.bid_generator.build_checklist), so the team can edit, tick
-# and add rows on the dashboard - POST /generate-bid then prints this saved
-# version into the pack instead of rebuilding it.
+# --- Master Bid Submission Checklist ------------------------------------------
+# Every document this tender asks for, as data on the tender (see
+# app.reports.bid_generator.build_checklist), so the team can edit rows,
+# pick library documents and tick letterhead/signature/stamp on the
+# dashboard - POST /generate-bid then builds the pack row by row from this
+# saved version.
 
 
-def _checklist_response(tender: dict[str, Any]) -> dict[str, Any]:
-    checklist = dict(tender["checklist"])
+def _build_tender_checklist(
+    tender: dict[str, Any],
+    eligibility_criteria: list[dict[str, Any]],
+    company_profile: dict[str, Any],
+    company_documents: list[CompanyDocumentRef],
+) -> dict[str, Any]:
+    """The AI reads the tender for the rows (see
+    app.intelligence.bid_drafter.plan_submission_checklist); without it
+    (no OPENAI_API_KEY, a bad response) they come from the document summary."""
+    library_names = [d.name for d in enclosure_documents(company_documents, company_profile)]
+    plan, note = None, None
+    try:
+        plan = plan_submission_checklist(tender, eligibility_criteria, company_profile, library_names)
+    except BidDraftingError as exc:
+        logger.warning("AI submission checklist unavailable for tender %s: %s", tender.get("_id"), exc)
+        note = (f"AI checklist building was unavailable ({exc}) - these rows come from the tender's extracted "
+                "document list; check them against the tender document.")
+    return build_checklist(tender, eligibility_criteria, company_profile, company_documents, plan, note)
+
+
+def _checklist_response(
+    tender: dict[str, Any],
+    company_profile: dict[str, Any],
+    company_documents: list[CompanyDocumentRef],
+) -> dict[str, Any]:
+    checklist = drop_resolved_missing_information(tender["checklist"], tender)
     checklist["generated_at"] = _iso(checklist.get("generated_at"))
     checklist["updated_at"] = _iso(checklist.get("updated_at"))
     summary = tender.get("document_summary") or {}
@@ -353,49 +388,96 @@ def _checklist_response(tender: dict[str, Any]) -> dict[str, Any]:
             "bid_document_id": tender.get("bid_document_id"),
         },
         "checklist": checklist,
+        # What a row's "Attach" picker can choose from.
+        "library": [
+            {"id": d.id, "name": d.name, "filename": d.filename}
+            for d in enclosure_documents(company_documents, company_profile)
+        ],
     }
 
 
 @app.post("/tenders/{tender_id}/checklist")
 def generate_checklist(tender_id: str) -> dict[str, Any]:
-    """(Re)builds this tender's checklist from its document_summary, the
+    """(Re)builds this tender's submission checklist from the tender, the
     eligibility profile and the documents library - replacing any edits."""
     object_id, tender = _find_tender(tender_id)
-    checklist = build_checklist(tender, *_generation_inputs())
+    eligibility_criteria, company_profile, company_documents = _generation_inputs()
+    checklist = _build_tender_checklist(tender, eligibility_criteria, company_profile, company_documents)
     get_collection().update_one(
         {"_id": object_id},
         {"$set": {"checklist": checklist, "checklist_generated_at": checklist["generated_at"]}},
     )
-    return _checklist_response({**tender, "checklist": checklist})
+    return _checklist_response({**tender, "checklist": checklist}, company_profile, company_documents)
 
 
 @app.get("/tenders/{tender_id}/checklist")
 def get_checklist(tender_id: str) -> dict[str, Any]:
-    _, tender = _find_tender(tender_id)
+    object_id, tender = _find_tender(tender_id)
     if not tender.get("checklist"):
         raise HTTPException(status_code=404, detail="No checklist has been generated for this tender yet")
-    return _checklist_response(tender)
+    eligibility_criteria, company_profile, company_documents = _generation_inputs()
+    if not is_submission_checklist(tender["checklist"]):
+        # Saved in the older six-section review format - rebuilt once, as
+        # the submission checklist, rather than shown half-understood.
+        checklist = _build_tender_checklist(tender, eligibility_criteria, company_profile, company_documents)
+        get_collection().update_one({"_id": object_id}, {"$set": {"checklist": checklist}})
+        tender = {**tender, "checklist": checklist}
+    return _checklist_response(tender, company_profile, company_documents)
 
 
-ChecklistSection = Literal[
-    "open_items", "company_eligibility", "tender_requirements",
-    "reference_docs", "not_enclosed", "missing_information",
-]
-
-
-class ChecklistItem(BaseModel):
+class ChecklistRow(BaseModel):
     id: str | None = None
-    section: ChecklistSection
-    requirement: str = ""
-    source: str = ""
+    document: str = ""
+    what_to_upload: str = ""
+    where: str = DEFAULT_WHERE
     status: str = ""
+    source: Literal["upload", "draft"] = "upload"
+    document_id: str | None = None
+    letterhead: bool = False
+    signature: bool = False
+    stamp: bool = False
+    format_text: str = ""
+    notes: str = ""
+    done: bool = False
+    origin: Literal["auto", "user"] = "user"
+
+
+class ChecklistNote(BaseModel):
+    id: str | None = None
+    section: Literal["open_items", "missing_information"] = "open_items"
+    requirement: str = ""
     evidence: str = ""
     done: bool = False
     origin: Literal["auto", "user", "ai_draft"] = "user"
 
 
+class ChecklistHeader(BaseModel):
+    bid_number: str = ""
+    bid_end: str = ""
+    tender: str = ""
+    organisation: str = ""
+    bidder: str = ""
+    summary_only: bool = False
+
+
 class ChecklistUpdateRequest(BaseModel):
-    items: list[ChecklistItem]
+    items: list[ChecklistRow]
+    notes: list[ChecklistNote] | None = None
+    header: ChecklistHeader | None = None
+
+
+def _clean_rows(models: list[BaseModel], required: str) -> list[dict[str, Any]]:
+    rows = []
+    for model in models:
+        row = model.model_dump()
+        for key, value in row.items():
+            if isinstance(value, str) and key != "id":
+                row[key] = value.strip()
+        if not row[required]:
+            continue  # a blank row added then left empty
+        row["id"] = row["id"] or uuid.uuid4().hex
+        rows.append(row)
+    return rows
 
 
 @app.put("/tenders/{tender_id}/checklist")
@@ -403,28 +485,33 @@ def update_checklist(tender_id: str, body: ChecklistUpdateRequest) -> dict[str, 
     object_id, tender = _find_tender(tender_id)
     if not tender.get("checklist"):
         raise HTTPException(status_code=404, detail="No checklist has been generated for this tender yet")
-    items = []
-    for item in body.items:
-        row = item.model_dump()
-        for key in ("requirement", "source", "status", "evidence"):
-            row[key] = row[key].strip()
-        if not row["requirement"]:
-            continue  # a blank row added then left empty
-        row["id"] = row["id"] or uuid.uuid4().hex
-        items.append(row)
-    checklist = {**tender["checklist"], "items": items, "updated_at": dt.datetime.now(dt.timezone.utc)}
+    checklist = {
+        **tender["checklist"],
+        "version": CHECKLIST_VERSION,
+        "items": _clean_rows(body.items, "document"),
+        "updated_at": dt.datetime.now(dt.timezone.utc),
+    }
+    for row in checklist["items"]:
+        row["where"] = row["where"] or DEFAULT_WHERE
+    if body.notes is not None:
+        checklist["notes"] = _clean_rows(body.notes, "requirement")
+    if body.header is not None:
+        checklist["header"] = body.header.model_dump()
     get_collection().update_one({"_id": object_id}, {"$set": {"checklist": checklist}})
-    return _checklist_response({**tender, "checklist": checklist})
+    _, company_profile, company_documents = _generation_inputs()
+    return _checklist_response({**tender, "checklist": checklist}, company_profile, company_documents)
 
 
 @app.post("/tenders/{tender_id}/generate-bid")
 def generate_bid(tender_id: str) -> dict[str, Any]:
-    """Drafts a bid pack PDF for this tender (see app.reports.bid_generator)
-    from the tender's own AI-extracted document_summary, the company's
-    eligibility profile, config/company_profile.json, and whatever's in the
-    documents library - then stores it in GridFS (get_generated_bids_bucket,
-    one file per tender, replacing any previous draft) and marks the tender
-    applied, same one-way protection POST /tenders/{id}/apply gives against
+    """Builds a bid pack PDF for this tender from its saved submission
+    checklist (see app.reports.bid_generator.generate_bid_package): every
+    row's document in S.No order - library documents attached, and each
+    document the bidder must write AI-drafted from the tender (see
+    app.intelligence.bid_drafter.draft_checklist_documents) - then stores
+    it in GridFS (get_generated_bids_bucket, one file per tender, replacing
+    any previous draft) and marks the tender applied, same one-way
+    protection POST /tenders/{id}/apply gives against
     app.processing.cleanup's stale-closed-tender deletion.
 
     This never contacts the tendering authority or any external system -
@@ -436,32 +523,37 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     object_id, tender = _find_tender(tender_id)
     eligibility_criteria, company_profile, company_documents = _generation_inputs()
 
-    # AI-draft the individual bid documents this tender's own paperwork
-    # calls for (see app.intelligence.bid_drafter) - `facts` tells the
+    checklist = tender.get("checklist")
+    if not is_submission_checklist(checklist):
+        checklist = _build_tender_checklist(tender, eligibility_criteria, company_profile, company_documents)
+
+    # AI-draft every row the bidder writes itself. `facts` tells the
     # drafting prompt which company facts are already established, from the
-    # exact same compliance matrix the pack itself renders further down, so
-    # the two never disagree with each other. Never a hard failure: if
-    # drafting is unavailable (no OPENAI_API_KEY, a bad response, a slow
-    # provider) the pack still generates with a plain templated covering
-    # letter (see generate_bid_package's `drafted_documents=None` fallback).
-    company_rows = build_compliance_matrix(eligibility_criteria, company_profile, company_documents)
-    facts = established_facts(company_rows)
-    drafted_documents = None
+    # compliance matrix against the eligibility profile. Never a hard
+    # failure: rows without a draft get a templated page to complete.
+    facts = established_facts(build_compliance_matrix(eligibility_criteria, company_profile, company_documents))
+    to_draft = [
+        r for r in checklist.get("items", [])
+        if r.get("source") == "draft" and r.get("status") != STATUS_NOT_APPLICABLE
+    ]
+    drafted: dict[str, Any] = {}
     drafting_note = None
-    # The brochure and other reference documents are never enclosed in the
-    # pack - their text only gives the drafter descriptive background.
-    background = company_background_text(company_documents, company_profile)
-    try:
-        drafted_documents = draft_bid_documents(
-            tender, eligibility_criteria, company_profile, facts, company_background=background
-        )
-    except BidDraftingError as exc:
-        logger.warning("AI bid-document drafting unavailable for tender %s: %s", tender_id, exc)
-        drafting_note = (
-            f"AI-assisted document drafting was unavailable for this run ({exc}). A basic covering letter "
-            "has been included below; prepare any other required declarations manually using the "
-            "compliance matrix further down as your checklist."
-        )
+    if to_draft:
+        # The brochure and other reference documents are never enclosed in
+        # the pack - their text only gives the drafter descriptive background.
+        background = company_background_text(company_documents, company_profile)
+        try:
+            drafted, errors = draft_checklist_documents(
+                tender, to_draft, company_profile, facts, company_background=background
+            )
+        except BidDraftingError as exc:
+            errors = [str(exc)]
+        if errors:
+            logger.warning("AI bid-document drafting incomplete for tender %s: %s", tender_id, errors)
+            drafting_note = (
+                "AI drafting was unavailable for some documents (" + "; ".join(errors) + "). Those pages are "
+                "templates to complete by hand."
+            )
 
     letterhead = None
     if company_profile.get("letterhead_image"):
@@ -470,13 +562,8 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
         if letterhead is None:
             logger.warning("Letterhead image %s not found - bid pack will use plain pages", candidate)
 
-    # The pack's checklist pages print the tender's saved (possibly
-    # hand-edited) checklist - built fresh only if none was generated yet -
-    # with this run's drafted open items swapped in.
-    checklist = tender.get("checklist") or build_checklist(
-        tender, eligibility_criteria, company_profile, company_documents
-    )
-    checklist = merge_drafted_open_items(checklist, drafted_documents)
+    checklist = merge_drafted_open_items(checklist, drafted.values())
+    checklist = refresh_statuses(checklist, company_documents, drafted)
 
     try:
         pdf_bytes = generate_bid_package(
@@ -484,7 +571,7 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
             eligibility_criteria,
             company_profile,
             company_documents,
-            drafted_documents=drafted_documents,
+            drafted_documents=drafted,
             drafting_note=drafting_note,
             letterhead_image=letterhead,
             checklist=checklist,
