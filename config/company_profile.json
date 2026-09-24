@@ -33,6 +33,15 @@
   "_reference_documents_comment": "Documents-library entries (by display name) that are background reading for drafting only - their text is fed to the AI drafter as company context, but they are never merged into or listed as enclosures of a bid pack. Any document whose name contains 'brochure' is treated this way too.",
   "reference_documents": ["Oaks Brochure", "Oaks Contact details"],
 
+  "_standard_enclosures_comment": "Documents-library entries (by display name) merged into every bid pack. Any other library document is enclosed only when it matches the tender's own requirements (see app.reports.bid_generator.select_enclosures).",
+  "standard_enclosures": [
+    "Certificate of Incorporation",
+    "PAN Card",
+    "GST Registration Certificate",
+    "Udyam MSME Registration Certificate",
+    "DPIIT Startup Recognition Certificate"
+  ],
+
   "registrations": [
     {
       "name": "UDYAM (MSME) Registration",

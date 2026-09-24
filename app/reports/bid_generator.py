@@ -38,6 +38,7 @@ import datetime as dt
 import html
 import io
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -111,6 +112,7 @@ class CompanyDocumentRef:
     filename: str
     content_type: str
     open_bytes: Any  # callable[[], bytes] - lazy, so unrelated docs are never read
+    size: int | None = None  # bytes, from GridFS `length`; None -> measured via open_bytes when needed
 
 
 # Keyword hints for the DEFAULT_CRITERIA ids in app.processing.eligibility -
@@ -121,13 +123,13 @@ _CRITERION_KEYWORD_HINTS: dict[str, list[str]] = {
     "legal-status": ["incorporation", "moa", "aoa", "cin"],
     "dpiit-startup-recognition": ["dpiit", "startup", "start-up"],
     "turnover": ["turnover", "ca certificate", "financial statement"],
-    "pan-gst": ["pan", "gst"],
+    "pan-gst": ["pan", "gst", "gstr", "returns"],
     "non-blacklisting": ["blacklist", "undertaking", "declaration"],
     "industry-experience": ["profile", "brochure", "incorporation"],
     "relevant-technical-experience": ["work order", "purchase order", "completion", "client"],
     "education-digital-content-experience": ["work order", "client", "completion"],
     "social-media-digital-marketing-experience": ["work order", "agreement", "client"],
-    "organizational-capability": ["profile", "brochure", "credential"],
+    "organizational-capability": ["profile", "brochure", "credential", "27001", "cmmi"],
     "msme-registration": ["udyam", "msme"],
     "financial-strength": ["net worth", "ca certificate", "financial statement"],
 }
@@ -301,20 +303,25 @@ def _status_color(status: str):
     return colors.HexColor("#c92a2a")
 
 
-def _compliance_table(rows: list[ComplianceRow], styles) -> Table:
+def _compliance_table(items: list[dict[str, Any]], styles) -> Table:
+    """One checklist section (see build_checklist) as a compliance matrix -
+    the Done column reflects what the team has ticked off on the dashboard's
+    checklist page (the base-14 fonts have no check-mark glyph, so "[x]")."""
     cell = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=8.5, leading=11)
-    header = ["Requirement", "Source", "Status", "Evidence / Notes"]
+    header = ["Done", "Requirement", "Source", "Status", "Evidence / Notes"]
     data = [header]
-    for r in rows:
+    for item in items:
+        status = item.get("status") or "-"
         data.append(
             [
-                Paragraph(_safe(r.requirement), cell),
-                Paragraph(_safe(r.source), cell),
-                Paragraph(_safe(r.status), ParagraphStyle("status", parent=cell, textColor=_status_color(r.status))),
-                Paragraph(_safe(r.evidence), cell),
+                "[x]" if item.get("done") else "[ ]",
+                Paragraph(_safe(item.get("requirement") or "-"), cell),
+                Paragraph(_safe(item.get("source") or "-"), cell),
+                Paragraph(_safe(status), ParagraphStyle("status", parent=cell, textColor=_status_color(status))),
+                Paragraph(_safe(item.get("evidence") or "-"), cell),
             ]
         )
-    table = Table(data, colWidths=[6.5 * cm, 3.2 * cm, 3.3 * cm, 4.5 * cm], repeatRows=1)
+    table = Table(data, colWidths=[1.1 * cm, 6 * cm, 3 * cm, 3.2 * cm, 4.2 * cm], repeatRows=1)
     table.setStyle(
         TableStyle(
             [
@@ -389,6 +396,194 @@ def enclosure_documents(
         d for d in company_documents
         if not is_reference_document(d, company_profile) and not _is_signing_asset(d, company_profile)
     ]
+
+
+# The whole pack is served back through a single Lambda/API Gateway
+# response (GET /tenders/{id}/bid-document, 6 MB cap), so merged PDF
+# enclosures get a byte budget that leaves room for the generated pages.
+ENCLOSURE_BYTE_BUDGET = 5 * 1024 * 1024
+
+# Tender wording rarely names our documents directly ("3 years of similar
+# experience", "average annual turnover") - when a trigger word appears in
+# the tender's document_summary, these extra phrases are matched too.
+_TENDER_TOPIC_HINTS: list[tuple[tuple[str, ...], list[str]]] = [
+    (("experience", "similar", "projects", "assignments", "completion"), ["work order", "completion"]),
+    (("turnover", "financial", "audited", "balance", "net worth", "itr"), ["turnover", "financial statement"]),
+    (("gst", "returns", "gstr"), ["gstr", "returns"]),
+    (("iso", "27001", "quality", "security"), ["27001"]),
+    (("cmmi",), ["cmmi"]),
+    (("incorporation", "registration", "cin", "master data"), ["master data", "incorporation"]),
+]
+
+
+@dataclass
+class EnclosureSelection:
+    selected: list[CompanyDocumentRef]
+    over_budget: list[CompanyDocumentRef]  # relevant, but merging would push the pack past the size cap
+    not_relevant: list[CompanyDocumentRef]  # didn't match this tender's requirements
+
+
+def _doc_size(doc: CompanyDocumentRef) -> int:
+    if doc.size is None:
+        doc.size = len(doc.open_bytes())
+    return doc.size
+
+
+def select_enclosures(
+    tender: dict[str, Any],
+    company_documents: list[CompanyDocumentRef],
+    company_profile: dict[str, Any],
+    byte_budget: int = ENCLOSURE_BYTE_BUDGET,
+) -> EnclosureSelection:
+    """Which enclosure_documents() actually go into this tender's pack:
+    the `standard_enclosures` named in company_profile.json always, then
+    any document matching the tender's AI-extracted document_summary
+    (documents_to_submit / eligibility requirements). A tender with no
+    summary yet gets just the standard set. PDFs are added in that order
+    until `byte_budget` is spent; the rest are reported, not merged."""
+    candidates = enclosure_documents(company_documents, company_profile)
+    standard_names = [n.strip().lower() for n in company_profile.get("standard_enclosures", [])]
+    standard = sorted(
+        (d for d in candidates if d.name.strip().lower() in standard_names),
+        key=lambda d: standard_names.index(d.name.strip().lower()),
+    )
+
+    summary = tender.get("document_summary") or {}
+    requirement_texts = (
+        list(summary.get("documents_to_submit", []))
+        + list(summary.get("eligibility_requirements", []))
+        + list(summary.get("eligibility_technical_criteria", []))
+    )
+    matched: list[CompanyDocumentRef] = []
+    if requirement_texts:
+        combined = " ".join(requirement_texts).lower()
+        hints = [h for triggers, extra in _TENDER_TOPIC_HINTS if any(t in combined for t in triggers) for h in extra]
+        rest = [d for d in candidates if d not in standard]
+        for text in requirement_texts:
+            for d in _match_documents(text, [], rest):
+                if d not in matched:
+                    matched.append(d)
+        for d in _match_documents("", hints, rest):
+            if d not in matched:
+                matched.append(d)
+        matched.sort(key=rest.index)
+
+    selected: list[CompanyDocumentRef] = []
+    over_budget: list[CompanyDocumentRef] = []
+    used = 0
+    for d in standard + matched:
+        if not _is_pdf(d):
+            selected.append(d)  # never merged, so costs nothing - listed for separate attachment
+            continue
+        size = _doc_size(d)
+        if used + size > byte_budget:
+            over_budget.append(d)
+            continue
+        used += size
+        selected.append(d)
+
+    not_relevant = [d for d in candidates if d not in standard and d not in matched]
+    return EnclosureSelection(selected=selected, over_budget=over_budget, not_relevant=not_relevant)
+
+
+# --- Editable review checklist ------------------------------------------------
+# The internal review checklist as data, stored on the tender (`checklist`)
+# so the team can edit/tick/extend it on the dashboard before a bid pack is
+# generated - the pack's checklist pages then print that saved version.
+
+CHECKLIST_SECTIONS = (
+    "open_items",
+    "company_eligibility",
+    "tender_requirements",
+    "reference_docs",
+    "not_enclosed",
+    "missing_information",
+)
+
+
+def checklist_item(
+    section: str,
+    requirement: str,
+    source: str = "",
+    status: str = "",
+    evidence: str = "",
+    origin: str = "auto",
+    done: bool = False,
+) -> dict[str, Any]:
+    return {
+        "id": uuid.uuid4().hex,
+        "section": section,
+        "requirement": requirement,
+        "source": source,
+        "status": status,
+        "evidence": evidence,
+        "done": done,
+        "origin": origin,  # auto (build_checklist) | user (added on the dashboard) | ai_draft
+    }
+
+
+def build_checklist(
+    tender: dict[str, Any],
+    eligibility_criteria: list[dict[str, Any]],
+    company_profile: dict[str, Any],
+    company_documents: list[CompanyDocumentRef],
+    selection: EnclosureSelection | None = None,
+) -> dict[str, Any]:
+    """Everything the internal review checklist lists, minus the AI-drafted
+    documents' open items (those only exist once a bid pack is drafted - see
+    merge_drafted_open_items). The tender snapshot/technical criteria table
+    aren't included: they're read straight off the tender."""
+    if selection is None:
+        selection = select_enclosures(tender, company_documents, company_profile)
+    summary = tender.get("document_summary") or {}
+    items: list[dict[str, Any]] = []
+
+    open_items = list(company_profile.get("to_be_verified", []))
+    if company_profile.get("pan_derivation_note"):
+        open_items.append(f"PAN {company_profile.get('pan', '-')}: {company_profile['pan_derivation_note']}")
+    if company_profile.get("past_experience"):
+        open_items.append("Past Experience table lists every project on record - keep only those relevant "
+                          "to this tender's scope before submitting.")
+    for d in selection.selected:
+        if not _is_pdf(d):
+            open_items.append(f"Attach separately (not a PDF, so not merged into this pack): {d.name} ({d.filename})")
+    for d in selection.over_budget:
+        open_items.append(f"Attach manually from Documents library (relevant, but merging it would exceed the "
+                          f"bid pack size limit): {d.name} ({d.filename})")
+    items += [checklist_item("open_items", text) for text in open_items]
+
+    for r in build_compliance_matrix(eligibility_criteria, company_profile, company_documents):
+        items.append(checklist_item("company_eligibility", r.requirement, r.source, r.status, r.evidence))
+    for r in _build_tender_requirement_rows(summary, company_documents):
+        items.append(checklist_item("tender_requirements", r.requirement, r.source, r.status, r.evidence))
+
+    for d in company_documents:
+        if is_reference_document(d, company_profile):
+            items.append(checklist_item("reference_docs", f"{d.name} ({d.filename})"))
+    for d in selection.not_relevant:
+        items.append(checklist_item("not_enclosed", f"{d.name} ({d.filename})"))
+    for text in summary.get("missing_information", []):
+        items.append(checklist_item("missing_information", text))
+
+    now = dt.datetime.now(dt.timezone.utc)
+    return {"generated_at": now, "updated_at": now, "items": items}
+
+
+def merge_drafted_open_items(
+    checklist: dict[str, Any], drafted_documents: "list[DraftedDocument] | None"
+) -> dict[str, Any]:
+    """Swaps in the open items of this run's AI-drafted documents, replacing
+    any from a previous run - user-edited/added items are left untouched,
+    and a drafted item already ticked done stays done if it recurs."""
+    previous = [i for i in checklist.get("items", []) if i.get("origin") == "ai_draft"]
+    done_texts = {i.get("requirement") for i in previous if i.get("done")}
+    kept = [i for i in checklist.get("items", []) if i.get("origin") != "ai_draft"]
+    drafted = [
+        checklist_item("open_items", text, origin="ai_draft", done=text in done_texts)
+        for doc in drafted_documents or []
+        for text in (f"{doc.title}: {item}" for item in doc.open_items)
+    ]
+    return {**checklist, "items": drafted + kept}
 
 
 # Brochures repeat the same text across facing pages - the cap keeps the
@@ -671,11 +866,7 @@ def _enclosures_section(
 
 def _internal_checklist_story(
     tender: dict[str, Any],
-    eligibility_criteria: list[dict[str, Any]],
-    company_profile: dict[str, Any],
-    company_documents: list[CompanyDocumentRef],
-    enclosures: list[CompanyDocumentRef],
-    drafted_documents: "list[DraftedDocument] | None",
+    checklist: dict[str, Any],
     drafting_note: str | None,
     styles,
     body: ParagraphStyle,
@@ -683,6 +874,16 @@ def _internal_checklist_story(
     h2: ParagraphStyle,
 ) -> list[Any]:
     document_summary = tender.get("document_summary") or {}
+    sections: dict[str, list[dict[str, Any]]] = {s: [] for s in CHECKLIST_SECTIONS}
+    for item in checklist.get("items", []):
+        sections.setdefault(item.get("section"), []).append(item)
+
+    def _bullet(item: dict[str, Any]) -> Paragraph:
+        text = _rich(item.get("requirement") or "")
+        if item.get("evidence"):
+            text += f" <i>({_safe(item['evidence'])})</i>"
+        return Paragraph(f"{'[x]' if item.get('done') else '•'} {text}", body)
+
     value_cell = ParagraphStyle("value_cell_int", parent=body, fontSize=9, leading=12)
     small = ParagraphStyle("small_int", parent=body, fontSize=8.5, textColor=colors.HexColor("#495057"))
     story: list[Any] = [
@@ -705,28 +906,21 @@ def _internal_checklist_story(
 
     # Everything a human still has to act on, in one place.
     story.append(Paragraph("Open items before signing", h2))
-    open_items: list[str] = []
-    for doc in drafted_documents or []:
-        open_items += [f"{doc.title}: {item}" for item in doc.open_items]
-    open_items += list(company_profile.get("to_be_verified", []))
-    if company_profile.get("pan_derivation_note"):
-        open_items.append(f"PAN {company_profile.get('pan', '-')}: {company_profile['pan_derivation_note']}")
-    if company_profile.get("past_experience"):
-        open_items.append("Past Experience table lists every project on record - keep only those relevant "
-                          "to this tender's scope before submitting.")
-    other_enclosures = [d for d in enclosures if not _is_pdf(d)]
-    for d in other_enclosures:
-        open_items.append(f"Attach separately (not a PDF, so not merged into this pack): {d.name} ({d.filename})")
-    for item in open_items:
-        story.append(Paragraph(f"• {_rich(item)}", body))
-    if not open_items:
+    for item in sections["open_items"]:
+        story.append(_bullet(item))
+    if not sections["open_items"]:
         story.append(Paragraph("None recorded.", body))
 
-    reference_docs = [d for d in company_documents if is_reference_document(d, company_profile)]
-    if reference_docs:
+    if sections["reference_docs"]:
         story.append(Paragraph("Used for drafting only (not enclosed)", h2))
-        for d in reference_docs:
-            story.append(Paragraph(f"• {_safe(d.name)} ({_safe(d.filename)})", body))
+        for item in sections["reference_docs"]:
+            story.append(_bullet(item))
+
+    if sections["not_enclosed"]:
+        story.append(Paragraph("In the Documents library but not enclosed (didn't match this tender's "
+                               "requirements - add manually if needed)", h2))
+        for item in sections["not_enclosed"]:
+            story.append(_bullet(item))
 
     # Tender snapshot
     story.append(Paragraph("Tender Snapshot", h2))
@@ -757,12 +951,12 @@ def _internal_checklist_story(
 
     # Compliance matrix
     story.append(Paragraph("Requirement-to-Evidence Compliance Matrix", h1))
-    story.append(Paragraph("Company eligibility profile", h2))
-    story.append(_compliance_table(build_compliance_matrix(eligibility_criteria, company_profile, company_documents), styles))
-    tender_rows = _build_tender_requirement_rows(document_summary, company_documents)
-    if tender_rows:
+    if sections["company_eligibility"]:
+        story.append(Paragraph("Company eligibility profile", h2))
+        story.append(_compliance_table(sections["company_eligibility"], styles))
+    if sections["tender_requirements"]:
         story.append(Paragraph("Tender-specific requirements (from this tender's own documents)", h2))
-        story.append(_compliance_table(tender_rows, styles))
+        story.append(_compliance_table(sections["tender_requirements"], styles))
 
     if document_summary.get("technical_criteria_table"):
         story.append(Paragraph("Detailed technical criteria (marks-based)", h2))
@@ -778,10 +972,10 @@ def _internal_checklist_story(
         tc_table.setStyle(TableStyle(_HEADER_STYLE + [("FONTSIZE", (0, 0), (-1, -1), 8.5)]))
         story.append(tc_table)
 
-    if document_summary.get("missing_information"):
+    if sections["missing_information"]:
         story.append(Paragraph("Missing information flagged in the tender documents", h2))
-        for item in document_summary["missing_information"]:
-            story.append(Paragraph(f"• {_safe(item)}", body))
+        for item in sections["missing_information"]:
+            story.append(_bullet(item))
     return story
 
 
@@ -793,6 +987,7 @@ def generate_bid_package(
     drafted_documents: "list[DraftedDocument] | None" = None,
     drafting_note: str | None = None,
     letterhead_image: str | Path | None = None,
+    checklist: dict[str, Any] | None = None,
 ) -> bytes:
     """Builds the full bid pack PDF and returns it as bytes, in three parts:
 
@@ -803,12 +998,15 @@ def generate_bid_package(
        `drafted_documents` is None (no AI provider, or that call failed - see
        `drafting_note`), a templated covering letter stands in so a pack can
        always be produced.
-    2. The PDF enclosures themselves, merged in as-is. Reference documents
-       (the brochure etc. - see is_reference_document) and the signature/seal
-       images are never enclosures.
+    2. The PDF enclosures themselves, merged in as-is - only the standard
+       set plus documents matching this tender (see select_enclosures).
+       Reference documents (the brochure etc. - see is_reference_document)
+       and the signature/seal images are never enclosures.
     3. An internal review checklist on plain pages - disclaimer, open items,
        tender snapshot, compliance matrix - for the team to work through and
-       then remove before submitting.
+       then remove before submitting. Printed from `checklist` (the tender's
+       saved, possibly hand-edited checklist - see build_checklist) when
+       given, else built fresh with this run's drafted open items merged in.
     """
     styles = getSampleStyleSheet()
     body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10.5, leading=15, alignment=TA_JUSTIFY)
@@ -819,7 +1017,8 @@ def generate_bid_package(
     small = ParagraphStyle("small", parent=body, fontSize=8.5, leading=11, alignment=TA_LEFT)
     title = f"Bid Pack - {tender.get('title') or tender.get('tender_ref') or 'Tender'}"
 
-    enclosures = enclosure_documents(company_documents, company_profile)
+    selection = select_enclosures(tender, company_documents, company_profile)
+    enclosures = selection.selected
     pdf_enclosures = [d for d in enclosures if _is_pdf(d)]
 
     # --- 1. Submission set, on the letterhead -------------------------------
@@ -837,11 +1036,15 @@ def generate_bid_package(
     submission_bytes = _build_pdf(submission, title, letterhead_image)
 
     # --- 3. Internal checklist, plain pages ---------------------------------
-    checklist = _internal_checklist_story(
-        tender, eligibility_criteria, company_profile, company_documents, enclosures,
-        drafted_documents, drafting_note, styles, ParagraphStyle("ibody", parent=styles["BodyText"]), h1, h2,
+    if checklist is None:
+        checklist = merge_drafted_open_items(
+            build_checklist(tender, eligibility_criteria, company_profile, company_documents, selection),
+            drafted_documents,
+        )
+    checklist_story = _internal_checklist_story(
+        tender, checklist, drafting_note, styles, ParagraphStyle("ibody", parent=styles["BodyText"]), h1, h2,
     )
-    checklist_bytes = _build_pdf(checklist, title, None)
+    checklist_bytes = _build_pdf(checklist_story, title, None)
 
     # --- Assemble: submission, 2. merged PDF enclosures, checklist ------------
     writer = PdfWriter()

@@ -348,6 +348,102 @@
     text-decoration: underline;
   }
   .regenerate-link:disabled { opacity: 0.6; cursor: default; }
+  .checklist-btn {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 4px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid var(--brand-blue-deep);
+    background: #fff;
+    color: var(--brand-blue-deep);
+  }
+  .checklist-btn:hover { background: var(--brand-blue-deep); color: #fff; }
+
+  /* --- Checklist page (#/checklist/{id}) --- */
+  .cl-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    box-shadow: var(--panel-shadow);
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  .cl-card h2 { margin: 0 0 4px; font-size: 16px; color: var(--brand-navy); }
+  .cl-card h3 { margin: 0; font-size: 14px; color: var(--brand-navy); }
+  .cl-meta { font-size: 13px; color: var(--ink-soft); margin-bottom: 12px; }
+  .cl-meta a { color: var(--brand-blue-deep); font-weight: 600; }
+  .cl-snapshot { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 18px; font-size: 13px; }
+  .cl-snapshot dt { color: var(--ink-faint); font-size: 12px; }
+  .cl-snapshot dd { margin: 2px 0 0; color: var(--ink); font-weight: 600; }
+  .cl-key-dates { margin: 12px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-soft); }
+  .cl-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    box-shadow: var(--panel-shadow);
+    font-size: 13px;
+  }
+  .cl-progress { font-weight: 700; color: var(--brand-navy); }
+  .cl-save-state { color: var(--ink-faint); }
+  .cl-save-state.dirty { color: var(--medium); font-weight: 600; }
+  .cl-save-state.error { color: var(--high); font-weight: 600; }
+  .cl-toolbar-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cl-btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    border: 1px solid var(--panel-border);
+    background: #fff;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .cl-btn:hover { border-color: var(--brand-blue); color: var(--brand-blue-deep); }
+  .cl-btn.primary { border-color: var(--brand-blue); background: var(--brand-blue); color: #fff; }
+  .cl-btn.success { border-color: #2f9e44; background: #2f9e44; color: #fff; }
+  .cl-btn:disabled { opacity: 0.55; cursor: default; }
+  .cl-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .cl-count { font-size: 12px; color: var(--ink-faint); }
+  .cl-add { margin-left: auto; }
+  .cl-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
+  .cl-table th, .cl-table td { border: 1px solid var(--panel-border); padding: 4px 6px; text-align: left; vertical-align: top; }
+  .cl-table th { color: var(--ink-faint); font-weight: 600; font-size: 12px; background: var(--page-bg); white-space: nowrap; }
+  .cl-table td.cl-done, .cl-table td.cl-del { width: 1%; text-align: center; vertical-align: middle; }
+  .cl-table tr.done textarea, .cl-table tr.done input[type="text"] { color: var(--ink-faint); text-decoration: line-through; }
+  .cl-table textarea, .cl-table input[type="text"] {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    padding: 4px 6px;
+    resize: vertical;
+    overflow: hidden;
+    min-height: 28px;
+  }
+  .cl-table textarea:hover, .cl-table input[type="text"]:hover { border-color: var(--panel-border); }
+  .cl-table textarea:focus, .cl-table input[type="text"]:focus { outline: none; border-color: var(--brand-blue); background: #fff; }
+  .cl-table input.status-ok { color: #2f9e44; font-weight: 600; }
+  .cl-table input.status-id { color: #1c7ed6; font-weight: 600; }
+  .cl-table input.status-gap { color: var(--high); font-weight: 600; }
+  .cl-del button { border: none; background: none; color: var(--ink-faint); font-size: 16px; cursor: pointer; line-height: 1; }
+  .cl-del button:hover { color: var(--high); }
+  .cl-empty { font-size: 13px; color: var(--ink-faint); padding: 6px 2px; }
+  .cl-badge { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--low-bg); color: var(--low); margin-left: 4px; white-space: nowrap; }
 
   .detail-row td {
     background: var(--page-bg);
@@ -924,6 +1020,25 @@
   </div>
 </div><!-- /documentsPage -->
 
+<!-- Editable review checklist for one tender (#/checklist/{id}) - the
+     same checklist the bid pack PDF prints on its internal review pages. -->
+<div id="checklistPage" hidden>
+  <div class="drill-header">
+    <button class="back-link" id="checklistBackBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Back
+    </button>
+    <div class="drill-heading">Tender Checklist</div>
+  </div>
+  <div id="checklistContent"><div class="loading">Loading...</div></div>
+  <datalist id="checklistStatuses">
+    <option value="Evidence available">
+    <option value="Identifier verified - scan not yet uploaded">
+    <option value="TO BE FILLED FROM COMPANY RECORDS">
+    <option value="TO BE VERIFIED BEFORE SIGNING">
+  </datalist>
+</div><!-- /checklistPage -->
+
 </div><!-- /.wrap -->
 </div><!-- /.main -->
 </div><!-- /.shell -->
@@ -1240,7 +1355,8 @@
       const res = await fetch(`${API_BASE_URL}/tenders/${id}/generate-bid`, { method: "POST" });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       closeGenerateModal();
-      loadTenders();
+      if (!el("checklistPage").hidden) loadChecklist(id);
+      else loadTenders();
     } catch (err) {
       console.error("Failed to generate bid pack:", err);
       el("generateError").textContent =
@@ -1260,10 +1376,22 @@
       body.querySelectorAll("tr.tender-row").forEach((row) => {
         row.addEventListener("click", () => toggleDetail(row.dataset.id, data.tenders));
       });
-      body.querySelectorAll(".generate-btn, .regenerate-link").forEach((btn) => {
+      body.querySelectorAll(".generate-btn[data-action], .regenerate-link").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           openGenerateModal(btn.dataset.id, btn.dataset.action === "regenerate");
+        });
+      });
+      body.querySelectorAll(".checklist-generate-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          generateChecklistFromRow(btn);
+        });
+      });
+      body.querySelectorAll(".checklist-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openChecklist(btn.dataset.id);
         });
       });
       body.querySelectorAll(".download-btn").forEach((a) => {
@@ -1301,19 +1429,26 @@
     `;
   }
 
+  // Checklist first: "Generate Checklist" until one exists, then "See
+  // Checklist" plus the bid pack controls (whose PDF prints that checklist).
   function decisionCellHtml(t) {
+    const checklistBtn = t.checklist_generated_at
+      ? `<button class="checklist-btn" data-id="${t.id}">See Checklist</button>`
+      : `<button class="generate-btn checklist-generate-btn" data-id="${t.id}">Generate Checklist</button>`;
+    let bidHtml = "";
     if (t.bid_document_id) {
       const generatedTitle = t.bid_generated_at ? ` title="Generated ${escapeHtml(fmtDate(t.bid_generated_at))}"` : "";
-      return `
-        <div class="decision-actions">
-          <a class="download-btn" href="${API_BASE_URL}/tenders/${t.id}/bid-document" target="_blank" rel="noopener">Download Bid Pack &darr;</a>
-          <button class="regenerate-link" data-id="${t.id}" data-action="regenerate"${generatedTitle}>Regenerate</button>
-        </div>
+      bidHtml = `
+        <a class="download-btn" href="${API_BASE_URL}/tenders/${t.id}/bid-document" target="_blank" rel="noopener">Download Bid Pack &darr;</a>
+        <button class="regenerate-link" data-id="${t.id}" data-action="regenerate"${generatedTitle}>Regenerate</button>
       `;
+    } else if (t.checklist_generated_at) {
+      bidHtml = `<button class="generate-btn" data-id="${t.id}" data-action="generate">Generate Bid Pack</button>`;
     }
     return `
       <div class="decision-actions">
-        <button class="generate-btn" data-id="${t.id}" data-action="generate">Generate</button>
+        ${checklistBtn}
+        ${bidHtml}
       </div>
     `;
   }
@@ -1434,6 +1569,8 @@
       hash = "#/eligibility";
     } else if (!el("documentsPage").hidden) {
       hash = "#/documents";
+    } else if (!el("checklistPage").hidden) {
+      hash = `#/checklist/${checklistState.tenderId}`;
     } else if (activeQuery) {
       hash = `#/tenders/${encodeURIComponent(activeQuery.name)}/${activeQuery.bucket}`;
     } else {
@@ -1457,7 +1594,13 @@
       showPage("documents");
       return;
     }
-    showPage("tenders");
+    if (parts[0] === "checklist" && parts[1]) {
+      checklistState.tenderId = parts[1];
+      showPage("checklist");
+      loadChecklist(parts[1]);
+      return;
+    }
+    if (!showPage("tenders")) return;
     if (parts[0] === "tenders" && parts[1] && parts[2]) {
       showTenders(parts[1], parts[2]);
     } else {
@@ -1471,7 +1614,14 @@
   // manual trigger, and what each stage (collect/process/screen) returned.
 
   function showPage(page) {
-    el("navTenders").classList.toggle("active", page === "tenders");
+    if (page !== "checklist" && !el("checklistPage").hidden && checklistState.dirty) {
+      if (!confirm("You have unsaved checklist changes. Leave without saving?")) {
+        syncRoute(); // undo a browser Back/Forward's URL change
+        return false;
+      }
+      checklistState.dirty = false;
+    }
+    el("navTenders").classList.toggle("active", page === "tenders" || page === "checklist");
     el("navAutomation").classList.toggle("active", page === "automation");
     el("navEligibility").classList.toggle("active", page === "eligibility");
     el("navDocuments").classList.toggle("active", page === "documents");
@@ -1479,6 +1629,7 @@
     el("automationPage").hidden = page !== "automation";
     el("eligibilityPage").hidden = page !== "eligibility";
     el("documentsPage").hidden = page !== "documents";
+    el("checklistPage").hidden = page !== "checklist";
     el("tendersRefreshBtn").hidden = page !== "tenders";
     el("automationRefreshBtn").hidden = page !== "automation";
     el("addCriterionOpenBtn").hidden = page !== "eligibility";
@@ -1499,6 +1650,10 @@
         automationLoaded = true;
         loadAutomationRuns();
       }
+    } else if (page === "checklist") {
+      // Same as a drilled-into tender list: the checklist page has its own
+      // Back/heading bar, so the dashboard header is hidden.
+      setDrilldownChromeVisible(false);
     } else if (page === "documents") {
       el("pageTitle").textContent = "Documents";
       el("pageSubtitle").textContent = "Company documents kept on hand for tender submissions.";
@@ -1517,6 +1672,7 @@
       }
     }
     syncRoute();
+    return true;
   }
 
   // Bounds each .scroll-table-wrap to the remaining viewport height below
@@ -1762,6 +1918,301 @@
       console.error("Failed to delete criterion:", err);
       alert(`Couldn't delete this criterion - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
     }
+  }
+
+  // --- Tender checklist page ---------------------------------------------
+  // The bid pack's internal review checklist as editable data (see
+  // app.reports.bid_generator.build_checklist): POST /tenders/{id}/checklist
+  // builds it, GET loads it, PUT saves the edited rows. Generating the bid
+  // pack prints this saved version into the PDF's checklist pages.
+
+  const CHECKLIST_SECTIONS = [
+    { key: "open_items", title: "Open items before signing", simple: true },
+    { key: "company_eligibility", title: "Compliance matrix — Company eligibility profile" },
+    { key: "tender_requirements", title: "Compliance matrix — Tender-specific requirements" },
+    { key: "missing_information", title: "Missing information flagged in the tender documents", simple: true },
+    { key: "reference_docs", title: "Used for drafting only (not enclosed)", simple: true },
+    { key: "not_enclosed", title: "In the Documents library but not enclosed", simple: true },
+  ];
+
+  // escapeHtml leaves quotes alone - these go inside attribute values.
+  const escapeAttr = (s) => escapeHtml(s).replace(/"/g, "&quot;");
+
+  const checklistState = { tenderId: null, tender: null, items: [], dirty: false, saving: false, returnHash: "#/tenders" };
+
+  // From a tender row's "Generate Checklist" - builds it, then opens it.
+  async function generateChecklistFromRow(btn) {
+    btn.disabled = true;
+    btn.textContent = "Generating…";
+    try {
+      const res = await fetch(`${API_BASE_URL}/tenders/${btn.dataset.id}/checklist`, { method: "POST" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      openChecklist(btn.dataset.id, await res.json());
+    } catch (err) {
+      console.error("Failed to generate checklist:", err);
+      alert(`Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+      btn.disabled = false;
+      btn.textContent = "Generate Checklist";
+    }
+  }
+
+  function openChecklist(id, data) {
+    checklistState.returnHash = location.hash.startsWith("#/tenders") ? location.hash : "#/tenders";
+    checklistState.tenderId = id;
+    history.pushState(null, "", `#/checklist/${id}`);
+    showPage("checklist");
+    if (data) setChecklistData(data);
+    else loadChecklist(id);
+  }
+
+  async function loadChecklist(id) {
+    checklistState.tenderId = id;
+    el("checklistContent").innerHTML = '<div class="cl-empty">Loading...</div>';
+    try {
+      const res = await fetch(`${API_BASE_URL}/tenders/${id}/checklist`);
+      if (res.status === 404) {
+        el("checklistContent").innerHTML = `
+          <div class="cl-card">
+            <p class="cl-meta">No checklist has been generated for this tender yet.</p>
+            <button class="cl-btn primary" id="clFirstGenerateBtn">Generate Checklist</button>
+          </div>`;
+        el("clFirstGenerateBtn").addEventListener("click", () => regenerateChecklist(false));
+        return;
+      }
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      setChecklistData(await res.json());
+    } catch (err) {
+      console.error("Failed to load checklist:", err);
+      el("checklistContent").innerHTML =
+        `<div class="cl-card cl-empty">Couldn't load the checklist - the API at ${escapeHtml(API_BASE_URL)} didn't respond as expected.</div>`;
+    }
+  }
+
+  function setChecklistData(data) {
+    checklistState.tender = data.tender;
+    checklistState.items = data.checklist.items || [];
+    checklistState.updatedAt = data.checklist.updated_at;
+    checklistState.dirty = false;
+    renderChecklist();
+  }
+
+  function statusClass(status) {
+    if (status === "Evidence available") return "status-ok";
+    if ((status || "").startsWith("Identifier verified")) return "status-id";
+    return status ? "status-gap" : "";
+  }
+
+  function checklistRowHtml(item, idx, simple) {
+    const done = `<td class="cl-done"><input type="checkbox" data-idx="${idx}" data-field="done"${item.done ? " checked" : ""} title="Mark done"></td>`;
+    const ta = (field, placeholder) =>
+      `<textarea rows="1" data-idx="${idx}" data-field="${field}" placeholder="${placeholder}">${escapeHtml(item[field] || "")}</textarea>`;
+    const del = `<td class="cl-del"><button data-del="${idx}" title="Remove this item">&times;</button></td>`;
+    const badge = item.origin === "user" ? '<span class="cl-badge">Added</span>'
+      : item.origin === "ai_draft" ? '<span class="cl-badge">AI draft</span>' : "";
+    if (simple) {
+      return `<tr class="${item.done ? "done" : ""}">${done}<td>${ta("requirement", "Describe the item…")}${badge}</td><td>${ta("evidence", "Notes")}</td>${del}</tr>`;
+    }
+    return `
+      <tr class="${item.done ? "done" : ""}">
+        ${done}
+        <td>${ta("requirement", "Requirement…")}${badge}</td>
+        <td>${ta("source", "Source")}</td>
+        <td><input type="text" list="checklistStatuses" class="${statusClass(item.status)}" data-idx="${idx}" data-field="status" value="${escapeAttr(item.status || "")}" placeholder="Status"></td>
+        <td>${ta("evidence", "Evidence / notes")}</td>
+        ${del}
+      </tr>`;
+  }
+
+  function checklistSectionHtml(section) {
+    const rows = checklistState.items
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.section === section.key);
+    const doneCount = rows.filter(({ item }) => item.done).length;
+    const head = section.simple
+      ? "<th>Done</th><th>Item</th><th style=\"width:30%\">Notes</th><th></th>"
+      : "<th>Done</th><th style=\"width:34%\">Requirement</th><th style=\"width:14%\">Source</th><th style=\"width:18%\">Status</th><th>Evidence / Notes</th><th></th>";
+    const body = rows.length
+      ? `<div style="overflow-x:auto"><table class="cl-table"><thead><tr>${head}</tr></thead><tbody>${rows.map(({ item, idx }) => checklistRowHtml(item, idx, section.simple)).join("")}</tbody></table></div>`
+      : '<div class="cl-empty">No items.</div>';
+    return `
+      <div class="cl-card">
+        <div class="cl-section-head">
+          <h3>${escapeHtml(section.title)}</h3>
+          <span class="cl-count">${doneCount} / ${rows.length} done</span>
+          <button class="cl-btn cl-add" data-add="${section.key}">+ Add item</button>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  function checklistTenderHtml(t) {
+    const s = t.document_summary || {};
+    const val = (listing, doc) => amountCellHtml(listing, doc) ?? "Not disclosed";
+    const opening = t.opening_date ? fmtDate(t.opening_date) : escapeHtml(s.tender_opening_date || "Not disclosed");
+    const keyDates = (s.key_dates || []).length
+      ? `<ul class="cl-key-dates">${s.key_dates.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : "";
+    const techTable = (s.technical_criteria_table || []).length
+      ? `<div style="margin-top:14px"><h3 style="margin-bottom:8px">Detailed technical criteria (marks-based)</h3>${technicalCriteriaTableHtml(s.technical_criteria_table)}</div>` : "";
+    return `
+      <div class="cl-card">
+        <h2>${escapeHtml(t.title || "(untitled tender)")}</h2>
+        <div class="cl-meta">
+          ${escapeHtml(t.organisation || "")}
+          ${t.source_url ? ` · <a href="${escapeAttr(t.source_url)}" target="_blank" rel="noopener">View source &rarr;</a>` : ""}
+        </div>
+        <dl class="cl-snapshot">
+          <div><dt>Tender reference</dt><dd>${escapeHtml(t.tender_ref || "Not disclosed")}</dd></div>
+          <div><dt>Published</dt><dd>${fmtDate(t.published_date)}</dd></div>
+          <div><dt>Closing</dt><dd>${fmtDate(t.closing_date)} (${escapeHtml(daysLeftLabel(t.closing_date))})</dd></div>
+          <div><dt>Opening</dt><dd>${opening}</dd></div>
+          <div><dt>Estimated bid amount</dt><dd>${val(t.tender_value, s.estimated_bid_amount)}</dd></div>
+          <div><dt>EMD</dt><dd>${val(t.earnest_money, s.emd_amount)}</dd></div>
+          <div><dt>Tender fee</dt><dd>${val(t.document_fees, s.tender_fee_amount)}</dd></div>
+        </dl>
+        ${keyDates}
+        ${techTable}
+      </div>`;
+  }
+
+  function checklistToolbarHtml() {
+    const t = checklistState.tender;
+    const bidBtns = t.bid_document_id
+      ? `<a class="cl-btn success" href="${API_BASE_URL}/tenders/${t.id}/bid-document" target="_blank" rel="noopener">Download Bid Pack &darr;</a>
+         <button class="cl-btn" id="clBidBtn" data-regenerate="1">Regenerate Bid Pack</button>`
+      : `<button class="cl-btn success" id="clBidBtn">Generate Bid Pack</button>`;
+    return `
+      <div class="cl-toolbar">
+        <span class="cl-progress" id="clProgress"></span>
+        <span class="cl-save-state" id="clSaveState"></span>
+        <div class="cl-toolbar-actions">
+          <button class="cl-btn" id="clRegenerateBtn" title="Rebuild from the tender's documents, eligibility profile and documents library">Regenerate from tender</button>
+          <button class="cl-btn primary" id="clSaveBtn">Save</button>
+          ${bidBtns}
+        </div>
+      </div>`;
+  }
+
+  function renderChecklist() {
+    const content = el("checklistContent");
+    content.innerHTML =
+      checklistToolbarHtml() +
+      checklistTenderHtml(checklistState.tender) +
+      CHECKLIST_SECTIONS.map(checklistSectionHtml).join("");
+    content.querySelectorAll("textarea").forEach(autoGrow);
+    el("clSaveBtn").addEventListener("click", saveChecklist);
+    el("clRegenerateBtn").addEventListener("click", () => regenerateChecklist(true));
+    el("clBidBtn").addEventListener("click", async (e) => {
+      if (checklistState.dirty && !(await saveChecklist())) return;
+      openGenerateModal(checklistState.tenderId, !!e.currentTarget.dataset.regenerate);
+    });
+    updateChecklistStatus();
+  }
+
+  function autoGrow(ta) {
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight + 2}px`;
+  }
+
+  function updateChecklistStatus(errorText) {
+    const items = checklistState.items;
+    el("clProgress").textContent = `${items.filter((i) => i.done).length} / ${items.length} done`;
+    const state = el("clSaveState");
+    state.className = "cl-save-state" + (errorText ? " error" : checklistState.dirty ? " dirty" : "");
+    state.textContent = errorText
+      || (checklistState.saving ? "Saving…"
+        : checklistState.dirty ? "Unsaved changes"
+        : checklistState.updatedAt ? `Saved ${fmtDateTime(checklistState.updatedAt)}` : "");
+    el("clSaveBtn").disabled = !checklistState.dirty || checklistState.saving;
+  }
+
+  function markChecklistDirty() {
+    checklistState.dirty = true;
+    updateChecklistStatus();
+  }
+
+  function onChecklistInput(e) {
+    const target = e.target;
+    const idx = target.dataset.idx;
+    if (idx === undefined) return;
+    const item = checklistState.items[Number(idx)];
+    const field = target.dataset.field;
+    if (field === "done") {
+      item.done = target.checked;
+      target.closest("tr").classList.toggle("done", item.done);
+      // Refresh this section's "x / y done" count.
+      const card = target.closest(".cl-card");
+      const section = CHECKLIST_SECTIONS.find((s) => s.key === item.section);
+      const sectionItems = checklistState.items.filter((i) => i.section === section.key);
+      card.querySelector(".cl-count").textContent =
+        `${sectionItems.filter((i) => i.done).length} / ${sectionItems.length} done`;
+    } else {
+      item[field] = target.value;
+      if (target.tagName === "TEXTAREA") autoGrow(target);
+      if (field === "status") target.className = statusClass(target.value);
+    }
+    markChecklistDirty();
+  }
+
+  function onChecklistClick(e) {
+    const addBtn = e.target.closest("[data-add]");
+    if (addBtn) {
+      const section = CHECKLIST_SECTIONS.find((s) => s.key === addBtn.dataset.add);
+      checklistState.items.push({
+        id: null, section: section.key, requirement: "", source: section.simple ? "" : "Added manually",
+        status: "", evidence: "", done: false, origin: "user",
+      });
+      const newIdx = checklistState.items.length - 1;
+      renderChecklist();
+      markChecklistDirty();
+      el("checklistContent").querySelector(`textarea[data-idx="${newIdx}"][data-field="requirement"]`)?.focus();
+      return;
+    }
+    const delBtn = e.target.closest("[data-del]");
+    if (delBtn) {
+      const item = checklistState.items[Number(delBtn.dataset.del)];
+      if (item.requirement.trim() && !confirm("Remove this checklist item?")) return;
+      checklistState.items.splice(Number(delBtn.dataset.del), 1);
+      renderChecklist();
+      markChecklistDirty();
+    }
+  }
+
+  async function saveChecklist() {
+    checklistState.saving = true;
+    updateChecklistStatus();
+    try {
+      const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items: checklistState.items }),
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      checklistState.saving = false;
+      setChecklistData(await res.json());
+      return true;
+    } catch (err) {
+      console.error("Failed to save checklist:", err);
+      checklistState.saving = false;
+      updateChecklistStatus(`Couldn't save - ${err.message}`);
+      return false;
+    }
+  }
+
+  async function regenerateChecklist(confirmFirst) {
+    if (confirmFirst && !confirm("Rebuild this checklist from the tender? This replaces all your edits, ticks and added items.")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, { method: "POST" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      setChecklistData(await res.json());
+    } catch (err) {
+      console.error("Failed to generate checklist:", err);
+      alert(`Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+    }
+  }
+
+  function leaveChecklist() {
+    history.pushState(null, "", checklistState.returnHash);
+    applyRouteFromHash();
   }
 
   // --- Documents tab -------------------------------------------------------
@@ -2028,6 +2479,13 @@
   el("generateConfirmBtn").addEventListener("click", confirmGenerate);
   el("generateModal").addEventListener("click", (e) => {
     if (e.target === el("generateModal")) closeGenerateModal();
+  });
+
+  el("checklistBackBtn").addEventListener("click", leaveChecklist);
+  el("checklistContent").addEventListener("input", onChecklistInput);
+  el("checklistContent").addEventListener("click", onChecklistClick);
+  window.addEventListener("beforeunload", (e) => {
+    if (!el("checklistPage").hidden && checklistState.dirty) e.preventDefault();
   });
 
   el("addCriterionOpenBtn").addEventListener("click", openAddCriterionModal);
