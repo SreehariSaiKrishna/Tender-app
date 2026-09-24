@@ -358,6 +358,27 @@ def test_summarize_pending_documents_persists_result(collection, tmp_path):
     assert stored["document_text"] == "--- Document: notice.txt ---\nTender notice text"
 
 
+def test_summarize_pending_documents_clears_checklist_request_and_honours_tender_ids(collection, tmp_path):
+    now = dt.datetime.now(dt.timezone.utc)
+    for ref in ("ref:1", "ref:2"):
+        doc_path = tmp_path / f"{ref[-1]}.txt"
+        doc_path.write_text("Tender notice text", encoding="utf-8")
+        make_tender(
+            collection, dedup_key=ref, documents=[{"filename": doc_path.name, "local_path": str(doc_path)}],
+            documents_downloaded_at=now, document_text_requested_at=now,
+        )
+    wanted = collection.find_one({"dedup_key": "ref:2"})["_id"]
+
+    summary = summarize_pending_documents(
+        provider=FakeProvider(response=VALID_SUMMARY), collection=collection, tender_ids=[wanted]
+    )
+
+    assert summary.summarized == 1
+    stored = collection.find_one({"_id": wanted})
+    assert stored["document_text"] and "document_text_requested_at" not in stored
+    assert "document_summary" not in collection.find_one({"dedup_key": "ref:1"})
+
+
 def test_summarize_pending_documents_deletes_local_file_after_success(collection, tmp_path):
     """The raw file's only job was feeding the AI summary - once that
     succeeds, it must be deleted (and its now-empty tender directory too),

@@ -386,20 +386,20 @@ def summarize_pending_documents(
     provider: AIProvider | None = None,
     limit: int | None = None,
     collection: Collection | None = None,
+    tender_ids: list[Any] | None = None,
 ) -> SummarizeSummary:
     """Summarize every tender that has downloaded documents but no
     up-to-date AI summary yet (never summarized, or re-downloaded since the
-    last summary).
+    last summary) - or, with `tender_ids`, just those of them.
     """
     settings = settings or get_settings()
     provider = provider or get_provider(settings)
     collection = collection if collection is not None else get_collection()
 
-    candidates = [
-        doc
-        for doc in collection.find({"documents": {"$exists": True, "$ne": []}})
-        if _needs_summary(doc)
-    ]
+    filt: dict[str, Any] = {"documents": {"$exists": True, "$ne": []}}
+    if tender_ids is not None:
+        filt["_id"] = {"$in": tender_ids}
+    candidates = [doc for doc in collection.find(filt) if _needs_summary(doc)]
     if limit is not None:
         candidates = candidates[:limit]
 
@@ -497,7 +497,9 @@ def summarize_pending_documents(
                     "documents": cleared_documents,
                     "domain_match": domain_match,
                     "eligibility_match": eligibility_match,
-                }
+                },
+                # A checklist was waiting on this text (see app.api.main).
+                "$unset": {"document_text_requested_at": ""},
             },
         )
         summary.summarized += 1

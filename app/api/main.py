@@ -336,15 +336,47 @@ def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[Com
 # saved version.
 
 
+def _require_document_text(tender: dict[str, Any]) -> None:
+    """A checklist is only built from the tender's own documents (the files
+    under "View Original Notice/Document", read into `document_text` by
+    app.intelligence.document_summarizer) - never from its summary alone,
+    which drops annexure numbers and prescribed formats. Without that text,
+    the tender is flagged so the next document download fetches it first
+    (see app.browser.document_collector._pending_tenders), and the request
+    is refused with what to do."""
+    if (tender.get("document_text") or "").strip():
+        return
+    if not tender.get("source_url"):
+        raise HTTPException(
+            status_code=409,
+            detail="This tender has no source page to download its documents from, so a checklist "
+                   "can't be built from its documents.",
+        )
+    get_collection().update_one(
+        {"_id": tender["_id"], "document_text_requested_at": None},
+        {"$set": {"document_text_requested_at": dt.datetime.now(dt.timezone.utc)}},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="This tender's documents (View Original Notice/Document) haven't been read yet, so the "
+               "checklist can't be built from them. They're queued for the next document download - or "
+               f"run `python main.py fetch-tender-documents {tender['_id']}` now - then generate the "
+               "checklist again.",
+    )
+
+
 def _build_tender_checklist(
     tender: dict[str, Any],
     eligibility_criteria: list[dict[str, Any]],
     company_profile: dict[str, Any],
     company_documents: list[CompanyDocumentRef],
 ) -> dict[str, Any]:
-    """The AI reads the tender for the rows (see
+    """The AI reads the tender's documents for the rows (see
     app.intelligence.bid_drafter.plan_submission_checklist); without it
-    (no OPENAI_API_KEY, a bad response) they come from the document summary."""
+    (no OPENAI_API_KEY, a bad response) they come from the document summary.
+    Refused (409) until the documents themselves have been read - see
+    _require_document_text."""
+    _require_document_text(tender)
     library_names = [d.name for d in enclosure_documents(company_documents, company_profile)]
     plan, note = None, None
     try:
@@ -608,15 +640,46 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     return _serialize(doc)
 
 
-@app.get("/tenders/{tender_id}/bid-document")
-def download_bid_document(tender_id: str) -> Response:
+# A bid pack encloses library documents, so it easily outgrows what one
+# Lambda response can carry (6 MB after Mangum's base64 inflation - see
+# MAX_DOCUMENT_SIZE) and API Gateway answers 500. The dashboard therefore
+# reads /bid-document/info, fetches each ?part=N slice (3 MB raw, ~4 MB
+# encoded) and joins them in the browser. With no ?part the whole file is
+# returned in one response, which only works for small packs.
+BID_PART_SIZE = 3 * 1024 * 1024
+
+
+def _open_bid_pack(tender_id: str) -> Any:
     doc = get_generated_bids_files_collection().find_one({"metadata.tender_id": tender_id})
     if doc is None:
         raise HTTPException(status_code=404, detail="No bid pack has been generated for this tender yet")
-    grid_out = get_generated_bids_bucket().open_download_stream(doc["_id"])
+    return get_generated_bids_bucket().open_download_stream(doc["_id"])
+
+
+@app.get("/tenders/{tender_id}/bid-document/info")
+def bid_document_info(tender_id: str) -> dict[str, Any]:
+    grid_out = _open_bid_pack(tender_id)
+    return {
+        "filename": grid_out.filename,
+        "size": grid_out.length,
+        "part_size": BID_PART_SIZE,
+        "parts": max(1, -(-grid_out.length // BID_PART_SIZE)),
+    }
+
+
+@app.get("/tenders/{tender_id}/bid-document")
+def download_bid_document(tender_id: str, part: int | None = None) -> Response:
+    grid_out = _open_bid_pack(tender_id)
+    if part is None:
+        content = grid_out.read()
+    else:
+        if part < 0 or part * BID_PART_SIZE >= max(grid_out.length, 1):
+            raise HTTPException(status_code=416, detail="Part out of range")
+        grid_out.seek(part * BID_PART_SIZE)
+        content = grid_out.read(BID_PART_SIZE)
     return Response(
-        content=grid_out.read(),
-        media_type="application/pdf",
+        content=content,
+        media_type="application/pdf" if part is None else "application/octet-stream",
         headers={"Content-Disposition": _content_disposition("attachment", grid_out.filename)},
     )
 

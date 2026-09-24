@@ -1472,7 +1472,7 @@
     if (t.bid_document_id) {
       const generatedTitle = t.bid_generated_at ? ` title="Generated ${escapeHtml(fmtDate(t.bid_generated_at))}"` : "";
       bidHtml = `
-        <a class="download-btn" href="${API_BASE_URL}/tenders/${t.id}/bid-document" target="_blank" rel="noopener">Download Bid Pack &darr;</a>
+        <a class="download-btn bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
         <button class="regenerate-link" data-id="${t.id}" data-action="regenerate"${generatedTitle}>Regenerate</button>
       `;
     } else if (t.checklist_generated_at) {
@@ -1979,17 +1979,34 @@
     expanded: new Set(), dirty: false, saving: false, returnHash: "#/tenders",
   };
 
+  // The API's own explanation (FastAPI's `detail`) when it gives one - e.g.
+  // a 409 while the tender's documents haven't been read yet.
+  async function checklistError(res) {
+    let detail = "";
+    try { detail = (await res.json()).detail || ""; } catch (_) { /* not JSON */ }
+    const err = new Error(typeof detail === "string" && detail ? detail : `Server returned ${res.status}`);
+    err.fromServer = !!detail;
+    return err;
+  }
+
+  function checklistErrorAlert(err) {
+    alert(err.fromServer ? err.message
+      : `Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.
+
+${err.message}`);
+  }
+
   // From a tender row's "Generate Checklist" - builds it, then opens it.
   async function generateChecklistFromRow(btn) {
     btn.disabled = true;
     btn.textContent = "Generating…";
     try {
       const res = await fetch(`${API_BASE_URL}/tenders/${btn.dataset.id}/checklist`, { method: "POST" });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) throw await checklistError(res);
       openChecklist(btn.dataset.id, await res.json());
     } catch (err) {
       console.error("Failed to generate checklist:", err);
-      alert(`Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+      checklistErrorAlert(err);
       btn.disabled = false;
       btn.textContent = "Generate Checklist";
     }
@@ -2018,12 +2035,13 @@
         el("clFirstGenerateBtn").addEventListener("click", () => regenerateChecklist(false));
         return;
       }
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) throw await checklistError(res);
       setChecklistData(await res.json());
     } catch (err) {
       console.error("Failed to load checklist:", err);
-      el("checklistContent").innerHTML =
-        `<div class="cl-card cl-empty">Couldn't load the checklist - the API at ${escapeHtml(API_BASE_URL)} didn't respond as expected.</div>`;
+      el("checklistContent").innerHTML = err.fromServer
+        ? `<div class="cl-card"><div class="cl-warning">${escapeHtml(err.message)}</div></div>`
+        : `<div class="cl-card cl-empty">Couldn't load the checklist - the API at ${escapeHtml(API_BASE_URL)} didn't respond as expected.</div>`;
     }
   }
 
@@ -2170,7 +2188,7 @@
         <input type="text" data-kind="header" data-field="${key}" value="${escapeAttr(h[key] || "")}" placeholder="${label}">
       </label>`;
     const warnings = [
-      h.summary_only ? "Built from the tender's summary only - its full document text wasn't kept, so annexure numbers and formats may be missing. Check against the tender document." : "",
+      h.summary_only ? "This checklist was built before the tender's own documents were read, so annexure numbers and formats may be missing. Use \"Regenerate from tender\" to rebuild it from the tender's documents (View Original Notice/Document)." : "",
       checklistState.builderNote || "",
     ].filter(Boolean).map((w) => `<div class="cl-warning">${escapeHtml(w)}</div>`).join("");
     return `
@@ -2199,7 +2217,7 @@
   function checklistToolbarHtml() {
     const t = checklistState.tender;
     const bidBtns = t.bid_document_id
-      ? `<a class="cl-btn success" href="${API_BASE_URL}/tenders/${t.id}/bid-document" target="_blank" rel="noopener">Download Bid Pack &darr;</a>
+      ? `<a class="cl-btn success bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
          <button class="cl-btn" id="clBidBtn" data-regenerate="1">Regenerate Bid Pack</button>`
       : `<button class="cl-btn success" id="clBidBtn">Generate Bid Pack</button>`;
     return `
@@ -2373,12 +2391,12 @@
     if (btn) { btn.disabled = true; btn.textContent = "Rebuilding…"; }
     try {
       const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, { method: "POST" });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) throw await checklistError(res);
       checklistState.expanded.clear();
       setChecklistData(await res.json());
     } catch (err) {
       console.error("Failed to generate checklist:", err);
-      alert(`Couldn't generate the checklist - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+      checklistErrorAlert(err);
       if (btn) { btn.disabled = false; btn.textContent = "Regenerate from tender"; }
     }
   }
@@ -2701,6 +2719,50 @@
   });
   window.addEventListener("resize", closeAllActionsMenus);
   document.addEventListener("scroll", closeAllActionsMenus, true);
+
+  // A bid pack can be larger than one API response can carry (the
+  // Lambda/API Gateway ~6 MB cap), so it's fetched in parts via
+  // /bid-document/info + ?part=N and joined into a Blob here rather than
+  // followed as a plain link.
+  async function downloadBidPack(link) {
+    if (link.dataset.busy) return;
+    link.dataset.busy = "1";
+    const label = link.innerHTML;
+    const base = `${API_BASE_URL}/tenders/${link.dataset.id}/bid-document`;
+    try {
+      const infoRes = await fetch(`${base}/info`);
+      if (!infoRes.ok) throw new Error(`HTTP ${infoRes.status}`);
+      const info = await infoRes.json();
+      const parts = [];
+      for (let i = 0; i < info.parts; i++) {
+        link.textContent = info.parts > 1 ? `Downloading ${i + 1}/${info.parts}…` : "Downloading…";
+        const res = await fetch(`${base}?part=${i}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status} on part ${i + 1}`);
+        parts.push(await res.blob());
+      }
+      const url = URL.createObjectURL(new Blob(parts, { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = info.filename || "bid-pack.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      alert(`Couldn't download the bid pack - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+    } finally {
+      link.innerHTML = label;
+      delete link.dataset.busy;
+    }
+  }
+
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("a.bid-pack-link");
+    if (!link) return;
+    e.preventDefault();
+    e.stopPropagation();
+    downloadBidPack(link);
+  }, true); // capture: the table row's handler stops this click's propagation
 
   window.addEventListener("popstate", applyRouteFromHash);
   window.addEventListener("resize", syncScrollTableHeights);

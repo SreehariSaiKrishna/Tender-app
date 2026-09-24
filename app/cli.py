@@ -247,6 +247,44 @@ def download_documents_command(limit: int | None) -> None:
         raise SystemExit(1)
 
 
+@cli.command("fetch-tender-documents")
+@click.argument("tender_ids", nargs=-1, required=True)
+def fetch_tender_documents_command(tender_ids: tuple[str, ...]) -> None:
+    """Download and read the given tenders' documents (View Original
+    Notice/Document) now, so their submission checklist can be built from
+    the documents themselves. TENDER_IDS are the dashboard's tender ids.
+    """
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    from app.browser.document_collector import run_document_collection
+    from app.intelligence.document_summarizer import summarize_pending_documents
+
+    logging.basicConfig(level=get_settings().log_level, format="%(levelname)s %(message)s")
+    try:
+        ids = [ObjectId(t) for t in tender_ids]
+    except InvalidId as exc:
+        raise click.BadParameter(str(exc), param_hint="TENDER_IDS")
+
+    click.echo("Downloading documents. A browser window will open now.")
+    click.echo("")
+    downloads = run_document_collection(tender_ids=ids)
+    for outcome in downloads.outcomes:
+        label = outcome.tender_ref or outcome.tender_id
+        colour = {"success": "green", "partial": "yellow"}.get(outcome.status, "red")
+        detail = ", ".join(outcome.downloaded) or outcome.error_message or ""
+        click.secho(f"  {outcome.status.upper():<8}{label}: {detail}", fg=colour)
+    if downloads.checked < len(ids):
+        click.secho(f"  {len(ids) - downloads.checked} tender id(s) not found or without a source page.", fg="yellow")
+
+    summary = summarize_pending_documents(tender_ids=ids)
+    click.echo("")
+    click.echo(f"Read and summarized: {summary.summarized}   Failed: {summary.failed}")
+    if summary.failed or not summary.summarized:
+        raise SystemExit(1)
+    click.echo("Now use 'Regenerate from tender' on the checklist page.")
+
+
 @cli.command("backfill-key-dates")
 @click.option("--limit", default=None, type=int, help="Check at most N tenders this run.")
 def backfill_key_dates_command(limit: int | None) -> None:
