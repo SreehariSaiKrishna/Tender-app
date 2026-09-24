@@ -1,6 +1,6 @@
 """Read-mostly API over the `tenders` collection - serves the dashboard
 (Step 5). Deliberately narrow: the only writes are the "mark applied",
-"decline" and "generate bid" endpoints below. Everything except that last
+"decline", "checklist" and "generate bid" endpoints below. Everything except that last
 one only needs app.config/app.database - fastapi, mangum, pymongo - to keep
 this Lambda's image light. POST /tenders/{id}/generate-bid is the one
 exception: it needs reportlab/pypdf (PDF rendering, app.reports.bid_generator)
@@ -16,7 +16,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-from typing import Any
+import uuid
+from typing import Any, Literal
 from urllib.parse import quote
 
 import gridfs
@@ -43,10 +44,12 @@ from app.intelligence.bid_drafter import BidDraftingError, draft_bid_documents
 from app.reports.bid_generator import (
     BidGenerationError,
     CompanyDocumentRef,
+    build_checklist,
     build_compliance_matrix,
     company_background_text,
     established_facts,
     generate_bid_package,
+    merge_drafted_open_items,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,9 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     out = dict(doc)
     out["id"] = str(out.pop("_id"))
     out.pop("raw_data", None)
+    # The editable review checklist is served on its own (GET
+    # /tenders/{id}/checklist) - rows only need checklist_generated_at.
+    out.pop("checklist", None)
 
     for key in (
         "first_seen",
@@ -108,6 +114,7 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
         "documents_downloaded_at",
         "document_summary_generated_at",
         "bid_generated_at",
+        "checklist_generated_at",
     ):
         if out.get(key) is not None:
             out[key] = _iso(out[key])
@@ -283,9 +290,131 @@ def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
                 filename=grid_out.filename,
                 content_type=metadata.get("content_type") or "application/octet-stream",
                 open_bytes=lambda fid=file_id: bucket.open_download_stream(fid).read(),
+                size=grid_out.length,
             )
         )
     return refs
+
+
+def _find_tender(tender_id: str) -> tuple[ObjectId, dict[str, Any]]:
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    tender = get_collection().find_one({"_id": object_id})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    return object_id, tender
+
+
+def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[CompanyDocumentRef]]:
+    """Eligibility criteria, company profile and documents library - what
+    both the checklist and the bid pack are built from."""
+    criteria_doc = get_eligibility_criteria_collection().find_one({"_id": CRITERIA_DOC_ID})
+    return (
+        (criteria_doc or {}).get("criteria", []),
+        load_company_profile(),
+        _load_company_documents_for_generation(),
+    )
+
+
+# --- Editable review checklist ------------------------------------------------
+# The bid pack's internal review checklist as data on the tender (see
+# app.reports.bid_generator.build_checklist), so the team can edit, tick
+# and add rows on the dashboard - POST /generate-bid then prints this saved
+# version into the pack instead of rebuilding it.
+
+
+def _checklist_response(tender: dict[str, Any]) -> dict[str, Any]:
+    checklist = dict(tender["checklist"])
+    checklist["generated_at"] = _iso(checklist.get("generated_at"))
+    checklist["updated_at"] = _iso(checklist.get("updated_at"))
+    summary = tender.get("document_summary") or {}
+    return {
+        "tender": {
+            "id": str(tender["_id"]),
+            "title": tender.get("title"),
+            "organisation": tender.get("organisation"),
+            "tender_ref": tender.get("tender_ref"),
+            "source_url": tender.get("source_url"),
+            "published_date": _iso(tender.get("published_date")),
+            "closing_date": _iso(tender.get("closing_date")),
+            "opening_date": _iso(tender.get("opening_date")),
+            "tender_value": tender.get("tender_value"),
+            "earnest_money": tender.get("earnest_money"),
+            "document_fees": tender.get("document_fees"),
+            "document_summary": {
+                k: summary.get(k)
+                for k in (
+                    "estimated_bid_amount", "emd_amount", "tender_fee_amount",
+                    "tender_opening_date", "key_dates", "technical_criteria_table",
+                )
+            },
+            "bid_document_id": tender.get("bid_document_id"),
+        },
+        "checklist": checklist,
+    }
+
+
+@app.post("/tenders/{tender_id}/checklist")
+def generate_checklist(tender_id: str) -> dict[str, Any]:
+    """(Re)builds this tender's checklist from its document_summary, the
+    eligibility profile and the documents library - replacing any edits."""
+    object_id, tender = _find_tender(tender_id)
+    checklist = build_checklist(tender, *_generation_inputs())
+    get_collection().update_one(
+        {"_id": object_id},
+        {"$set": {"checklist": checklist, "checklist_generated_at": checklist["generated_at"]}},
+    )
+    return _checklist_response({**tender, "checklist": checklist})
+
+
+@app.get("/tenders/{tender_id}/checklist")
+def get_checklist(tender_id: str) -> dict[str, Any]:
+    _, tender = _find_tender(tender_id)
+    if not tender.get("checklist"):
+        raise HTTPException(status_code=404, detail="No checklist has been generated for this tender yet")
+    return _checklist_response(tender)
+
+
+ChecklistSection = Literal[
+    "open_items", "company_eligibility", "tender_requirements",
+    "reference_docs", "not_enclosed", "missing_information",
+]
+
+
+class ChecklistItem(BaseModel):
+    id: str | None = None
+    section: ChecklistSection
+    requirement: str = ""
+    source: str = ""
+    status: str = ""
+    evidence: str = ""
+    done: bool = False
+    origin: Literal["auto", "user", "ai_draft"] = "user"
+
+
+class ChecklistUpdateRequest(BaseModel):
+    items: list[ChecklistItem]
+
+
+@app.put("/tenders/{tender_id}/checklist")
+def update_checklist(tender_id: str, body: ChecklistUpdateRequest) -> dict[str, Any]:
+    object_id, tender = _find_tender(tender_id)
+    if not tender.get("checklist"):
+        raise HTTPException(status_code=404, detail="No checklist has been generated for this tender yet")
+    items = []
+    for item in body.items:
+        row = item.model_dump()
+        for key in ("requirement", "source", "status", "evidence"):
+            row[key] = row[key].strip()
+        if not row["requirement"]:
+            continue  # a blank row added then left empty
+        row["id"] = row["id"] or uuid.uuid4().hex
+        items.append(row)
+    checklist = {**tender["checklist"], "items": items, "updated_at": dt.datetime.now(dt.timezone.utc)}
+    get_collection().update_one({"_id": object_id}, {"$set": {"checklist": checklist}})
+    return _checklist_response({**tender, "checklist": checklist})
 
 
 @app.post("/tenders/{tender_id}/generate-bid")
@@ -304,19 +433,8 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     actually submitted.
     """
     collection = get_collection()
-    try:
-        object_id = ObjectId(tender_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid tender id")
-
-    tender = collection.find_one({"_id": object_id})
-    if tender is None:
-        raise HTTPException(status_code=404, detail="Tender not found")
-
-    criteria_doc = get_eligibility_criteria_collection().find_one({"_id": CRITERIA_DOC_ID})
-    eligibility_criteria = (criteria_doc or {}).get("criteria", [])
-    company_profile = load_company_profile()
-    company_documents = _load_company_documents_for_generation()
+    object_id, tender = _find_tender(tender_id)
+    eligibility_criteria, company_profile, company_documents = _generation_inputs()
 
     # AI-draft the individual bid documents this tender's own paperwork
     # calls for (see app.intelligence.bid_drafter) - `facts` tells the
@@ -352,6 +470,14 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
         if letterhead is None:
             logger.warning("Letterhead image %s not found - bid pack will use plain pages", candidate)
 
+    # The pack's checklist pages print the tender's saved (possibly
+    # hand-edited) checklist - built fresh only if none was generated yet -
+    # with this run's drafted open items swapped in.
+    checklist = tender.get("checklist") or build_checklist(
+        tender, eligibility_criteria, company_profile, company_documents
+    )
+    checklist = merge_drafted_open_items(checklist, drafted_documents)
+
     try:
         pdf_bytes = generate_bid_package(
             tender,
@@ -361,6 +487,7 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
             drafted_documents=drafted_documents,
             drafting_note=drafting_note,
             letterhead_image=letterhead,
+            checklist=checklist,
         )
     except BidGenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -381,7 +508,10 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     update: dict[str, Any] = {
         "bid_document_id": str(file_id),
         "bid_generated_at": now,
+        "checklist": checklist,
     }
+    if not tender.get("checklist_generated_at"):
+        update["checklist_generated_at"] = checklist.get("generated_at") or now
     if not tender.get("applied"):
         update["applied"] = True
         update["applied_at"] = now

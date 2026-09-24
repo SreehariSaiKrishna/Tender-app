@@ -10,12 +10,16 @@ from pypdf import PdfReader
 
 from app.reports.bid_generator import (
     CompanyDocumentRef,
+    build_checklist,
     build_compliance_matrix,
+    checklist_item,
     company_background_text,
     established_facts,
     _match_documents,
     _safe,
     generate_bid_package,
+    merge_drafted_open_items,
+    select_enclosures,
 )
 
 COMPANY_PROFILE = {
@@ -39,6 +43,7 @@ COMPANY_PROFILE = {
         {"name": "UDYAM (MSME) Registration", "number": "UDYAM-TS-00-0000000"},
         {"name": "DPIIT Start-up Recognition", "certificate_no": "DIPP000000"},
     ],
+    "standard_enclosures": ["Certificate of Incorporation", "PAN Card"],
     "certifications": [],
     "past_experience": [],
     "to_be_verified": ["Current headcount"],
@@ -255,6 +260,113 @@ def test_generate_bid_package_draws_letterhead_on_submission_pages(tmp_path):
     first, last = reader.pages[0], reader.pages[-1]
     assert first["/Resources"].get("/XObject")  # letterhead image on the covering letter
     assert not last["/Resources"].get("/XObject")  # plain internal checklist
+
+
+def _library():
+    return [
+        _company_doc("PAN Card", "pan.pdf"),
+        _company_doc("Certificate of Incorporation", "coi.pdf"),
+        _company_doc("Work Order - NCERT OLabs", "wo.pdf"),
+        _company_doc("Audited Financial Statements FY2024-25", "fs.pdf"),
+        _company_doc("CMMI Certificate of Compliance", "cmmi.pdf"),
+        _company_doc("Oaks Brochure", "brochure.pdf"),
+    ]
+
+
+def test_select_enclosures_standard_set_first_then_tender_matches():
+    selection = select_enclosures(TENDER, _library(), COMPANY_PROFILE)
+    # standard_enclosures order, then the work order ("Work Order copy" / "experience" in the summary).
+    assert [d.name for d in selection.selected] == [
+        "Certificate of Incorporation", "PAN Card", "Work Order - NCERT OLabs",
+    ]
+    assert {d.name for d in selection.not_relevant} == {
+        "Audited Financial Statements FY2024-25", "CMMI Certificate of Compliance",
+    }
+    assert selection.over_budget == []
+
+
+def test_select_enclosures_matches_turnover_wording_to_financials():
+    tender = {"document_summary": {"eligibility_requirements": ["Average annual turnover of Rs. 2 Crore"]}}
+    selection = select_enclosures(tender, _library(), COMPANY_PROFILE)
+    assert "Audited Financial Statements FY2024-25" in [d.name for d in selection.selected]
+    assert "Work Order - NCERT OLabs" not in [d.name for d in selection.selected]
+
+
+def test_select_enclosures_without_summary_is_standard_set_only():
+    selection = select_enclosures({"title": "Bare"}, _library(), COMPANY_PROFILE)
+    assert [d.name for d in selection.selected] == ["Certificate of Incorporation", "PAN Card"]
+
+
+def test_select_enclosures_reports_documents_over_the_size_budget():
+    docs = _library()
+    docs[2].size = 900  # the work order
+    selection = select_enclosures(TENDER, docs, COMPANY_PROFILE, byte_budget=100)
+    assert [d.name for d in selection.over_budget] == ["Work Order - NCERT OLabs"]
+    assert "Work Order - NCERT OLabs" not in [d.name for d in selection.selected]
+
+
+def test_generate_bid_package_lists_unmatched_library_documents_in_checklist():
+    docs = [
+        _company_doc("Certificate of Incorporation", "coi.pdf", _one_page_pdf("COI enclosure page")),
+        _company_doc("CMMI Certificate of Compliance", "cmmi.pdf", _one_page_pdf("CMMI enclosure page")),
+    ]
+    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
+    all_text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert "COI enclosure page" in all_text
+    assert "CMMI enclosure page" not in all_text
+    assert "not enclosed" in all_text and "cmmi.pdf" in all_text
+
+
+def test_build_checklist_mirrors_the_compliance_matrix_and_summary():
+    docs = [_company_doc("Certificate of Incorporation", "coi.pdf"), _company_doc("Oaks Brochure", "brochure.pdf")]
+    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
+    by_section: dict[str, list[dict]] = {}
+    for item in checklist["items"]:
+        by_section.setdefault(item["section"], []).append(item)
+
+    assert [i["requirement"] for i in by_section["open_items"]] == ["Current headcount"]
+    company = by_section["company_eligibility"]
+    assert [i["status"] for i in company] == [
+        r.status for r in build_compliance_matrix(ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs)
+    ]
+    assert any(i["requirement"] == "3 years of experience required" for i in by_section["tender_requirements"])
+    assert [i["requirement"] for i in by_section["reference_docs"]] == ["Oaks Brochure (brochure.pdf)"]
+    assert [i["requirement"] for i in by_section["missing_information"]] == ["Exact submission portal not stated"]
+    assert all(i["origin"] == "auto" and not i["done"] and i["id"] for i in checklist["items"])
+
+
+def test_merge_drafted_open_items_replaces_only_previous_ai_items():
+    from app.intelligence.bid_drafter import DraftedDocument
+
+    checklist = {"items": [
+        checklist_item("open_items", "Old: stale item", origin="ai_draft"),
+        checklist_item("open_items", "Letter: sign it", origin="ai_draft", done=True),
+        checklist_item("open_items", "Hand-added item", origin="user"),
+    ]}
+    drafted = [DraftedDocument(title="Letter", body_paragraphs=["x"], open_items=["sign it", "date it"])]
+    merged = merge_drafted_open_items(checklist, drafted)
+    texts = {i["requirement"]: i for i in merged["items"]}
+
+    assert "Old: stale item" not in texts
+    assert texts["Letter: sign it"]["done"] is True  # a ticked item that recurs stays ticked
+    assert texts["Letter: date it"]["done"] is False
+    assert texts["Hand-added item"]["origin"] == "user"
+
+
+def test_generate_bid_package_prints_the_saved_edited_checklist():
+    checklist = build_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [])
+    checklist["items"][0]["done"] = True
+    checklist["items"].append(checklist_item("open_items", "Get the EMD demand draft signed", origin="user"))
+    for item in checklist["items"]:
+        if item["section"] == "company_eligibility" and item["requirement"].startswith("Turnover"):
+            item["status"] = "Evidence available"
+            item["evidence"] = "CA certificate FY24 on file"
+
+    pdf_bytes = generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], checklist=checklist)
+    all_text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
+    assert "Get the EMD demand draft signed" in all_text
+    assert "[x] Current headcount" in all_text
+    assert "CA certificate FY24 on file" in all_text
 
 
 def test_generate_bid_package_shows_drafting_note_when_ai_unavailable():
