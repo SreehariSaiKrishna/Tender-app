@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     ai_provider: str = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    # The submission checklist (app.intelligence.bid_drafter) has to go
+    # through every eligibility condition in the tender and find the proof
+    # for each one. gpt-4o-mini skipped most of them, and gpt-4.1-mini was
+    # too slow for the API's 30s limit. gpt-4.1 covered them all in ~18s,
+    # at about $0.04 per checklist.
+    checklist_model: str = "gpt-4.1"
+    # The bid pack's drafted letters (app.intelligence.bid_drafter) must fill
+    # every field from the company data and tailor it to the tender -
+    # gpt-4o-mini wrote thin, generic letters that skipped most of the data.
+    # Batches run in parallel, so gpt-4.1 still fits the API's 30s limit.
+    draft_model: str = "gpt-4.1"
     ai_relevance_threshold: int = 60
 
     # SMTP
@@ -65,6 +76,16 @@ class Settings(BaseSettings):
     processed_dir: str = "./data/processed"
     documents_dir: str = "./data/documents"
     documents_batch_limit: int = 15
+    # Bytes of library PDFs merged into one bid pack (see
+    # app.reports.bid_generator.plan_rows) - anything past it gets a
+    # placeholder page to attach separately. The dashboard downloads packs
+    # in 3 MB parts (app.api.main.BID_PART_SIZE), so this isn't bounded by
+    # the Lambda response cap.
+    enclosure_byte_budget: int = 30 * 1024 * 1024
+    # Set on the API Lambda only (see template.yaml): a checklist waiting on
+    # a tender's documents asks this function to fetch them right away (see
+    # app.api.main._start_document_fetch). Empty when running locally.
+    pipeline_function_name: str = ""
 
     @property
     def base_dir(self) -> Path:

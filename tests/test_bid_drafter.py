@@ -84,6 +84,30 @@ def test_plan_submission_checklist_returns_validated_rows():
     user_prompt = provider.calls[0][1]
     assert "ANNEXURE 3 - Undertaking" in user_prompt
     assert "  - PAN Card" in user_prompt
+    assert "may be incomplete" in user_prompt  # the extracted lists aren't treated as complete
+    assert plan.rows[0].basis == ""  # optional in the response
+
+
+def test_plan_submission_checklist_goes_condition_by_condition():
+    response = {
+        "conditions": [
+            {"ref": "Elig 6 Financial Capacity", "proved_by": "CA Turnover Certificate"},
+            {"ref": "Elig 15 Verification", "proved_by": ""},
+        ],
+        "rows": [{"document": "CA Turnover Certificate", "source": "upload",
+                  "basis": "Eligibility 6 - Financial Capacity"}],
+    }
+    provider = FakeProvider(responses=[json.dumps(response)])
+    plan = plan_submission_checklist(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [], provider)
+
+    assert [c.ref for c in plan.conditions] == ["Elig 6 Financial Capacity", "Elig 15 Verification"]
+    assert plan.rows[0].basis == "Eligibility 6 - Financial Capacity"
+    # The system prompt asks for proof of every condition, not just the
+    # tender's explicit "documents to submit" list, and bans catch-all rows.
+    system_prompt = provider.calls[0][0]
+    assert "Condition by condition" in system_prompt
+    assert "CV row PER ROLE" in system_prompt
+    assert "Never write a catch-all row" in system_prompt
 
 
 @pytest.mark.parametrize("provider", [
@@ -138,3 +162,101 @@ def test_draft_checklist_documents_matches_by_position_when_ids_are_dropped():
         TENDER, _rows(2), COMPANY_PROFILE, [], FakeProvider(responses=[response]), batch_size=2
     )
     assert drafted["r0"].title == "First" and drafted["r1"].title == "Second"
+
+
+# --- Company data, tailoring, notary -----------------------------------------------
+
+RICH_PROFILE = {
+    **COMPANY_PROFILE,
+    "former_name": "Old Name Private Limited",
+    "cin": "U12345TS2025PTC000001",
+    "pan": "ABCDE1234F",
+    "gstin": "36ABCDE1234F1Z1",
+    "registrations": [{"name": "UDYAM (MSME) Registration", "number": "UDYAM-TS-00-0000000"}],
+    "certifications": [{"name": "ISO/IEC 27001:2022", "certificate_no": "ISO-1", "valid_until": "2029-06-25"}],
+    "services": [{"service": "Social media campaign execution", "evidence": "WO-SM-1"}],
+    "financials": {
+        "annual_turnover": [{"financial_year": "2024-25", "amount_display": "Rs. 5,23,89,823"}],
+        "average_turnover": {"period": "FY 2023-24 to FY 2025-26", "amount_display": "Rs. 3,49,12,908.33"},
+        "ca_certificate": {"firm": "Test & Co", "frn": "000001S", "udin": "UDIN-1", "date": "2026-09-23"},
+    },
+    "manpower": {"headcount": 45, "as_of": "2026-09-16", "verified": False},
+    "past_experience": [
+        {"client": "Rural Labs Board", "short_name": "Labs", "work_order_no": "WO-LAB-9", "work_order_date": "2025-08-28",
+         "value_display": "Rs. 1,56,00,000", "scope_items": ["Interactive online labs"], "tags": ["edtech"],
+         "status": "Ongoing", "library_document": "Work Order - Labs"},
+        {"client": "Farmer Welfare Dept", "short_name": "Campaign", "work_order_no": "WO-SM-1",
+         "work_order_date": "2026-02-23", "value_display": "Rs. 3,02,50,000",
+         "scope_items": ["Facebook, Instagram, YouTube and WhatsApp campaign execution"],
+         "tags": ["social media", "campaign"], "status": "Ongoing", "library_document": "Work Order - Campaign"},
+    ],
+}
+
+
+def test_draft_prompt_carries_the_full_company_data_and_tailoring_rules():
+    response = {"documents": [{"id": "r1", "title": "Project Experience Summary", "body_paragraphs": ["x"],
+                               "tables": [{"columns": ["S.No.", "Client"], "rows": [[1, "Farmer Welfare Dept"]]}],
+                               "open_items": []}]}
+    provider = FakeProvider(responses=[json.dumps(response)])
+    drafted, errors = draft_checklist_documents(
+        TENDER, [{"id": "r1", "document": "Project Experience Summary"}], RICH_PROFILE, [], provider=provider)
+
+    assert errors == []
+    table = drafted["r1"].tables[0]
+    assert table.rows == [["1", "Farmer Welfare Dept"]]  # cells come back as text
+    system_prompt, user_prompt = provider.calls[0]
+    for fact in ("WO-SM-1", "23-02-2026", "Rs. 3,02,50,000", "Rs. 5,23,89,823", "Rs. 3,49,12,908.33",
+                 "UDIN-1", "ISO/IEC 27001:2022", "Social media campaign execution", "UDYAM-TS-00-0000000",
+                 "Old Name Private Limited", "45 as on 16-09-2026"):
+        assert fact in user_prompt, fact
+    assert "TAILOR EVERY DOCUMENT TO THIS TENDER" in system_prompt
+    assert '"Work Order No. & Date"' in system_prompt  # the experience table's columns
+    assert "FILL EVERY FIELD" in system_prompt
+
+
+def test_projects_are_ranked_by_relevance_to_the_tender():
+    from app.intelligence.prompts import company_data_lines, rank_past_experience
+
+    ranked = rank_past_experience(RICH_PROFILE, TENDER)  # a social media tender
+    assert [p["short_name"] for p in ranked] == ["Campaign", "Labs"]
+    lines = "\n".join(company_data_lines(RICH_PROFILE, TENDER))
+    assert lines.index("Campaign") < lines.index("Labs")
+
+
+def test_checklist_plan_parses_notary_section_and_tender_order():
+    plan_json = {"bid_number": None, "bid_end": None, "tender_order": True, "rows": [
+        {"document": "Affidavit of non-blacklisting", "source": "draft", "section": "Declarations & Undertakings",
+         "notary": True},
+        {"document": "PAN", "source": "upload", "library_document": "PAN Card"},
+    ]}
+    provider = FakeProvider(responses=[json.dumps(plan_json)])
+    plan = plan_submission_checklist(TENDER, ELIGIBILITY_CRITERIA, RICH_PROFILE, ["PAN Card"], provider)
+
+    assert plan.tender_order is True
+    assert (plan.rows[0].notary, plan.rows[0].section) == (True, "Declarations & Undertakings")
+    assert (plan.rows[1].notary, plan.rows[1].section) == (False, "")
+    system_prompt, user_prompt = provider.calls[0]
+    assert "ONE ROW PER DISTINCT DOCUMENT" in system_prompt
+    assert '"notary": true ONLY when' in system_prompt
+    assert "library document: Work Order - Campaign" in user_prompt  # projects for per-project work order rows
+
+
+def test_draft_prompt_gives_the_bid_date_personnel_and_tender_fact_rules():
+    import datetime as dt
+
+    profile = {**RICH_PROFILE, "key_personnel": [
+        {"name": "Asha Rao", "role": "Social Media Manager", "qualification": "MBA", "experience_years": 7},
+    ]}
+    provider = FakeProvider(responses=[json.dumps({"documents": []})])
+    draft_checklist_documents(TENDER, [{"id": "r1", "document": "List of Proposed Personnel"}], profile, [],
+                              provider=provider)
+    system_prompt, user_prompt = provider.calls[0]
+    assert f"Bid date: {dt.date.today().strftime('%d-%m-%Y')}" in user_prompt
+    assert "name: Asha Rao | role: Social Media Manager | qualification: MBA | experience (years): 7" in user_prompt
+    for rule in ("TENDER FACTS COME FROM THE TENDER", "PRICES are never written",
+                 "FIELDS THAT DON'T APPLY", "Never invent a person"):
+        assert rule in system_prompt
+
+    provider = FakeProvider(responses=[json.dumps({"documents": []})])
+    draft_checklist_documents(TENDER, [{"id": "r1", "document": "CVs"}], RICH_PROFILE, [], provider=provider)
+    assert "Key personnel: none on record" in provider.calls[0][1]

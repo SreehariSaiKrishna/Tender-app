@@ -15,5 +15,9 @@ python-multipart>=0.0.9
 # reportlab draws the cover pages, pypdf merges in PDF company documents as an appendix,
 # openai drafts the individual bid documents (app.intelligence.bid_drafter/scorer).
 reportlab>=4.0
-pypdf>=4.0
+pypdf>=4.3
 openai>=1.50
+# Sign & Stamp tab (POST /stamp-document) marks image uploads directly with Pillow.
+pillow>=10.0
+# ...and renders a PDF letterhead from the documents library to an image.
+pypdfium2>=4.30

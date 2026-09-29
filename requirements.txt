@@ -22,7 +22,7 @@ python-dateutil>=2.9
 xlrd>=2.0.1
 
 # Tender document text extraction (app.intelligence.document_summarizer)
-pypdf>=4.0
+pypdf>=4.3
 beautifulsoup4>=4.12
 
 # Bid pack generation (app.reports.bid_generator, POST /tenders/{id}/generate-bid)
@@ -35,6 +35,7 @@ reportlab>=4.0
 pymupdf>=1.24
 pytesseract>=0.3.10
 pillow>=10.0
+pypdfium2>=4.30  # Sign & Stamp: PDF letterheads from the documents library, as images
 
 # .docx / .zip / .rar tender attachments (real tenders bundle the RFP, SLA,
 # corrigendum etc. this way) - python-docx and zipfile need no external
@@ -43,6 +44,9 @@ pillow>=10.0
 # Lambda image - see Dockerfile).
 python-docx>=1.1
 rarfile>=4.1
+# Legacy Word 97-2003 .doc attachments - read straight from the file's
+# OLE streams (see app.intelligence.document_summarizer._extract_doc_text).
+olefile>=0.47
 
 # AI
 openai>=1.50

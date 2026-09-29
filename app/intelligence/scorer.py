@@ -91,11 +91,12 @@ class OpenAIProvider:
         return content
 
 
-def get_provider(settings: Settings | None = None) -> AIProvider:
-    """Factory: picks a provider implementation based on settings.ai_provider."""
+def get_provider(settings: Settings | None = None, model: str | None = None) -> AIProvider:
+    """Factory: picks a provider implementation based on settings.ai_provider.
+    `model` overrides settings.openai_model for one step (e.g. the checklist)."""
     settings = settings or get_settings()
     if settings.ai_provider == "openai":
-        return OpenAIProvider(api_key=settings.openai_api_key, model=settings.openai_model)
+        return OpenAIProvider(api_key=settings.openai_api_key, model=model or settings.openai_model)
     raise ScreeningError(f"Unknown AI provider: {settings.ai_provider!r}")
 
 

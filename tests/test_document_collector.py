@@ -142,6 +142,18 @@ def test_pending_tenders_puts_checklist_requests_first_even_when_closed(collecti
     assert [t["dedup_key"] for t in pending] == ["ref:asked", "ref:new"]
 
 
+def test_pending_tenders_redownloads_requested_tenders_never_summarized(collection):
+    # Downloaded, but the files were lost before they were ever summarized.
+    now = dt.datetime.now(dt.timezone.utc)
+    downloaded = {"documents_downloaded_at": now, "content_last_changed": now - dt.timedelta(days=1)}
+    make_tender(collection, dedup_key="ref:asked", document_text_requested_at=now, **downloaded)
+    make_tender(collection, dedup_key="ref:idle", **downloaded)
+
+    pending = _pending_tenders(collection, limit=None)
+
+    assert [t["dedup_key"] for t in pending] == ["ref:asked"]
+
+
 def test_pending_tenders_with_tender_ids_returns_just_those(collection):
     now = dt.datetime.now(dt.timezone.utc)
     make_tender(collection, dedup_key="ref:1")

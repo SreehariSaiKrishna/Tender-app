@@ -414,6 +414,81 @@
   .cl-btn.primary { border-color: var(--brand-blue); background: var(--brand-blue); color: #fff; }
   .cl-btn.success { border-color: #2f9e44; background: #2f9e44; color: #fff; }
   .cl-btn:disabled { opacity: 0.55; cursor: default; }
+  .stamp-error { font-size: 13px; color: #c92a2a; margin-bottom: 12px; }
+  .stamp-error:empty { display: none; }
+  .stamp-preview-card { background: var(--page-bg); min-height: 240px; margin-bottom: 0; }
+  .stamp-pages { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+  .stamp-page-wrap { width: 100%; max-width: 900px; }
+  /* Each page's own marks, right above it. */
+  .stamp-page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+  }
+  .stamp-page-no { flex: 1 0 100%; display: flex; align-items: baseline; gap: 12px; font-size: 13px; font-weight: 700; color: var(--brand-navy); }
+  .stamp-page-state { font-size: 12px; font-weight: 500; color: var(--ink-faint); }
+  .stamp-page-state.marked { color: #2f9e44; }
+  .stamp-page-head label, .stamp-all-pages label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--ink-faint); }
+  .stamp-page-head label { flex: 1 1 150px; min-width: 0; }
+  .stamp-select {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 8px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .stamp-select.chosen { border-color: var(--brand-blue); box-shadow: 0 0 0 1px var(--brand-blue); }
+  .stamp-select:disabled { color: var(--ink-faint); background: var(--page-bg); }
+  .stamp-all-pages:not([hidden]) { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .stamp-all-pages label { flex: 1 1 180px; }
+  .stamp-copy { margin-left: auto; white-space: nowrap; align-self: center; }
+  .stamp-link { background: none; border: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--brand-blue-deep); cursor: pointer; text-decoration: underline; }
+  .stamp-page {
+    position: relative;
+    width: 100%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+  .stamp-page > .stamp-content, .stamp-page > .stamp-letterhead {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  /* Laid over the page like app.reports.bid_generator's multiplied letterhead:
+     the page shows through its white areas. */
+  .stamp-page > .stamp-letterhead { mix-blend-mode: multiply; }
+  .stamp-mark-box { position: absolute; cursor: move; outline: 1px dashed transparent; }
+  .stamp-mark-box:hover, .stamp-mark-box.dragging { outline-color: var(--brand-blue); }
+  .stamp-mark-box img { display: block; width: 100%; height: 100%; pointer-events: none; }
+  .stamp-resize {
+    position: absolute;
+    right: -6px;
+    bottom: -6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--brand-blue);
+    border: 2px solid #fff;
+    cursor: nwse-resize;
+    opacity: 0;
+  }
+  .stamp-mark-box:hover .stamp-resize, .stamp-mark-box.dragging .stamp-resize { opacity: 1; }
+  .stamp-preview-status { font-size: 13px; color: var(--ink-faint); }
   .cl-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .cl-count { font-size: 12px; color: var(--ink-faint); }
   .cl-add { margin-left: auto; }
@@ -458,6 +533,8 @@
   .cl-table td.cl-mark input { width: 16px; height: 16px; cursor: pointer; }
   .cl-table select { font: inherit; font-size: 12.5px; width: 100%; border: 1px solid var(--panel-border); border-radius: 6px; padding: 4px; background: #fff; color: var(--ink); }
   .cl-table select.cl-status { font-weight: 600; min-width: 116px; }
+  .cl-table select.cl-notary { min-width: 58px; }
+  .cl-table select.cl-notary.yes { background: #fff9db; color: #a16207; font-weight: 700; }
   .cl-table select.status-ok { background: #ebfbee; color: #2f9e44; }
   .cl-table select.status-prep { background: #fff9db; color: #a16207; }
   .cl-table select.status-gap { background: #fff5f5; color: var(--high); }
@@ -741,6 +818,144 @@
     cursor: pointer;
   }
   #documentsUploadBtn:hover { filter: brightness(1.08); }
+  /* Sign & Stamp's Choose file / Download, on the right of the page header. */
+  .stamp-header-actions:not([hidden]) { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
+  .stamp-header-actions button {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 8px 18px;
+    border-radius: 999px;
+    cursor: pointer;
+    border: 1px solid var(--brand-blue);
+    background: #fff;
+    color: var(--brand-blue-deep);
+  }
+  .stamp-header-actions #stampDownloadBtn { border-color: #2f9e44; background: #2f9e44; color: #fff; }
+  .stamp-header-actions button:hover:not(:disabled) { filter: brightness(1.08); }
+  .stamp-header-actions button:disabled { opacity: 0.55; cursor: default; }
+  .stamp-header-actions #stampViewDocsBtn { border-color: var(--panel-border); color: var(--ink-soft); }
+  /* "View documents" popup */
+  .modal-card.stamp-docs-card { max-width: 780px; max-height: calc(100vh - 40px); overflow-y: auto; }
+  .stamp-docs-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .stamp-docs-close { border: none; background: none; font-size: 24px; line-height: 1; color: var(--ink-faint); cursor: pointer; padding: 0 4px; }
+  .stamp-docs-close:hover { color: var(--ink); }
+  .stamp-docs-group { margin-top: 14px; }
+  .stamp-docs-group h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+  .stamp-docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .stamp-docs-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .stamp-docs-group-head h3 { margin: 0; }
+  .stamp-doc-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    background: #fff;
+  }
+  .stamp-doc-tile:hover { border-color: var(--brand-blue); }
+  .stamp-doc-open { display: flex; flex-direction: column; gap: 6px; padding: 0; border: none; background: none; font: inherit; text-align: left; cursor: pointer; }
+  .stamp-doc-open:disabled { cursor: default; }
+  .stamp-doc-actions { display: flex; gap: 12px; }
+  .stamp-doc-actions .danger { color: var(--high); }
+  .stamp-doc-form {
+    margin: 12px 0 4px;
+    padding: 14px;
+    border: 1px solid var(--brand-blue);
+    border-radius: 12px;
+    background: var(--page-bg);
+  }
+  .stamp-doc-form h3 { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: var(--ink); }
+  .stamp-doc-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; align-items: end; }
+  .stamp-doc-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .stamp-doc-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stamp-doc-label .required-mark { margin-left: 2px; }
+  /* Both fields the same height, so they line up side by side. */
+  .modal-card .stamp-doc-form input[type="text"],
+  .modal-card .stamp-doc-form input[type="file"] {
+    box-sizing: border-box;
+    height: 42px;
+    margin: 0;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: #fff;
+  }
+  .modal-card .stamp-doc-form input[type="text"] { padding: 0 12px; }
+  .modal-card .stamp-doc-form input[type="file"] { padding: 5px 6px; line-height: 30px; font-size: 13px; color: var(--ink-soft); }
+  /* 30px button + 5px padding each side + border = the 42px of the name box */
+  .modal-card .stamp-doc-form input[type="file"]::file-selector-button {
+    height: 30px;
+    padding: 0 14px;
+    margin: 0 10px 0 0;
+    line-height: 28px;
+    vertical-align: middle;
+  }
+  .modal-card .stamp-doc-form input[type="file"]::-webkit-file-upload-button {
+    height: 30px;
+    padding: 0 14px;
+    margin: 0 10px 0 0;
+    line-height: 28px;
+    vertical-align: middle;
+  }
+  .modal-card .stamp-doc-form input:focus {
+    outline: none;
+    border-color: var(--brand-blue);
+    box-shadow: 0 0 0 3px rgba(18, 152, 199, 0.18);
+  }
+  .modal-card .stamp-doc-form .modal-error { min-height: 0; margin-top: 10px; }
+  .modal-card .stamp-doc-form .modal-error:empty { display: none; }
+  .stamp-doc-form .modal-actions { margin-top: 14px; }
+  .confirm-overlay { z-index: 110; } /* over the popup that asked */
+  #stampDocsError:empty { display: none; }
+  .toast:not([hidden]) {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 120;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(560px, calc(100vw - 32px));
+    padding: 12px 18px;
+    border-radius: 12px;
+    background: var(--brand-navy);
+    color: #fff;
+    font-size: 13.5px;
+    box-shadow: 0 10px 30px rgba(16, 27, 41, 0.3);
+    transform: translateX(-50%);
+    animation: toast-in 0.18s ease-out;
+  }
+  .toast-icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #2f9e44;
+    font-size: 12px;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  #confirmCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
+  #confirmOkBtn { border: 1px solid transparent; background: var(--high); color: #fff; }
+  #stampDocCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
+  #stampDocSaveBtn { border: 1px solid transparent; background: var(--brand-blue); color: #fff; }
+  #stampDocSaveBtn:disabled { opacity: 0.6; cursor: default; }
+  .stamp-doc-thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 130px;
+    border-radius: 8px;
+    background: var(--page-bg);
+    overflow: hidden;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+  .stamp-doc-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .stamp-doc-name { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .stamp-docs-empty { font-size: 12.5px; color: var(--ink-faint); margin: 0; }
 
   .actions-menu { position: relative; display: inline-block; }
   .actions-menu-btn {
@@ -868,6 +1083,8 @@
   @media (max-width: 480px) {
     thead th, tbody td { padding: 9px 10px; font-size: 12.5px; }
     #tendersRefreshBtn, #automationRefreshBtn, #addCriterionOpenBtn, #documentsUploadBtn { margin-left: 0; width: 100%; text-align: center; }
+    .stamp-header-actions:not([hidden]) { margin-left: 0; width: 100%; flex-wrap: wrap; }
+    .stamp-header-actions button { flex: 1; }
     #filterSearch { max-width: none; }
   }
 </style>
@@ -880,6 +1097,7 @@
   <button class="nav-item active" id="navTenders" data-page="tenders">Tenders</button>
   <button class="nav-item" id="navEligibility" data-page="eligibility">Eligibility Criteria</button>
   <button class="nav-item" id="navDocuments" data-page="documents">Documents</button>
+  <button class="nav-item" id="navStamp" data-page="stamp">Sign &amp; Stamp</button>
   <button class="nav-item" id="navAutomation" data-page="automation">Automation Raw Data</button>
 </nav>
 
@@ -893,6 +1111,11 @@
   <button id="automationRefreshBtn" hidden>Refresh</button>
   <button id="addCriterionOpenBtn" hidden>+ Add Criteria</button>
   <button id="documentsUploadBtn" hidden>+ Upload Document</button>
+  <div class="stamp-header-actions" id="stampHeaderActions" hidden>
+    <button id="stampViewDocsBtn">View documents</button>
+    <button id="stampChooseBtn">Choose file</button>
+    <button id="stampDownloadBtn" disabled>Download</button>
+  </div>
 </header>
 
 <div class="wrap">
@@ -1031,6 +1254,24 @@
   </div>
 </div><!-- /eligibilityPage -->
 
+<!-- Sign & Stamp tab: POST /stamp-document - nothing is stored -->
+<div id="stampPage" hidden>
+  <!-- Choose file / Download live in the page header (#stampHeaderActions). -->
+  <input type="file" id="stampFile" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg" hidden>
+  <!-- Fills the rest of the screen and scrolls on its own (height set by syncScrollTableHeights). -->
+  <div class="cl-card stamp-preview-card scroll-table-wrap" id="stampPreviewCard">
+    <div class="stamp-error" id="stampError"></div>
+    <!-- Only when the preview couldn't load: the same marks on every page. -->
+    <div class="stamp-all-pages" id="stampAllPages" hidden>
+      <label>Letterhead <select class="stamp-select stamp-all-select" data-kind="letterhead"></select></label>
+      <label>Signature <select class="stamp-select stamp-all-select" data-kind="signature"></select></label>
+      <label>Stamp <select class="stamp-select stamp-all-select" data-kind="stamp"></select></label>
+    </div>
+    <div class="stamp-preview-status" id="stampPreviewStatus">Choose a PDF or image to preview it here.</div>
+    <div class="stamp-pages" id="stampPages"></div>
+  </div>
+</div><!-- /stampPage -->
+
 <div id="documentsPage" hidden>
   <div class="table-wrap scroll-table-wrap">
     <table>
@@ -1134,6 +1375,60 @@
     <div class="modal-actions">
       <button id="deleteDocumentCancelBtn">Cancel</button>
       <button id="deleteDocumentConfirmBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sign & Stamp's "View documents": the letterheads, signatures and stamps it can use -->
+<div class="modal-overlay" id="stampDocsModal" hidden>
+  <div class="modal-card stamp-docs-card" role="dialog" aria-modal="true" aria-labelledby="stampDocsTitle">
+    <div class="stamp-docs-head">
+      <h2 id="stampDocsTitle">Letterheads, signatures &amp; stamps</h2>
+      <button class="stamp-docs-close" id="stampDocsCloseBtn" aria-label="Close">&times;</button>
+    </div>
+    <p>From your Documents tab - click one to open it in full. What you add or edit here is saved in the Documents
+      tab too; Remove only takes it out of Sign &amp; Stamp.</p>
+    <div class="modal-error" id="stampDocsError"></div>
+    <!-- Add / edit form - one at a time, filled in by openStampDocForm() -->
+    <form class="stamp-doc-form" id="stampDocForm" hidden>
+      <h3 id="stampDocFormTitle"></h3>
+      <div class="stamp-doc-form-row">
+        <label class="stamp-doc-field">
+          <span class="stamp-doc-label">Name <span class="required-mark">*</span></span>
+          <input type="text" id="stampDocName" required>
+        </label>
+        <label class="stamp-doc-field">
+          <span class="stamp-doc-label" id="stampDocFileLabel">File</span>
+          <input type="file" id="stampDocFile">
+        </label>
+      </div>
+      <div class="modal-error" id="stampDocError"></div>
+      <div class="modal-actions">
+        <button type="button" id="stampDocCancelBtn">Cancel</button>
+        <button type="submit" id="stampDocSaveBtn">Save</button>
+      </div>
+    </form>
+    <div id="stampDocsBody"></div>
+    <div class="modal-actions">
+      <button class="stamp-link" id="stampDocsManageBtn">Manage in Documents tab</button>
+    </div>
+  </div>
+</div>
+
+<!-- Short "done" notice (showToast) - bottom centre, above every popup -->
+<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+  <span class="toast-icon" aria-hidden="true">&#10003;</span>
+  <span id="toastMessage"></span>
+</div>
+
+<!-- In-app confirmation (askConfirm) - instead of the browser's own confirm() box; above other popups -->
+<div class="modal-overlay confirm-overlay" id="confirmModal" hidden>
+  <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <h2 id="confirmTitle"></h2>
+    <p id="confirmMessage"></p>
+    <div class="modal-actions">
+      <button id="confirmCancelBtn">Cancel</button>
+      <button id="confirmOkBtn"></button>
     </div>
   </div>
 </div>
@@ -1386,14 +1681,15 @@
     el("generateCancelBtn").disabled = true;
     try {
       const res = await fetch(`${API_BASE_URL}/tenders/${id}/generate-bid`, { method: "POST" });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) throw await checklistError(res);
       closeGenerateModal();
       if (!el("checklistPage").hidden) loadChecklist(id);
       else loadTenders();
     } catch (err) {
       console.error("Failed to generate bid pack:", err);
-      el("generateError").textContent =
-        `Couldn't generate the bid pack - the API at ${API_BASE_URL} didn't respond as expected.`;
+      el("generateError").textContent = err.fromServer
+        ? err.message
+        : `Couldn't generate the bid pack - the API at ${API_BASE_URL} didn't respond as expected.`;
       el("generateConfirmBtn").disabled = false;
       el("generateConfirmBtn").textContent = "Generate";
       el("generateCancelBtn").disabled = false;
@@ -1602,6 +1898,8 @@
       hash = "#/eligibility";
     } else if (!el("documentsPage").hidden) {
       hash = "#/documents";
+    } else if (!el("stampPage").hidden) {
+      hash = "#/stamp";
     } else if (!el("checklistPage").hidden) {
       hash = `#/checklist/${checklistState.tenderId}`;
     } else if (activeQuery) {
@@ -1625,6 +1923,10 @@
     }
     if (parts[0] === "documents") {
       showPage("documents");
+      return;
+    }
+    if (parts[0] === "stamp") {
+      showPage("stamp");
       return;
     }
     if (parts[0] === "checklist" && parts[1]) {
@@ -1658,15 +1960,18 @@
     el("navAutomation").classList.toggle("active", page === "automation");
     el("navEligibility").classList.toggle("active", page === "eligibility");
     el("navDocuments").classList.toggle("active", page === "documents");
+    el("navStamp").classList.toggle("active", page === "stamp");
     el("tendersPage").hidden = page !== "tenders";
     el("automationPage").hidden = page !== "automation";
     el("eligibilityPage").hidden = page !== "eligibility";
     el("documentsPage").hidden = page !== "documents";
+    el("stampPage").hidden = page !== "stamp";
     el("checklistPage").hidden = page !== "checklist";
     el("tendersRefreshBtn").hidden = page !== "tenders";
     el("automationRefreshBtn").hidden = page !== "automation";
     el("addCriterionOpenBtn").hidden = page !== "eligibility";
     el("documentsUploadBtn").hidden = page !== "documents";
+    el("stampHeaderActions").hidden = page !== "stamp";
 
     if (page === "tenders") {
       el("pageTitle").textContent = "Tender Dashboard";
@@ -1695,6 +2000,11 @@
         documentsLoaded = true;
         loadDocuments();
       }
+    } else if (page === "stamp") {
+      el("pageTitle").textContent = "Sign & Stamp";
+      el("pageSubtitle").textContent = "Add a letterhead, signature and/or stamp to the pages of a PDF or image - you choose for each page.";
+      setDrilldownChromeVisible(true);
+      loadStampMarks(); // every visit - the Documents tab may have changed them
     } else {
       el("pageTitle").textContent = "Eligibility Criteria";
       el("pageSubtitle").textContent = "Bid-eligibility criteria and the supporting document types required for each.";
@@ -1981,12 +2291,36 @@
 
   // The API's own explanation (FastAPI's `detail`) when it gives one - e.g.
   // a 409 while the tender's documents haven't been read yet.
+  // `detail` is {message, fetching} while the documents are still being
+  // downloaded and read (see app.api.main._require_document_text).
   async function checklistError(res) {
     let detail = "";
     try { detail = (await res.json()).detail || ""; } catch (_) { /* not JSON */ }
-    const err = new Error(typeof detail === "string" && detail ? detail : `Server returned ${res.status}`);
-    err.fromServer = !!detail;
+    const message = typeof detail === "string" ? detail : (detail && detail.message) || "";
+    const err = new Error(message || `Server returned ${res.status}`);
+    err.fromServer = !!message;
+    err.fetching = !!(detail && detail.fetching);
     return err;
+  }
+
+  // Builds the checklist, waiting (retrying every 20s, up to 15 minutes)
+  // while the tender's documents are fetched - onWaiting(message) each time.
+  const CHECKLIST_RETRY_MS = 20000;
+  const CHECKLIST_WAIT_MS = 15 * 60 * 1000;
+  async function postChecklist(id, onWaiting) {
+    const started = Date.now();
+    for (;;) {
+      const res = await fetch(`${API_BASE_URL}/tenders/${id}/checklist`, { method: "POST" });
+      if (res.ok) return res.json();
+      const err = await checklistError(res);
+      if (!err.fetching) throw err;
+      if (Date.now() - started > CHECKLIST_WAIT_MS) {
+        err.message = "The tender's documents are still being read - try generating the checklist again in a few minutes.";
+        throw err;
+      }
+      onWaiting(err.message);
+      await new Promise((resolve) => setTimeout(resolve, CHECKLIST_RETRY_MS));
+    }
   }
 
   function checklistErrorAlert(err) {
@@ -2001,9 +2335,12 @@ ${err.message}`);
     btn.disabled = true;
     btn.textContent = "Generating…";
     try {
-      const res = await fetch(`${API_BASE_URL}/tenders/${btn.dataset.id}/checklist`, { method: "POST" });
-      if (!res.ok) throw await checklistError(res);
-      openChecklist(btn.dataset.id, await res.json());
+      const data = await postChecklist(btn.dataset.id, (message) => {
+        btn.textContent = "Reading documents…";
+        btn.title = message;
+      });
+      btn.title = "";
+      openChecklist(btn.dataset.id, data);
     } catch (err) {
       console.error("Failed to generate checklist:", err);
       checklistErrorAlert(err);
@@ -2097,6 +2434,7 @@ ${err.message}`);
         <td>${ta("document", "Document")}${badge}</td>
         <td>${ta("what_to_upload", "What to upload…")}</td>
         <td><input type="text" list="checklistWhere" data-kind="row" data-idx="${idx}" data-field="where" value="${escapeAttr(item.where || "")}" placeholder="Where"></td>
+        <td><select class="cl-notary${item.notary ? " yes" : ""}" data-kind="row" data-idx="${idx}" data-field="notary" title="Must this document be notarised?" aria-label="Notary"><option${item.notary ? "" : " selected"}>No</option><option${item.notary ? " selected" : ""}>Yes</option></select></td>
         <td><select class="cl-status ${statusClass(item.status)}" data-kind="row" data-idx="${idx}" data-field="status">${statusOpts}</select></td>
         ${marks}
         <td>${sourceSelectHtml(item, idx)}</td>
@@ -2111,7 +2449,7 @@ ${err.message}`);
     return row + `
       <tr class="cl-detail-row">
         <td></td>
-        <td colspan="9">
+        <td colspan="10">
           <div class="cl-detail">
             <label>Format / drafting instructions${item.source === "draft" ? "" : " (used only for AI drafts)"}
               ${ta("format_text", "e.g. Annexure 5 format - Particulars of Bidder's Organisation")}</label>
@@ -2127,7 +2465,7 @@ ${err.message}`);
       ? `<div style="overflow-x:auto"><table class="cl-table cl-submission">
           <thead><tr>
             <th>S.No.</th><th style="width:14%">Document</th><th style="width:26%">What to Upload</th>
-            <th style="width:15%">Where</th><th>Status</th>
+            <th style="width:15%">Where</th><th>Notary</th><th>Status</th>
             ${CL_MARKS.map(({ label }) => `<th class="cl-mark">${label}</th>`).join("")}
             <th style="width:15%">Source</th><th></th>
           </tr></thead>
@@ -2141,7 +2479,8 @@ ${err.message}`);
           <span class="cl-count">${items.filter((i) => i.status === "Enclosed").length} / ${items.length} enclosed</span>
           <button class="cl-btn cl-add" data-add-row="1">+ Add document</button>
         </div>
-        <p class="cl-hint">Tick <b>Letterhead</b>, <b>Signature</b> and <b>Stamp</b> for what each document needs in the bid pack.
+        <p class="cl-hint">Tick <b>Letterhead</b>, <b>Signature</b> and <b>Stamp</b> for what each document needs in the bid pack
+          (scans that already carry the seal and signature are left unticked). <b>Notary</b> = Yes where the tender wants the document notarised.
           <b>AI draft</b> rows are written from the tender; <b>Attach</b> rows use the chosen document from the Documents library.</p>
         ${body}
       </div>`;
@@ -2303,6 +2642,9 @@ ${err.message}`);
     if (target.type === "checkbox") {
       item[field] = target.checked;
       if (kind === "note") target.closest("tr").classList.toggle("done", item.done);
+    } else if (field === "notary") {
+      item.notary = target.value === "Yes";
+      target.classList.toggle("yes", item.notary);
     } else if (field === "source") {
       applySource(item, target.value);
       renderChecklist();
@@ -2324,8 +2666,8 @@ ${err.message}`);
     if (btn.dataset.addRow) {
       items.push({
         id: null, document: "", what_to_upload: "", where: "Technical Upload", status: "Missing", source: "upload",
-        document_id: null, letterhead: false, signature: true, stamp: true, format_text: "", notes: "",
-        done: false, origin: "user",
+        document_id: null, letterhead: false, signature: true, stamp: true, notary: false, section: "",
+        format_text: "", notes: "", done: false, origin: "user",
       });
       checklistState.expanded.clear();
       renderChecklist();
@@ -2390,10 +2732,15 @@ ${err.message}`);
     const btn = el("clRegenerateBtn");
     if (btn) { btn.disabled = true; btn.textContent = "Rebuilding…"; }
     try {
-      const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, { method: "POST" });
-      if (!res.ok) throw await checklistError(res);
+      const data = await postChecklist(checklistState.tenderId, (message) => {
+        if (btn) btn.textContent = "Reading documents…";
+        const content = el("checklistContent");
+        if (content && !checklistState.items.length) {
+          content.innerHTML = `<div class="cl-card"><div class="cl-warning">${escapeHtml(message)}</div></div>`;
+        }
+      });
       checklistState.expanded.clear();
-      setChecklistData(await res.json());
+      setChecklistData(data);
     } catch (err) {
       console.error("Failed to generate checklist:", err);
       checklistErrorAlert(err);
@@ -2461,8 +2808,8 @@ ${err.message}`);
           <div class="actions-menu">
             <button class="actions-menu-btn" aria-label="Actions" aria-haspopup="true">&#8942;</button>
             <div class="actions-menu-dropdown" hidden>
-              <a class="actions-menu-item view-document-btn" href="${API_BASE_URL}/documents/${d.id}/view" target="_blank" rel="noopener">View</a>
-              <a class="actions-menu-item download-document-btn" href="${API_BASE_URL}/documents/${d.id}/download">Download</a>
+              <a class="actions-menu-item view-document-btn" data-id="${d.id}" href="${API_BASE_URL}/documents/${d.id}/view" target="_blank">View</a>
+              <a class="actions-menu-item download-document-btn" data-id="${d.id}" href="${API_BASE_URL}/documents/${d.id}/download">Download</a>
               <button class="actions-menu-item edit-document-btn" data-id="${d.id}">Edit</button>
               <button class="actions-menu-item delete-document-btn" data-id="${d.id}">Delete</button>
             </div>
@@ -2488,6 +2835,90 @@ ${err.message}`);
     dropdown.style.right = `${window.innerWidth - rect.right}px`;
     dropdown.hidden = false;
   }
+
+  // --- Files bigger than one API request/response -----------------------
+  // One Lambda request/response carries ~4 MB at most, so files up to
+  // MAX_UPLOAD_BYTES (app.api.main's MAX_UPLOAD_SIZE) are sent to PUT
+  // /uploads/{id}/parts/N in TRANSFER_PART_BYTES slices, then a .../finish
+  // call (Documents or Sign & Stamp) turns them into the real request.
+  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+  const TRANSFER_PART_BYTES = 3 * 1024 * 1024; // app.api.main's TRANSFER_PART_SIZE
+  const tooBigMessage = () => `This file is over ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB - choose a smaller one.`;
+
+  async function apiError(res) {
+    const detail = await res.json().catch(() => null);
+    return new Error(detail?.detail || `Server returned ${res.status}`);
+  }
+
+  // Sends `file` in parts; returns { uploadId, parts } for the finish call.
+  // `onPart(i, parts)` reports progress.
+  async function uploadInParts(file, onPart = () => {}) {
+    const uploadId = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const parts = Math.max(1, Math.ceil(file.size / TRANSFER_PART_BYTES));
+    for (let i = 0; i < parts; i++) {
+      onPart(i, parts);
+      const res = await fetch(`${API_BASE_URL}/uploads/${uploadId}/parts/${i}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file.slice(i * TRANSFER_PART_BYTES, (i + 1) * TRANSFER_PART_BYTES),
+      });
+      if (!res.ok) throw await apiError(res);
+    }
+    return { uploadId, parts };
+  }
+
+  // A library document as a Blob, fetched part by part (GET
+  // /documents/{id}/info, then ?part=N) - `kind` is "download" or "view".
+  async function fetchDocumentBlob(id, kind) {
+    const infoRes = await fetch(`${API_BASE_URL}/documents/${id}/info`);
+    if (!infoRes.ok) throw await apiError(infoRes);
+    const info = await infoRes.json();
+    const chunks = [];
+    for (let i = 0; i < info.parts; i++) {
+      const res = await fetch(`${API_BASE_URL}/documents/${id}/${kind}?part=${i}`);
+      if (!res.ok) throw await apiError(res);
+      chunks.push(await res.blob());
+    }
+    return { blob: new Blob(chunks, { type: info.content_type }), info };
+  }
+
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // View/Download in the actions menu - fetched in parts rather than
+  // followed as plain links, which would break for files over ~4 MB.
+  el("documentsBody").addEventListener("click", async (e) => {
+    const link = e.target.closest(".view-document-btn, .download-document-btn");
+    if (!link) return;
+    e.preventDefault();
+    const id = link.dataset.id;
+    const viewing = link.classList.contains("view-document-btn");
+    // Opened now, while this is still a click, so it isn't blocked as a pop-up.
+    const tab = viewing ? window.open("", "_blank") : null;
+    if (tab) tab.document.title = "Loading…";
+    try {
+      const { blob, info } = await fetchDocumentBlob(id, viewing ? "view" : "download");
+      if (!viewing) {
+        saveBlob(blob, info.filename);
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      if (tab) tab.location.href = url;
+      else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60000);
+    } catch (err) {
+      if (tab) tab.close();
+      alert(`Couldn't ${viewing ? "open" : "download"} this document - ${err.message}`);
+    }
+  });
 
   function openUploadDocumentModal() {
     el("documentFile").value = "";
@@ -2515,19 +2946,26 @@ ${err.message}`);
       el("uploadDocumentError").textContent = "Name is required.";
       return;
     }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      el("uploadDocumentError").textContent = tooBigMessage();
+      return;
+    }
 
-    el("uploadDocumentConfirmBtn").disabled = true;
-    el("uploadDocumentConfirmBtn").textContent = "Uploading…";
+    const btn = el("uploadDocumentConfirmBtn");
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
     el("uploadDocumentError").textContent = "";
     try {
+      const { uploadId, parts } = await uploadInParts(file, (i, n) => {
+        btn.textContent = n > 1 ? `Uploading ${i + 1}/${n}…` : "Uploading…";
+      });
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("parts", parts);
       formData.append("name", name);
-      const res = await fetch(`${API_BASE_URL}/documents`, { method: "POST", body: formData });
-      if (!res.ok) {
-        const detail = await res.json().catch(() => null);
-        throw new Error(detail?.detail || `Server returned ${res.status}`);
-      }
+      formData.append("filename", file.name);
+      formData.append("content_type", file.type);
+      const res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+      if (!res.ok) throw await apiError(res);
       closeUploadDocumentModal();
       loadDocuments();
     } catch (err) {
@@ -2569,19 +3007,28 @@ ${err.message}`);
       return;
     }
 
-    el("editDocumentConfirmBtn").disabled = true;
-    el("editDocumentConfirmBtn").textContent = "Saving…";
+    if (file && file.size > MAX_UPLOAD_BYTES) {
+      el("editDocumentError").textContent = tooBigMessage();
+      return;
+    }
+
+    const btn = el("editDocumentConfirmBtn");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
     el("editDocumentError").textContent = "";
     try {
       let res;
       if (file) {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("name", name);
-        res = await fetch(`${API_BASE_URL}/documents/${editingDocumentId}/replace`, {
-          method: "PUT",
-          body: formData,
+        const { uploadId, parts } = await uploadInParts(file, (i, n) => {
+          btn.textContent = n > 1 ? `Uploading ${i + 1}/${n}…` : "Saving…";
         });
+        const formData = new FormData();
+        formData.append("parts", parts);
+        formData.append("name", name);
+        formData.append("filename", file.name);
+        formData.append("content_type", file.type);
+        formData.append("replace", editingDocumentId);
+        res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
       } else {
         res = await fetch(`${API_BASE_URL}/documents/${editingDocumentId}`, {
           method: "PUT",
@@ -2645,6 +3092,809 @@ ${err.message}`);
   el("navAutomation").addEventListener("click", () => showPage("automation"));
   el("navEligibility").addEventListener("click", () => showPage("eligibility"));
   el("navDocuments").addEventListener("click", () => showPage("documents"));
+  el("navStamp").addEventListener("click", () => showPage("stamp"));
+
+  // --- Sign & Stamp tab ----------------------------------------------------
+  // Previews one uploaded PDF/image; each page gets its own letterhead/
+  // signature/stamp (chosen in the dropdowns above it - pages left on
+  // "None" are left untouched), the signature and stamp can be dragged/
+  // resized per page, and all of that goes to POST /stamp-document, which
+  // returns the marked file (a PDF for a PDF, an image for an image).
+  //
+  // Geometry mirrors app.reports.bid_generator.mark_document: every page
+  // keeps its own size (an image treated as an A4-scaled page, in points),
+  // with the letterhead stretched over the whole page. Mark positions are
+  // sent as fractions of the page, from its top-left corner.
+  const PT_PER_CM = 72 / 2.54;
+  const A4_PT = { w: 595.2756, h: 841.8898 };
+  const LETTERHEAD_BOTTOM_CM = 3.3; // the letterhead's footer strip - LETTERHEAD_MARGINS' bottom
+  // What a page's content must stay inside to clear the letterhead's header
+  // (top), footer strip (bottom) and colour band (left), in cm of the A4
+  // letterhead - stretched with it to each page. Pages already inside are
+  // left alone; others are moved down/in, and shrunk only if that isn't enough.
+  const LETTERHEAD_CLEAR_CM = { left: 1.2, right: 0.8, top: 3.7, bottom: LETTERHEAD_BOTTOM_CM };
+  // Default box per mark (cm) - stamp rightmost, signature to its left.
+  const MARK_BOXES_CM = { stamp: { w: 2.4, h: 2.4 }, signature: { w: 3.4, h: 1.5 } };
+  const PDFJS_BASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
+
+  const MARK_KINDS = ["letterhead", "signature", "stamp"];
+  const MARK_NAMES = { letterhead: "Letterhead", signature: "Signature", stamp: "Stamp" };
+  const noMarks = () => ({ letterhead: null, signature: null, stamp: null });
+
+  const stampState = {
+    token: 0,        // bumped per file, so a slow render of an old file is dropped
+    pages: [],       // { w, h (points), node (canvas/img of the page content), ink (its content box, fractions) }
+    // Each page's marks: the chosen library document id per kind (from GET
+    // /stamp-document/marks), or null. A page with none is left untouched.
+    pageMarks: [],
+    // Used instead when there's no preview (it failed to load): the same
+    // marks on every page.
+    allPagesMarks: noMarks(),
+    options: { letterhead: [], signature: [], stamp: [] },  // kind -> [{ id, label }] from the Documents library
+    assetCache: {},  // "kind:id" -> HTMLImageElement
+    placements: [],  // per page: { signature?: {x,y,w,h}, stamp?: {...} } fractions
+    objectUrl: null,
+  };
+
+  const hasPreview = () => stampState.pages.length > 0;
+  const pageMark = (i, kind) => stampState.pageMarks[i]?.[kind] || null;
+  const assetFor = (kind, id) => (id ? stampState.assetCache[`${kind}:${id}`] || null : null);
+  const pageAsset = (i, kind) => assetFor(kind, pageMark(i, kind));
+  const pageHasMarks = (i) => MARK_KINDS.some((kind) => pageMark(i, kind));
+  const markLabel = (kind, id) => stampState.options[kind].find((o) => o.id === id)?.label || "";
+
+  // A <select> of `kind`'s library documents, "None" first; `current` chosen.
+  function markSelectHtml(kind, current, attrs) {
+    const options = stampState.options[kind];
+    if (!options.length) {
+      return `<select class="stamp-select" ${attrs} disabled title="${escapeHtml(NO_MARK_HINT[kind])}">
+        <option>None available</option></select>`;
+    }
+    return `<select class="stamp-select${current ? " chosen" : ""}" ${attrs}>
+      <option value="">None</option>
+      ${options.map((o) => `<option value="${escapeHtml(o.id)}"${o.id === current ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+    </select>`;
+  }
+
+  function syncStampForm() {
+    const hasFile = !!el("stampFile").files[0];
+    const anyMarks = hasPreview()
+      ? stampState.pageMarks.some((_, i) => pageHasMarks(i))
+      : MARK_KINDS.some((kind) => stampState.allPagesMarks[kind]);
+    el("stampDownloadBtn").disabled = !(hasFile && anyMarks);
+    // Without a preview there are no per-page choices - one set for every page.
+    const fallback = hasFile && !hasPreview() && !el("stampPreviewStatus").textContent.startsWith("Loading");
+    el("stampAllPages").hidden = !fallback;
+  }
+
+  function renderAllPagesSelects() {
+    document.querySelectorAll(".stamp-all-select").forEach((select) => {
+      const kind = select.dataset.kind;
+      select.outerHTML = markSelectHtml(kind, stampState.allPagesMarks[kind], `data-kind="${kind}" data-all="1"`)
+        .replace('class="stamp-select', 'class="stamp-select stamp-all-select');
+    });
+  }
+
+  let pdfjsPromise = null;
+  function loadPdfjs() {
+    pdfjsPromise ||= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `${PDFJS_BASE}/pdf.min.js`;
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE}/pdf.worker.min.js`;
+        resolve(window.pdfjsLib);
+      };
+      script.onerror = () => { pdfjsPromise = null; reject(new Error("couldn't load the PDF viewer")); };
+      document.head.appendChild(script);
+    });
+    return pdfjsPromise;
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("couldn't read the image"));
+      img.src = src;
+    });
+  }
+
+  // The image of library document `id` as a `kind` mark (a PDF letterhead
+  // comes back as an image of its first page).
+  async function stampAsset(kind, id) {
+    const key = `${kind}:${id}`;
+    if (stampState.assetCache[key]) return stampState.assetCache[key];
+    const res = await fetch(`${API_BASE_URL}/stamp-document/assets/${kind}?id=${encodeURIComponent(id)}`);
+    if (!res.ok) throw await apiError(res);
+    const img = await loadImage(URL.createObjectURL(await res.blob()));
+    stampState.assetCache[key] = img;
+    return img;
+  }
+
+  // Where a page's text/lines/images actually are - {x0, y0, x1, y1} as
+  // fractions of the page, or null for a blank page. Measured on a small
+  // copy; a row/column only counts with at least two dark pixels, so a
+  // speck of scan noise doesn't stretch the box.
+  function inkBox(source, width, height) {
+    const scale = Math.min(1, 600 / width);
+    const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const rows = new Uint32Array(h), cols = new Uint32Array(w);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2] < 220) { rows[y]++; cols[x]++; }
+      }
+    }
+    const first = (counts) => counts.findIndex((n) => n >= 2);
+    const last = (counts) => counts.length - 1 - [...counts].reverse().findIndex((n) => n >= 2);
+    const y0 = first(rows), x0 = first(cols);
+    if (y0 < 0 || x0 < 0) return null;
+    return { x0: x0 / w, y0: y0 / h, x1: (last(cols) + 1) / w, y1: (last(rows) + 1) / h };
+  }
+
+  // How page `i`'s content is moved on its letterhead (see
+  // app.reports.bid_generator.ContentLayout) - null when the page has no
+  // letterhead or its content already clears it. Kept where it is if it
+  // fits, else moved the least distance inside, shrunk only when it can't fit.
+  function contentLayout(i) {
+    const ink = stampState.pages[i].ink;
+    if (!pageMark(i, "letterhead") || !ink) return null;
+    const c = LETTERHEAD_CLEAR_CM;
+    const frame = { x0: c.left / 21, x1: 1 - c.right / 21, y0: c.top / 29.7, y1: 1 - c.bottom / 29.7 };
+    const inkW = ink.x1 - ink.x0, inkH = ink.y1 - ink.y0;
+    const scale = Math.min(1, (frame.x1 - frame.x0) / inkW, (frame.y1 - frame.y0) / inkH);
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    const left = clamp(ink.x0, frame.x0, frame.x1 - inkW * scale);
+    const top = clamp(ink.y0, frame.y0, frame.y1 - inkH * scale);
+    const dx = left - ink.x0 * scale, dy = top - ink.y0 * scale;
+    if (scale > 0.9999 && Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return null;
+    return { scale, dx, dy };
+  }
+
+  // Page `i`'s signature/stamp at the usual bottom-right spot, as fractions
+  // of the page - above the letterhead's footer strip (scaled to the page's
+  // height) when the page has a letterhead.
+  function defaultPlacements(i) {
+    const { w, h } = stampState.pages[i];
+    const bottom = pageMark(i, "letterhead") ? LETTERHEAD_BOTTOM_CM * PT_PER_CM * (h / A4_PT.h) : PT_PER_CM;
+    let x = w - 1 * PT_PER_CM;
+    const out = {};
+    for (const kind of ["stamp", "signature"]) {
+      const img = pageAsset(i, kind);
+      if (!img) continue;
+      const box = { w: MARK_BOXES_CM[kind].w * PT_PER_CM, h: MARK_BOXES_CM[kind].h * PT_PER_CM };
+      x -= box.w;
+      const scale = Math.min(box.w / img.naturalWidth, box.h / img.naturalHeight);
+      const mw = img.naturalWidth * scale, mh = img.naturalHeight * scale;
+      out[kind] = { x: x / w, y: (h - bottom - mh) / h, w: mw / w, h: mh / h };
+      x -= 0.3 * PT_PER_CM;
+    }
+    return out;
+  }
+
+  function resetPlacements() {
+    stampState.placements = stampState.pages.map((_, i) => defaultPlacements(i));
+  }
+
+  // Marks not yet dragged are re-laid out around each page's current set
+  // (stamp rightmost, signature to its left, above the letterhead's footer
+  // when the page has one); dragged ones stay put.
+  function relayoutMarks() {
+    if (!hasPreview()) return;
+    stampState.placements.forEach((p, i) => {
+      const defaults = defaultPlacements(i);
+      for (const k of ["signature", "stamp"]) {
+        if (!defaults[k]) delete p[k];
+        else if (!p[k]?.moved) p[k] = defaults[k];
+      }
+    });
+    renderStampPages();
+  }
+
+  const pct = (v) => `${(v * 100).toFixed(4)}%`;
+
+  function pageHeadHtml(i) {
+    const total = stampState.pages.length;
+    const marked = pageHasMarks(i);
+    const selects = MARK_KINDS.map((kind) => `<label>${MARK_NAMES[kind]}
+        ${markSelectHtml(kind, pageMark(i, kind), `data-page="${i}" data-kind="${kind}"`)}</label>`).join("");
+    const copy = total > 1 && marked
+      ? `<button class="stamp-link stamp-copy" data-page="${i}" title="Give every page this page's letterhead, signature and stamp">Use on all pages</button>`
+      : "";
+    return `<div class="stamp-page-head">
+        <div class="stamp-page-no">${total > 1 ? `Page ${i + 1} of ${total}` : "Your page"}
+          <span class="stamp-page-state${marked ? " marked" : ""}">${marked ? "Will be marked" : "Left as it is"}</span></div>
+        ${selects}${copy}
+      </div>`;
+  }
+
+  function renderStampPages() {
+    const container = el("stampPages");
+    container.innerHTML = "";
+    stampState.pages.forEach((page, i) => {
+      const wrap = document.createElement("div");
+      wrap.className = "stamp-page-wrap";
+      wrap.dataset.page = i;
+      wrap.innerHTML = pageHeadHtml(i);
+      const sheet = document.createElement("div");
+      sheet.className = "stamp-page";
+      sheet.dataset.page = i;
+      sheet.style.aspectRatio = `${page.w} / ${page.h}`;
+      page.node.classList.add("stamp-content");
+      const layout = contentLayout(i) || { scale: 1, dx: 0, dy: 0 };
+      Object.assign(page.node.style, {
+        left: pct(layout.dx), top: pct(layout.dy), width: pct(layout.scale), height: pct(layout.scale),
+      });
+      sheet.appendChild(page.node);
+      const letterhead = pageAsset(i, "letterhead");
+      if (letterhead) {
+        const overlay = letterhead.cloneNode();
+        overlay.className = "stamp-letterhead";
+        sheet.appendChild(overlay);
+      }
+      for (const kind of ["signature", "stamp"]) {
+        const p = stampState.placements[i]?.[kind];
+        const img = pageAsset(i, kind);
+        if (!p || !img) continue;
+        const box = document.createElement("div");
+        box.className = "stamp-mark-box";
+        box.dataset.kind = kind;
+        box.title = `Drag to move the ${kind}`;
+        box.appendChild(img.cloneNode());
+        box.insertAdjacentHTML("beforeend", '<span class="stamp-resize" title="Drag to resize"></span>');
+        sheet.appendChild(box);
+      }
+      wrap.appendChild(sheet);
+      container.appendChild(wrap);
+      positionMarks(i);
+    });
+    syncStampForm();
+  }
+
+  function positionMarks(pageIndex) {
+    const sheet = el("stampPages").querySelector(`.stamp-page[data-page="${pageIndex}"]`);
+    if (!sheet) return;
+    sheet.querySelectorAll(".stamp-mark-box").forEach((box) => {
+      const p = stampState.placements[pageIndex][box.dataset.kind];
+      Object.assign(box.style, { left: pct(p.x), top: pct(p.y), width: pct(p.w), height: pct(p.h) });
+    });
+  }
+
+  // Drag to move / drag the corner dot to resize (keeping the mark's shape).
+  // The same change goes to every page carrying the same signature/stamp
+  // document, so a mark dragged once is in place on all of them.
+  el("stampPages").addEventListener("pointerdown", (e) => {
+    const box = e.target.closest(".stamp-mark-box");
+    if (!box) return;
+    e.preventDefault();
+    const sheet = box.parentElement;
+    const pageIndex = Number(sheet.dataset.page);
+    const kind = box.dataset.kind;
+    const doc = pageMark(pageIndex, kind);
+    const resizing = e.target.classList.contains("stamp-resize");
+    const rect = sheet.getBoundingClientRect();
+    const start = { ...stampState.placements[pageIndex][kind] };
+    const aspect = start.h / start.w; // in page fractions
+    const origin = { x: e.clientX, y: e.clientY };
+    box.classList.add("dragging");
+    box.setPointerCapture(e.pointerId);
+
+    const onMove = (ev) => {
+      const dx = (ev.clientX - origin.x) / rect.width;
+      const dy = (ev.clientY - origin.y) / rect.height;
+      let next;
+      if (resizing) {
+        const w = Math.min(Math.max(start.w + dx, 0.03), 1);
+        next = { ...start, w, h: w * aspect, moved: true };
+      } else {
+        // Kept at least partly on the page so it can always be grabbed again.
+        next = {
+          ...start,
+          moved: true,
+          x: Math.min(Math.max(start.x + dx, -start.w / 2), 1 - start.w / 2),
+          y: Math.min(Math.max(start.y + dy, -start.h / 2), 1 - start.h / 2),
+        };
+      }
+      const targets = stampState.placements.map((_, i) => i).filter((i) => pageMark(i, kind) === doc);
+      for (const i of targets) {
+        if (!stampState.placements[i][kind]) continue;
+        stampState.placements[i][kind] = { ...next };
+        positionMarks(i);
+      }
+    };
+    const onUp = () => {
+      box.classList.remove("dragging");
+      box.removeEventListener("pointermove", onMove);
+      box.removeEventListener("pointerup", onUp);
+      box.removeEventListener("pointercancel", onUp);
+    };
+    box.addEventListener("pointermove", onMove);
+    box.addEventListener("pointerup", onUp);
+    box.addEventListener("pointercancel", onUp);
+  });
+
+  // Sets page `i`'s `kind` to document `id` (null = none) - its image is
+  // fetched first, so a failure leaves the page as it was.
+  async function setPageMark(i, kind, id) {
+    if (id) await stampAsset(kind, id);
+    if (pageMark(i, kind) === id) return;
+    // A different signature/stamp has its own shape - it starts at the usual spot.
+    if (kind !== "letterhead") delete stampState.placements[i][kind];
+    stampState.pageMarks[i][kind] = id;
+  }
+
+  // A page's dropdowns - or, without a preview, the every-page ones.
+  el("stampPage").addEventListener("change", async (e) => {
+    const select = e.target.closest(".stamp-select");
+    if (!select) return;
+    const kind = select.dataset.kind;
+    const id = select.value || null;
+    el("stampError").textContent = "";
+    select.disabled = true;
+    try {
+      if (select.dataset.all) {
+        if (id) await stampAsset(kind, id);
+        stampState.allPagesMarks[kind] = id;
+        select.classList.toggle("chosen", !!id);
+        syncStampForm();
+      } else {
+        await setPageMark(Number(select.dataset.page), kind, id);
+        relayoutMarks();
+      }
+    } catch (err) {
+      el("stampError").textContent = `Couldn't use ${markLabel(kind, id) || "that"} - ${err.message}`;
+      if (select.dataset.all) select.value = stampState.allPagesMarks[kind] || "";
+      else renderStampPages(); // put the dropdown back to what the page has
+    } finally {
+      select.disabled = false;
+    }
+  });
+
+  // "Use on all pages": every page gets this page's marks, where they are.
+  el("stampPages").addEventListener("click", (e) => {
+    const btn = e.target.closest(".stamp-copy");
+    if (!btn) return;
+    const from = Number(btn.dataset.page);
+    const marks = stampState.pageMarks[from];
+    const placed = stampState.placements[from];
+    stampState.pages.forEach((_, i) => {
+      if (i === from) return;
+      stampState.pageMarks[i] = { ...marks };
+      stampState.placements[i] = Object.fromEntries(Object.entries(placed).map(([k, p]) => [k, { ...p }]));
+    });
+    relayoutMarks();
+  });
+
+  async function loadStampPreview(file) {
+    const token = ++stampState.token;
+    stampState.pages = [];
+    stampState.pageMarks = [];
+    stampState.placements = [];
+    if (stampState.objectUrl) URL.revokeObjectURL(stampState.objectUrl);
+    stampState.objectUrl = null;
+    el("stampPages").innerHTML = "";
+    el("stampPreviewCard").scrollTop = 0;
+    if (!file || file.size > MAX_UPLOAD_BYTES) {
+      el("stampPreviewStatus").textContent = file
+        ? "This file is too large to preview or mark." : "Choose a PDF or image to preview it here.";
+      syncStampForm();
+      return;
+    }
+    el("stampPreviewStatus").textContent = "Loading preview…";
+    syncStampForm();
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    try {
+      const pages = [];
+      if (isPdf) {
+        const pdfjsLib = await loadPdfjs();
+        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+        for (let n = 1; n <= pdf.numPages; n++) {
+          if (token !== stampState.token) return;
+          el("stampPreviewStatus").textContent = `Loading preview… page ${n} of ${pdf.numPages}`;
+          const page = await pdf.getPage(n);
+          const base = page.getViewport({ scale: 1 });
+          const scale = Math.min((900 * (window.devicePixelRatio || 1)) / base.width, 3);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(viewport.width);
+          canvas.height = Math.round(viewport.height);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          pages.push({ w: base.width, h: base.height, node: canvas, ink: inkBox(canvas, canvas.width, canvas.height) });
+        }
+      } else {
+        stampState.objectUrl = URL.createObjectURL(file);
+        const img = await loadImage(stampState.objectUrl);
+        const pxPerPt = Math.min(img.naturalWidth / A4_PT.w, img.naturalHeight / A4_PT.h);
+        pages.push({ w: img.naturalWidth / pxPerPt, h: img.naturalHeight / pxPerPt, node: img,
+                     ink: inkBox(img, img.naturalWidth, img.naturalHeight) });
+      }
+      if (token !== stampState.token) return;
+      stampState.pages = pages;
+      stampState.pageMarks = pages.map(noMarks); // every page starts on "None"
+      resetPlacements();
+      el("stampPreviewStatus").textContent = "";
+      renderStampPages();
+    } catch (err) {
+      if (token !== stampState.token) return;
+      console.error("Failed to preview document:", err);
+      el("stampPreviewStatus").textContent =
+        `Couldn't show a preview (${err.message}) - pick the marks above; they'll go on every page at the bottom right.`;
+      renderAllPagesSelects();
+      syncStampForm();
+    }
+  }
+
+  // The dropdowns list the Documents-library entries that can be used as
+  // each mark (see GET /stamp-document/marks), by their Documents-tab names.
+  const NO_MARK_HINT = {
+    letterhead: "No letterhead in the Documents tab - upload one with \"letterhead\" in its name.",
+    signature: "No signature in the Documents tab - upload an image with \"sign\" in its name.",
+    stamp: "No stamp in the Documents tab - upload an image with \"stamp\" in its name.",
+  };
+
+  async function loadStampMarks() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/stamp-document/marks`);
+      if (!res.ok) throw await apiError(res);
+      const marks = await res.json();
+      for (const kind of MARK_KINDS) {
+        stampState.options[kind] = marks[kind] || [];
+        // Choices whose document was deleted/renamed away are dropped.
+        const known = new Set(stampState.options[kind].map((o) => o.id));
+        for (const marksOnPage of [...stampState.pageMarks, stampState.allPagesMarks]) {
+          if (marksOnPage[kind] && !known.has(marksOnPage[kind])) marksOnPage[kind] = null;
+        }
+      }
+      renderAllPagesSelects();
+      relayoutMarks();
+      syncStampForm();
+    } catch (err) {
+      console.error("Failed to load Sign & Stamp marks:", err);
+      el("stampError").textContent = `Couldn't load the letterheads, signatures and stamps - ${err.message}`;
+    }
+  }
+
+  el("stampChooseBtn").addEventListener("click", () => el("stampFile").click());
+  el("stampFile").addEventListener("change", () => {
+    const file = el("stampFile").files[0];
+    // A new file starts with no marks selected.
+    stampState.allPagesMarks = noMarks();
+    renderAllPagesSelects();
+    el("stampError").textContent = file && file.size > MAX_UPLOAD_BYTES
+      ? tooBigMessage() : "";
+    loadStampPreview(file);
+  });
+
+  // --- "View documents" popup --------------------------------------------
+  // What each page's dropdowns offer, as thumbnails (GET
+  // /stamp-document/assets - a PDF letterhead as its first page) - and
+  // where to add, edit or remove them (Remove keeps the document in the library). They're ordinary Documents-library
+  // entries, filed with a mark_kind so they're offered as that mark
+  // whatever they're named; every change shows on the Documents tab and in
+  // the page dropdowns straight away.
+  const MARK_NOUNS = { letterhead: "letterhead", signature: "signature", stamp: "stamp" };
+  let stampDocForm = null; // { mode: "add" | "edit", kind, id?, label? }
+
+  // A short "done" notice at the bottom of the screen, gone after a few seconds.
+  let toastTimer = null;
+  function showToast(message) {
+    el("toastMessage").textContent = message;
+    el("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el("toast").hidden = true; }, 4000);
+  }
+
+  // The app's own confirmation popup (not the browser's confirm()) -
+  // resolves true for the confirm button, false for Cancel/Escape/outside.
+  let confirmResolve = null;
+  function askConfirm({ title, message, confirmLabel = "OK" }) {
+    el("confirmTitle").textContent = title;
+    el("confirmMessage").textContent = message;
+    el("confirmOkBtn").textContent = confirmLabel;
+    el("confirmModal").hidden = false;
+    el("confirmCancelBtn").focus();
+    return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+  function settleConfirm(answer) {
+    if (el("confirmModal").hidden) return;
+    el("confirmModal").hidden = true;
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(answer);
+  }
+  el("confirmOkBtn").addEventListener("click", () => settleConfirm(true));
+  el("confirmCancelBtn").addEventListener("click", () => settleConfirm(false));
+  el("confirmModal").addEventListener("click", (e) => {
+    if (e.target === el("confirmModal")) settleConfirm(false);
+  });
+
+  function renderStampDocs() {
+    el("stampDocsBody").innerHTML = MARK_KINDS.map((kind) => {
+      const options = stampState.options[kind];
+      const tiles = options.map((o) => {
+        const configured = o.id === "default"; // the app's own letterhead file - not in the library
+        return `<div class="stamp-doc-tile">
+            <button class="stamp-doc-open" data-kind="${kind}" data-id="${escapeHtml(o.id)}"
+                ${configured ? 'disabled title="The letterhead configured for the app"' : `title="Open ${escapeHtml(o.label)}"`}>
+              <span class="stamp-doc-thumb">Loading…</span>
+              <span class="stamp-doc-name">${escapeHtml(o.label)}</span>
+            </button>
+            ${configured ? "" : `<div class="stamp-doc-actions">
+              <button class="stamp-link stamp-doc-edit" data-kind="${kind}" data-id="${escapeHtml(o.id)}">Edit</button>
+              <button class="stamp-link danger stamp-doc-delete" data-kind="${kind}" data-id="${escapeHtml(o.id)}"
+                  title="Take it out of Sign &amp; Stamp - it stays in the Documents tab">Remove</button>
+            </div>`}
+          </div>`;
+      }).join("");
+      return `<div class="stamp-docs-group">
+          <div class="stamp-docs-group-head"><h3>${MARK_NAMES[kind]}</h3>
+            <button class="stamp-link stamp-doc-add" data-kind="${kind}">+ Add ${MARK_NOUNS[kind]}</button></div>
+          ${options.length ? `<div class="stamp-docs-grid">${tiles}</div>`
+                           : `<p class="stamp-docs-empty">None yet - add one with "+ Add ${MARK_NOUNS[kind]}".</p>`}
+        </div>`;
+    }).join("");
+    el("stampDocsBody").querySelectorAll(".stamp-doc-open").forEach(async (open) => {
+      const thumb = open.querySelector(".stamp-doc-thumb");
+      try {
+        const img = await stampAsset(open.dataset.kind, open.dataset.id);
+        thumb.textContent = "";
+        thumb.appendChild(img.cloneNode());
+      } catch (err) {
+        thumb.textContent = "No preview";
+      }
+    });
+  }
+
+  async function openStampDocs() {
+    closeStampDocForm();
+    el("stampDocsError").textContent = "";
+    el("stampDocsModal").hidden = false;
+    el("stampDocsBody").innerHTML = '<p class="stamp-docs-empty">Loading…</p>';
+    await loadStampMarks(); // fresh from the Documents tab
+    renderStampDocs();
+  }
+
+  function closeStampDocs() {
+    el("stampDocsModal").hidden = true;
+  }
+
+  function openStampDocForm(form) {
+    stampDocForm = form;
+    const noun = MARK_NOUNS[form.kind];
+    el("stampDocFormTitle").textContent = form.mode === "add" ? `Add a ${noun}` : `Edit ${form.label}`;
+    el("stampDocName").value = form.mode === "add" ? "" : form.label;
+    el("stampDocName").placeholder = { letterhead: "e.g. SIV_Letterhead", signature: "e.g. Vijaykumari_sign", stamp: "e.g. SIV_Stamp" }[form.kind];
+    el("stampDocFile").value = "";
+    // A letterhead can be an image or a PDF (its first page is used); a signature/stamp is drawn as an image.
+    el("stampDocFile").accept = form.kind === "letterhead" ? "image/png,image/jpeg,.png,.jpg,.jpeg,application/pdf,.pdf" : "image/png,image/jpeg,.png,.jpg,.jpeg";
+    el("stampDocFileLabel").textContent = form.mode === "add"
+      ? (form.kind === "letterhead" ? "File (image or PDF)" : "File (PNG or JPG - a transparent PNG looks best)")
+      : "Replace file (optional)";
+    el("stampDocError").textContent = "";
+    el("stampDocSaveBtn").disabled = false;
+    el("stampDocSaveBtn").textContent = "Save";
+    el("stampDocForm").hidden = false;
+    el("stampDocName").focus();
+  }
+
+  function closeStampDocForm() {
+    stampDocForm = null;
+    el("stampDocForm").hidden = true;
+  }
+
+  // After an add/edit/remove: the popup, every page's dropdowns and the
+  // Documents tab's list all re-read the library.
+  async function afterStampDocChange() {
+    await loadStampMarks();
+    renderStampDocs();
+    if (documentsLoaded) loadDocuments();
+  }
+
+  // A replaced file is a new document id - pages using the old one switch to it.
+  async function useReplacedDocument(kind, oldId, newId) {
+    delete stampState.assetCache[`${kind}:${oldId}`];
+    const users = stampState.pageMarks.map((m, i) => (m[kind] === oldId ? i : -1)).filter((i) => i >= 0);
+    if (users.length || stampState.allPagesMarks[kind] === oldId) await stampAsset(kind, newId).catch(() => {});
+    for (const i of users) {
+      stampState.pageMarks[i][kind] = newId;
+      if (kind !== "letterhead") delete stampState.placements[i][kind]; // its shape may have changed
+    }
+    if (stampState.allPagesMarks[kind] === oldId) stampState.allPagesMarks[kind] = newId;
+  }
+
+  el("stampDocForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!stampDocForm) return;
+    const { mode, kind, id } = stampDocForm;
+    const name = el("stampDocName").value.trim();
+    const file = el("stampDocFile").files[0];
+    const error = el("stampDocError");
+    if (!name) { error.textContent = "Name is required."; return; }
+    if (mode === "add" && !file) { error.textContent = "Choose a file to upload."; return; }
+    if (file && file.size > MAX_UPLOAD_BYTES) { error.textContent = tooBigMessage(); return; }
+    const btn = el("stampDocSaveBtn");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    error.textContent = "";
+    try {
+      if (file) {
+        const { uploadId, parts } = await uploadInParts(file, (i, n) => {
+          btn.textContent = n > 1 ? `Uploading ${i + 1}/${n}…` : "Uploading…";
+        });
+        const formData = new FormData();
+        formData.append("parts", parts);
+        formData.append("name", name);
+        formData.append("filename", file.name);
+        formData.append("content_type", file.type);
+        formData.append("mark_kind", kind);
+        if (mode === "edit") formData.append("replace", id);
+        const res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+        if (!res.ok) throw await apiError(res);
+        const saved = await res.json();
+        if (mode === "edit") await useReplacedDocument(kind, id, saved.id);
+      } else {
+        const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, mark_kind: kind }),
+        });
+        if (!res.ok) throw await apiError(res);
+      }
+      closeStampDocForm();
+      await afterStampDocChange();
+      showToast(mode === "add"
+        ? `"${name}" added as a ${MARK_NOUNS[kind]} - it's in the Documents tab too.`
+        : `"${name}" saved.`);
+    } catch (err) {
+      console.error("Failed to save document:", err);
+      error.textContent = `Couldn't save this - ${err.message}`;
+      btn.disabled = false;
+      btn.textContent = "Save";
+    }
+  });
+  el("stampDocCancelBtn").addEventListener("click", closeStampDocForm);
+
+  el("stampViewDocsBtn").addEventListener("click", openStampDocs);
+  el("stampDocsCloseBtn").addEventListener("click", closeStampDocs);
+  el("stampDocsModal").addEventListener("click", (e) => {
+    if (e.target === el("stampDocsModal")) closeStampDocs();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!el("confirmModal").hidden) settleConfirm(false); // closes just the confirmation
+    else if (!el("stampDocsModal").hidden) closeStampDocs();
+  });
+  el("stampDocsManageBtn").addEventListener("click", () => {
+    closeStampDocs();
+    showPage("documents");
+  });
+
+  el("stampDocsBody").addEventListener("click", async (e) => {
+    const add = e.target.closest(".stamp-doc-add");
+    if (add) {
+      openStampDocForm({ mode: "add", kind: add.dataset.kind });
+      return;
+    }
+    const edit = e.target.closest(".stamp-doc-edit");
+    if (edit) {
+      const { kind, id } = edit.dataset;
+      openStampDocForm({ mode: "edit", kind, id, label: markLabel(kind, id) });
+      return;
+    }
+    const del = e.target.closest(".stamp-doc-delete");
+    if (del) {
+      const { kind, id } = del.dataset;
+      const label = markLabel(kind, id);
+      el("stampDocsError").textContent = "";
+      const ok = await askConfirm({
+        title: `Remove "${label}" from Sign & Stamp?`,
+        message: "It stays in the Documents tab - only this list and the page dropdowns lose it. Pages using it are set back to None.",
+        confirmLabel: "Remove",
+      });
+      if (!ok) return;
+      try {
+        // Only out of Sign & Stamp (DELETE /stamp-document/marks/{id}) - the document itself is kept.
+        const res = await fetch(`${API_BASE_URL}/stamp-document/marks/${id}`, { method: "DELETE" });
+        if (!res.ok) throw await apiError(res);
+        delete stampState.assetCache[`${kind}:${id}`];
+        if (stampDocForm?.id === id) closeStampDocForm();
+        await afterStampDocChange();
+        showToast(`"${label}" removed from Sign & Stamp - it's still in the Documents tab.`);
+      } catch (err) {
+        el("stampDocsError").textContent = `Couldn't remove ${label} - ${err.message}`;
+      }
+      return;
+    }
+    // A tile opens the document itself in a new tab (fetched in parts, like
+    // the Documents tab's View).
+    const open = e.target.closest(".stamp-doc-open");
+    if (!open || open.disabled) return;
+    el("stampDocsError").textContent = "";
+    const tab = window.open("", "_blank"); // opened now, while this is still a click
+    if (tab) tab.document.title = "Loading…";
+    try {
+      const { blob } = await fetchDocumentBlob(open.dataset.id, "view");
+      const url = URL.createObjectURL(blob);
+      if (tab) tab.location.href = url;
+      else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60000);
+    } catch (err) {
+      if (tab) tab.close();
+      el("stampDocsError").textContent = `Couldn't open this document - ${err.message}`;
+    }
+  });
+
+  async function downloadStamped() {
+    const file = el("stampFile").files[0];
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      el("stampError").textContent = tooBigMessage();
+      return;
+    }
+    const btn = el("stampDownloadBtn");
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = "Preparing…";
+    el("stampError").textContent = "";
+    // Sent in parts (uploadInParts), marked, then fetched back in parts.
+    try {
+      const { uploadId, parts } = await uploadInParts(file, (i, n) => {
+        btn.textContent = n > 1 ? `Uploading ${i + 1}/${n}…` : "Uploading…";
+      });
+
+      btn.textContent = "Preparing…";
+      const formData = new FormData();
+      formData.append("parts", parts);
+      formData.append("filename", file.name);
+      formData.append("content_type", file.type);
+      if (hasPreview()) {
+        // Each page's own marks, where they were dragged - pages without
+        // any are left as they are.
+        const marked = stampState.pages.map((_, i) => i).filter(pageHasMarks);
+        formData.append("pages", JSON.stringify(marked.map((page) => ({ page, ...stampState.pageMarks[page] }))));
+        const placements = marked.flatMap((page) =>
+          Object.entries(stampState.placements[page]).map(([mark, p]) => ({ page, mark, x: p.x, y: p.y, w: p.w, h: p.h })));
+        formData.append("placements", JSON.stringify(placements));
+        const layouts = marked.flatMap((page) => {
+          const layout = contentLayout(page);
+          return layout ? [{ page, ...layout }] : [];
+        });
+        if (layouts.length) formData.append("layouts", JSON.stringify(layouts));
+      } else {
+        // No preview: the same marks on every page, at the usual spots.
+        MARK_KINDS.forEach((kind) => {
+          if (stampState.allPagesMarks[kind]) formData.append(kind, stampState.allPagesMarks[kind]);
+        });
+      }
+      const finish = await fetch(`${API_BASE_URL}/stamp-document/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+      if (!finish.ok) throw await apiError(finish);
+      const result = await finish.json();
+
+      const chunks = [];
+      for (let i = 0; i < result.parts; i++) {
+        btn.textContent = result.parts > 1 ? `Downloading ${i + 1}/${result.parts}…` : "Downloading…";
+        const res = await fetch(`${API_BASE_URL}/stamp-document/results/${result.result_id}/parts/${i}`);
+        if (!res.ok) throw await apiError(res);
+        chunks.push(await res.blob());
+      }
+      saveBlob(new Blob(chunks, { type: result.media_type }), result.filename);
+    } catch (err) {
+      console.error("Failed to sign/stamp document:", err);
+      el("stampError").textContent = `Couldn't prepare this - ${err.message}`;
+    } finally {
+      btn.innerHTML = label;
+      syncStampForm();
+    }
+  }
+  el("stampDownloadBtn").addEventListener("click", downloadStamped);
   el("tendersRefreshBtn").addEventListener("click", refreshTenders);
   el("automationRefreshBtn").addEventListener("click", loadAutomationRuns);
   el("automationPrevBtn").addEventListener("click", () => {
@@ -2729,17 +3979,26 @@ ${err.message}`);
     link.dataset.busy = "1";
     const label = link.innerHTML;
     const base = `${API_BASE_URL}/tenders/${link.dataset.id}/bid-document`;
-    try {
+    // Every part comes from the file /info named; if that pack is replaced
+    // by a newer generation mid-download (409), start once more on the new one.
+    async function fetchParts() {
       const infoRes = await fetch(`${base}/info`);
       if (!infoRes.ok) throw new Error(`HTTP ${infoRes.status}`);
       const info = await infoRes.json();
       const parts = [];
       for (let i = 0; i < info.parts; i++) {
         link.textContent = info.parts > 1 ? `Downloading ${i + 1}/${info.parts}…` : "Downloading…";
-        const res = await fetch(`${base}?part=${i}`);
+        const res = await fetch(`${base}?part=${i}&file=${encodeURIComponent(info.file_id || "")}`);
+        if (res.status === 409) return { info, parts: null };
         if (!res.ok) throw new Error(`HTTP ${res.status} on part ${i + 1}`);
         parts.push(await res.blob());
       }
+      return { info, parts };
+    }
+    try {
+      let { info, parts } = await fetchParts();
+      if (!parts) ({ info, parts } = await fetchParts());
+      if (!parts) throw new Error("the bid pack kept changing while downloading - try again in a minute");
       const url = URL.createObjectURL(new Blob(parts, { type: "application/pdf" }));
       const a = document.createElement("a");
       a.href = url;

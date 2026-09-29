@@ -27,6 +27,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.config import get_settings
 from app.intelligence.prompts import (
     build_bid_draft_system_prompt,
     build_bid_draft_user_prompt,
@@ -54,11 +55,23 @@ class SubmissionRow(BaseModel):
     where: str = "Technical Upload"
     source: str = "upload"
     library_document: str | None = None
-    letterhead: bool = False
-    signature: bool = False
-    stamp: bool = False
+    # None = the model left it out (prompt rule 7: only sent when the tender
+    # departs from the usual marks) - bid_generator.default_marks fills it.
+    letterhead: bool | None = None
+    signature: bool | None = None
+    stamp: bool | None = None
     format_hint: str = ""
     notes: str = ""
+    basis: str = ""  # the tender clause this row answers
+    # One of bid_generator.CHECKLIST_SECTIONS (prompt rule 15) - "" lets
+    # bid_generator infer it from the row's own wording.
+    section: str = ""
+    # True only when the tender asks for this document to be notarised /
+    # sworn (affidavit, stamp paper...) - prompt rule 16.
+    notary: bool = False
+    # False for a conditional row ("if applicable") that doesn't fit this
+    # bidder - listed as Not applicable (prompt rule 18).
+    applicable: bool = True
 
     @field_validator("source")
     @classmethod
@@ -66,15 +79,47 @@ class SubmissionRow(BaseModel):
         return "draft" if (value or "").strip().lower() == "draft" else "upload"
 
 
+class CoveredCondition(BaseModel):
+    ref: str = ""
+    proved_by: str = ""
+
+
 class SubmissionChecklistPlan(BaseModel):
     bid_number: str | None = None
     bid_end: str | None = None
+    # The model's condition-by-condition worklist (prompt rule 13) - asked
+    # for first so every eligibility condition gets considered before rows
+    # are written; not shown on the checklist itself.
+    conditions: list[CoveredCondition] = Field(default_factory=list)
     rows: list[SubmissionRow] = Field(default_factory=list)
+    # True when the tender itself prescribes the order its documents are
+    # submitted in - the rows then keep that order instead of being grouped
+    # by section (see bid_generator.build_checklist).
+    tender_order: bool = False
+
+
+class DraftedTable(BaseModel):
+    """A table inside a drafted document (e.g. a project experience summary)
+    - rendered after the body paragraphs."""
+
+    title: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+
+    @field_validator("rows", mode="before")
+    @classmethod
+    def _cells_as_text(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [[("" if c is None else str(c)) for c in row] for row in value if isinstance(row, list)]
+        return value
 
 
 class DraftedDocument(BaseModel):
     title: str
     body_paragraphs: list[str] = Field(default_factory=list)
+    tables: list[DraftedTable] = Field(default_factory=list)
+    # Paragraphs that follow the tables (e.g. the closing line of a letter).
+    closing_paragraphs: list[str] = Field(default_factory=list)
     open_items: list[str] = Field(default_factory=list)
     id: str = ""  # the checklist row it was drafted for
 
@@ -83,14 +128,14 @@ class DraftedDocumentSet(BaseModel):
     documents: list[DraftedDocument] = Field(default_factory=list)
 
 
-def _resolve_provider(provider: AIProvider | None) -> AIProvider:
+def _resolve_provider(provider: AIProvider | None, model: str | None = None) -> AIProvider:
     """get_provider() raises ScreeningError (e.g. no OPENAI_API_KEY
     configured) - translated to BidDraftingError here so every caller of
     this module only ever has one exception type to catch."""
     if provider is not None:
         return provider
     try:
-        return get_provider()
+        return get_provider(model=model)
     except ScreeningError as exc:
         raise BidDraftingError(f"No AI provider available: {exc}") from exc
 
@@ -116,7 +161,7 @@ def plan_submission_checklist(
 ) -> SubmissionChecklistPlan:
     """Every document this tender's submission needs, in the tender's own
     order - see this module's docstring."""
-    provider = _resolve_provider(provider)
+    provider = _resolve_provider(provider, model=get_settings().checklist_model)
     data = _call_json(
         provider,
         build_submission_checklist_system_prompt(),
@@ -176,7 +221,7 @@ def draft_checklist_documents(
     by row id plus one error message per batch that failed, so one bad
     batch never costs the others. Raises BidDraftingError only when no
     provider is available at all."""
-    provider = _resolve_provider(provider)
+    provider = _resolve_provider(provider, model=get_settings().draft_model)
     batches = [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]
     if not batches:
         return {}, []

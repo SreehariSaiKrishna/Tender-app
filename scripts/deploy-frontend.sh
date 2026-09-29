@@ -27,14 +27,16 @@ echo "== Deploying frontend infrastructure (S3 + CloudFront) =="
 # frequent case here (the HTML upload below still needs to happen even when
 # the infra itself hasn't changed), not a real failure. Only abort on an
 # actual error.
-DEPLOY_OUTPUT="$(cd frontend && sam deploy 2>&1)" || {
-  if ! grep -q "No changes to deploy" <<< "$DEPLOY_OUTPUT"; then
-    echo "$DEPLOY_OUTPUT"
-    exit 1
-  fi
-  echo "No infrastructure changes - continuing to re-upload the dashboard."
-}
-echo "$DEPLOY_OUTPUT"
+# SAM's output is only shown when something actually happened: its "Error:
+# No changes to deploy" line reads like a failure when it isn't one.
+if DEPLOY_OUTPUT="$(cd frontend && sam deploy 2>&1)"; then
+  echo "$DEPLOY_OUTPUT"
+elif grep -q "No changes to deploy" <<< "$DEPLOY_OUTPUT"; then
+  echo "No infrastructure changes (S3/CloudFront already up to date) - continuing to re-upload the dashboard."
+else
+  echo "$DEPLOY_OUTPUT"
+  exit 1
+fi
 
 echo
 echo "== Reading stack outputs =="

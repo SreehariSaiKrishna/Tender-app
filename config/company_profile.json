@@ -1,23 +1,31 @@
 {
-  "_comment": "Verified company/legal facts for Oaks Solutions Pvt Ltd, used by app.reports.bid_generator to draft the covering letter and declarations of a generated bid pack. Every field here is transcribed from an actual issued certificate (see the company documents library for the source PDFs/scans) - nothing here is estimated or invented. Fields the source documents don't establish (turnover figures, bank details, current employee count) are deliberately left out or flagged 'to_be_verified' rather than guessed; app.reports.bid_generator must never fill those from anywhere but an uploaded company document.",
-
+  "_comment": "Verified company/legal facts for Oaks Solutions Pvt Ltd - the single source of company data for a generated bid pack (app.reports.bid_generator / app.intelligence.prompts): the checklist planner and the document drafter both read it. Every field here is transcribed from an actual issued certificate or work order in the company documents library - nothing here is estimated or invented. Fields the source documents don't establish (bank details, TAN, the Dumka/Vidura work order numbers) are deliberately left out or flagged 'to_be_verified' rather than guessed; the drafter must write a [TO BE FILLED FROM COMPANY RECORDS: ...] placeholder for them, never a made-up value.",
   "legal_name": "OAKS SOLUTIONS PRIVATE LIMITED",
   "trade_name": "Oaks Solutions Pvt Ltd",
   "former_name": "OVI Learning Private Limited",
+  "_former_name_comment": "Name changed from OVI LEARNING PRIVATE LIMITED on 06-08-2025 (Certificate of Incorporation pursuant to change of name). Earlier work orders are addressed to OVI Learning LLP - see past_experience[].contracted_as; the CA turnover certificate covers both. The business was earlier run as OVI Learning LLP (LLP ID AAI-6664) - its FY2023-24/2024-25 financial statements are in the library.",
+  "name_change_date": "2025-08-06",
   "cin": "U85499TS2025PTC199477",
   "gstin": "36AAECO7562J1Z1",
+  "gst_registration_date": "2025-08-05",
   "pan": "AAECO7562J",
-  "pan_derivation_note": "Characters 3-12 of the GSTIN above - verify against the actual PAN card in the company documents library before relying on this for a submission.",
   "date_of_incorporation": "2025-06-05",
-
+  "constitution": "Private Limited Company",
+  "incorporated_under": "Companies Act, 2013 (Certificate of Incorporation issued by the Registrar of Companies, Central Processing Centre)",
   "registered_office": "H. No. 8-2-293/82/A/233, 234, 235, Road No. 36, Jubilee Hills, Shaikpet, Hyderabad, Telangana 500033, India",
   "correspondence_address": "F2, Empire Square, Road Number 36, Jubilee Hills, Hyderabad/Secunderabad, Telangana 500033",
   "email": "info@oaks.guru",
   "phone": "+91-7207633633",
-
+  "website": "www.oaks.guru",
   "directors": [
-    {"name": "Suman Matcha", "designation": "Director"},
-    {"name": "Vijaya Kumari Matcha", "designation": "Director"}
+    {
+      "name": "Suman Matcha",
+      "designation": "Director"
+    },
+    {
+      "name": "Vijaya Kumari Matcha",
+      "designation": "Director"
+    }
   ],
   "authorized_signatory": {
     "name": "Suman Matcha",
@@ -26,14 +34,14 @@
     "seal_document_name": "Oaks Stamp",
     "place": "Hyderabad"
   },
-
   "_letterhead_comment": "Full-page A4 letterhead image (relative to config/) drawn behind every page of a bid pack that goes to the tendering authority. The content area is inset to clear its header logo/address and footer contact strip - see app.reports.bid_generator.LETTERHEAD_MARGINS.",
   "letterhead_image": "letterhead.jpg",
-
   "_reference_documents_comment": "Documents-library entries (by display name) that are background reading for drafting only - their text is fed to the AI drafter as company context, but they are never merged into or listed as enclosures of a bid pack. Any document whose name contains 'brochure' is treated this way too.",
-  "reference_documents": ["Oaks Brochure", "Oaks Contact details"],
-
-  "_standard_enclosures_comment": "Documents-library entries (by display name) merged into every bid pack. Any other library document is enclosed only when it matches the tender's own requirements (see app.reports.bid_generator.select_enclosures).",
+  "reference_documents": [
+    "Oaks Brochure",
+    "Oaks Contact details"
+  ],
+  "_standard_enclosures_comment": "Documents-library entries (by display name) listed in every bid pack, in the Legal & Statutory section. Any other library document is enclosed only when the tender's own requirements call for it.",
   "standard_enclosures": [
     "Certificate of Incorporation",
     "PAN Card",
@@ -41,14 +49,36 @@
     "Udyam MSME Registration Certificate",
     "DPIIT Startup Recognition Certificate"
   ],
-
+  "_pre_attested_documents_comment": "Documents-library entries (by display name) whose scans already carry the company seal and the signatory's signature - attached as-is, with no second signature/seal overlay. A row's signature/stamp toggles on the checklist still override this.",
+  "pre_attested_documents": [
+    "Certificate of Incorporation",
+    "PAN Card",
+    "GST Registration Certificate",
+    "Udyam MSME Registration Certificate",
+    "DPIIT Startup Recognition Certificate",
+    "CMMI Certificate of Compliance",
+    "ISO 27001 Certificate",
+    "CA Turnover Certificate FY2023-24 to FY2025-26",
+    "Work Order - PSSCIVE Bhopal Virtual Skill Labs (EdCIL)",
+    "Work Order - NCERT Online Labs OLabs (EdCIL)",
+    "Work Order - DSWO Palamu Digital Learning",
+    "Work Order - DSWO Dumka Anganwadi Curriculum Digitisation",
+    "Work Order - MP Farmer Welfare Awareness Campaign"
+  ],
   "registrations": [
     {
       "name": "UDYAM (MSME) Registration",
       "number": "UDYAM-TS-02-0269007",
       "enterprise_type": "Micro",
+      "classification_year": "2025-26",
       "classification_date": "2025-09-09",
-      "major_activity": "Services"
+      "major_activity": "Services",
+      "nic_codes": [
+        "62099 - Other information technology and computer service activities n.e.c.",
+        "85499 - Other educational services n.e.c.",
+        "85500 - Educational support services"
+      ],
+      "library_document": "Udyam MSME Registration Certificate"
     },
     {
       "name": "DPIIT Start-up Recognition",
@@ -56,87 +86,384 @@
       "date_of_issue": "2025-09-23",
       "valid_upto": "2035-06-04",
       "industry": "Education",
-      "sector": "Education Technology"
+      "sector": "Education Technology",
+      "library_document": "DPIIT Startup Recognition Certificate"
     }
   ],
-
   "certifications": [
     {
-      "name": "ISO/IEC 27001:2022",
-      "certificate_no": "26EQRG27",
+      "name": "ISO/IEC 27001:2022 (Information Security Management System)",
+      "certificate_no": "26EQRA18",
+      "issued_by": "Assurance Quality Certification LLC",
       "scope": "Information security for education technology including digital learning, assessment and analytics",
       "initial_registration_date": "2026-06-26",
-      "valid_until": "2029-06-25"
+      "valid_until": "2029-06-25",
+      "library_document": "ISO 27001 Certificate"
+    },
+    {
+      "name": "ISO 9001:2015 (Quality Management System)",
+      "certificate_no": "26EQRG27",
+      "issued_by": "Assurance Quality Certification LLC",
+      "scope": "Information security for education technology including digital learning, assessment and analytics",
+      "initial_registration_date": "2026-06-26",
+      "valid_until": "2029-06-25",
+      "library_document": "ISO 27001 Certificate"
     },
     {
       "name": "CMMI Maturity Level 3",
       "certificate_no": "UQ-2026062708",
+      "issued_by": "UK Certification & Inspection Limited",
       "scope": "Information security for education technology including digital learning, assessment and analytics",
       "date_of_certification": "2029-06-27",
-      "valid_until": "2029-06-26"
+      "_date_of_certification_comment": "As printed on the certificate - after its own expiry date, almost certainly a typo on the certificate; confirm with the certifying body before quoting it.",
+      "valid_until": "2029-06-26",
+      "library_document": "CMMI Certificate of Compliance"
     }
   ],
-
+  "_services_comment": "What the company does, each line backed by the evidence named - the drafter picks the lines that match a tender's scope; it may not describe any service that isn't here.",
+  "services": [
+    {
+      "service": "Social media and multi-channel digital campaign execution (Facebook, Instagram, YouTube, WhatsApp)",
+      "evidence": "MP CAEC work order SIV/WO/2025-26/011"
+    },
+    {
+      "service": "Campaign strategy, quarterly communication roadmaps and content calendars",
+      "evidence": "MP CAEC work order SIV/WO/2025-26/011"
+    },
+    {
+      "service": "Multilingual digital content, short-form and long-form video, social media creatives and success-story documentation",
+      "evidence": "MP CAEC work order SIV/WO/2025-26/011"
+    },
+    {
+      "service": "Analytics dashboards, MIS, and monthly/quarterly reporting and impact assessment",
+      "evidence": "MP CAEC and DSWO Palamu work orders"
+    },
+    {
+      "service": "Dedicated project teams - program manager, field coordinators, content & digital team, data & analytics support",
+      "evidence": "MP CAEC work order SIV/WO/2025-26/011"
+    },
+    {
+      "service": "Interactive 2D/3D digital learning content, virtual skill labs and online labs deployed on the DIKSHA platform",
+      "evidence": "PSSCIVE and NCERT OLabs work orders"
+    },
+    {
+      "service": "Digital learning platforms with device supply, MDM, software configuration and MIS dashboards",
+      "evidence": "DSWO Palamu work order SIV/WO/2023-24/003"
+    },
+    {
+      "service": "Information technology and computer services; educational support services",
+      "evidence": "Udyam NIC codes 62099, 85499, 85500"
+    }
+  ],
+  "_financials_comment": "From the CA certificate in the library (CA Turnover Certificate FY2023-24 to FY2025-26) - figures cover OAKS Solutions Pvt Ltd, previously OVI Learning LLP.",
+  "financials": {
+    "currency": "INR",
+    "annual_turnover": [
+      {
+        "financial_year": "2023-24",
+        "amount_inr": 16402384,
+        "amount_display": "Rs. 1,64,02,384"
+      },
+      {
+        "financial_year": "2024-25",
+        "amount_inr": 52389823,
+        "amount_display": "Rs. 5,23,89,823"
+      },
+      {
+        "financial_year": "2025-26",
+        "amount_inr": 35946518,
+        "amount_display": "Rs. 3,59,46,518"
+      }
+    ],
+    "average_turnover": {
+      "period": "FY 2023-24 to FY 2025-26",
+      "amount_inr": 34912908.33,
+      "amount_display": "Rs. 3,49,12,908.33"
+    },
+    "ca_certificate": {
+      "firm": "Jaswanth Reddy & Co, Chartered Accountants",
+      "frn": "026711S",
+      "signatory": "CA P Jaswanth Reddy (Proprietor)",
+      "membership_no": "275109",
+      "udin": "26275109CRRRZD6916",
+      "date": "2026-09-23",
+      "place": "Hyderabad",
+      "library_document": "CA Turnover Certificate FY2023-24 to FY2025-26"
+    },
+    "financial_statement_documents": [
+      "Audited Financial Statements FY2025-26",
+      "ITR and Financial Statements FY2024-25",
+      "ITR and Financial Statements FY2023-24",
+      "ITR and Financial Statements FY2022-23"
+    ],
+    "_balance_sheet_comment": "Read off the balance sheets in the library. Net worth = share/partners' capital + surplus; liquidity = current ratio (current assets / current liabilities); current assets = total assets - non-current assets. FY2023-24 and FY2024-25 are OVI Learning LLP (LLP ID AAI-6664), the predecessor entity; the totals of each sheet reconcile.",
+    "balance_sheet": [
+      {
+        "financial_year": "2025-26",
+        "as_at": "2026-03-31",
+        "entity": "OAKS SOLUTIONS PRIVATE LIMITED",
+        "share_capital_display": "Rs. 10,52,632",
+        "surplus_display": "Rs. 11,66,80,778",
+        "net_worth_inr": 117733410,
+        "net_worth_display": "Rs. 11,77,33,410",
+        "current_assets_display": "Rs. 5,10,37,990",
+        "current_liabilities_display": "Rs. 88,08,820",
+        "current_ratio": "5.79",
+        "total_assets_display": "Rs. 12,65,56,797",
+        "source": "Audited Financial Statements FY2025-26 (Jaswanth Reddy & Co, UDIN 26275109JTMIOP1391)"
+      },
+      {
+        "financial_year": "2024-25",
+        "as_at": "2025-03-31",
+        "entity": "OVI Learning LLP (predecessor)",
+        "share_capital_display": "Rs. 1,00,000",
+        "surplus_display": "Rs. 43,65,830",
+        "net_worth_inr": 4465830,
+        "net_worth_display": "Rs. 44,65,830",
+        "current_assets_display": "Rs. 6,32,37,209",
+        "current_liabilities_display": "Rs. 5,93,99,099",
+        "current_ratio": "1.06",
+        "total_assets_display": "Rs. 6,38,64,929",
+        "source": "ITR and Financial Statements FY2024-25"
+      },
+      {
+        "financial_year": "2023-24",
+        "as_at": "2024-03-31",
+        "entity": "OVI Learning LLP (predecessor)",
+        "share_capital_display": "Rs. 1,00,000",
+        "surplus_display": "Rs. 41,28,235",
+        "net_worth_inr": 4228235,
+        "net_worth_display": "Rs. 42,28,235",
+        "current_assets_display": "Rs. 6,09,86,554",
+        "current_liabilities_display": "Rs. 5,75,54,735",
+        "current_ratio": "1.06",
+        "total_assets_display": "Rs. 6,17,82,970",
+        "source": "ITR and Financial Statements FY2024-25 (comparative column) / FY2023-24"
+      }
+    ]
+  },
+  "_manpower_comment": "Last documented figure only - NOT verified evidence. The drafter may state it only as 'as on <date>' and every pack's internal notes flag it for reconfirmation (see to_be_verified).",
+  "manpower": {
+    "headcount": 45,
+    "as_of": "2026-09-16",
+    "verified": false
+  },
+  "_key_personnel_comment": "People the company proposes in tenders (lists of proposed personnel, CVs). Add one entry per person - name, role, qualification, experience_years, experience (relevant projects/employers), skills, languages - and keep their CV / degree / experience certificates in the Documents library. The drafter fills personnel lists only from here; a tender role with nobody listed stays a placeholder.",
+  "key_personnel": [],
+  "_past_experience_comment": "One entry per project, transcribed from its work order in the library (library_document). scope_label: the short scope a checklist row names it by (\"Work Order - <short_name> (<scope_label>)\") when the AI gives it no tender-specific one. contracted_as: the name the work order is addressed to. Fields a work order in hand doesn't state are left out, never guessed.",
   "past_experience": [
     {
-      "client": "Vidura Digital Learning Pvt. Ltd.",
-      "financial_year": "2022-23",
-      "work_order_date": "2022-04-25",
-      "value_inr_lakh": 15.00,
-      "description": "Design and development of a digital education platform/application with interactive multimedia modules and structured digital content delivery.",
-      "evidence_status": "Agreement; Ongoing"
+      "client": "Department of Farmer Welfare & Agriculture Development, Government of Madhya Pradesh",
+      "short_name": "MP CAEC",
+      "scope_label": "Social Media & Digital Campaign",
+      "project": "Community-Centric Awareness and Engagement Campaign (CAEC) for agricultural schemes, sustainable practices, new technologies and market access",
+      "routed_through": "Sunitha Infovision Ltd.",
+      "issued_by": "Sunitha Infovision Ltd.",
+      "contracted_as": "OAKS Solutions Pvt Ltd",
+      "work_order_no": "SIV/WO/2025-26/011",
+      "work_order_date": "2026-02-23",
+      "end_client_ref": "DFWAD, MP work order No. Coordination/Publicity 130/25-26/130, Bhopal, dated 28-01-2026 (Tender No. IT/Advertisement/2025-26/898 dated 27-11-2025)",
+      "financial_year": "2025-26",
+      "value_inr": 30250000,
+      "value_display": "Rs. 3,02,50,000",
+      "value_inr_lakh": 302.5,
+      "description": "Implementation of a technology-enabled outreach and engagement solution involving digital campaign systems, analytics dashboards, monitoring and reporting, digital content workflows and multi-channel online platforms.",
+      "scope_items": [
+        "Campaign strategy, quarterly communication roadmap and content calendar",
+        "Multilingual digital content (Hindi & regional dialects)",
+        "Short-form and long-form videos",
+        "Success story documentation",
+        "Social media creatives and campaign material",
+        "Facebook, Instagram, YouTube and WhatsApp campaign execution",
+        "Community engagement activities and ambassador network mobilisation",
+        "Analytics dashboard setup and maintenance",
+        "Monthly and quarterly reports; impact assessment documentation",
+        "Dedicated resources: program manager, field coordinators, content & digital team, data & analytics support"
+      ],
+      "tags": [
+        "social media",
+        "digital marketing",
+        "digital communication",
+        "campaign",
+        "content",
+        "video",
+        "creatives",
+        "analytics",
+        "reporting",
+        "government",
+        "outreach"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Work Order; Ongoing",
+      "library_document": "Work Order - MP Farmer Welfare Awareness Campaign"
     },
     {
-      "client": "District Social Welfare Office (DSWO), Palamu",
+      "client": "District Social Welfare Office (DSWO), Palamu, Jharkhand",
+      "short_name": "DSWO Palamu TITLI",
+      "scope_label": "Digital Learning Platform & MIS Dashboards",
+      "project": "Digital Learning (Project TITLI) facility at 165 Anganwadi Centres of Palamu",
       "routed_through": "Sunitha Infovision Ltd.",
-      "financial_year": "2023-24",
+      "issued_by": "Sunitha Infovision Ltd.",
+      "contracted_as": "OVI Learning LLP (former name)",
+      "work_order_no": "SIV/WO/2023-24/003",
       "work_order_date": "2023-05-23",
+      "end_client_ref": "DSWO Palamu Work No. 599/Pao dated 21-04-2023",
+      "financial_year": "2023-24",
+      "quantity": "165 Anganwadi Centres",
+      "value_inr": 24746700,
+      "value_display": "Rs. 2,47,46,700",
       "value_inr_lakh": 247.47,
       "description": "Development and deployment of an interactive gamified learning platform with software configuration, platform-based digital content delivery, MIS dashboards, progress monitoring and customised reporting.",
-      "evidence_status": "Work Order; Ongoing"
+      "scope_items": [
+        "Two 10-inch Wi-Fi + 4G tablets per centre with 3-year MDM, protection plan and 4G data",
+        "FLN gamified learning tool - Hindi and English content mapped to the Jharkhand ECCE curriculum",
+        "Installation and configuration of the FLN tool and MDM on each tablet",
+        "MIS dashboards for data tracking and real-time progress monitoring",
+        "Customised reports and dashboards per DSWO/CDPO requirements"
+      ],
+      "tags": [
+        "edtech",
+        "platform",
+        "content",
+        "dashboards",
+        "reporting",
+        "hardware",
+        "government"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Work Order; Ongoing",
+      "library_document": "Work Order - DSWO Palamu Digital Learning"
     },
     {
-      "client": "District Social Welfare Office (DSWO), Dumka",
+      "client": "District Social Welfare Office (DSWO), Dumka, Jharkhand",
+      "short_name": "DSWO Dumka",
+      "scope_label": "Digital Learning Platform & Dashboards",
       "routed_through": "Sunitha Infovision Ltd.",
       "financial_year": "2024-25",
       "work_order_date": "2024-05-17",
       "value_inr_lakh": 265.46,
       "description": "Development and implementation of an interactive digital learning platform for curriculum digitisation, including software configuration, digital content integration, dashboard-based monitoring and customised reporting.",
-      "evidence_status": "Work Order; Ongoing"
+      "scope_items": [
+        "Two 10-inch Wi-Fi + 4G tablets per centre with 3-year MDM, protection plan and 4G data",
+        "FLN gamified learning tool - Hindi and English content mapped to the Jharkhand ECCE curriculum",
+        "Installation and configuration of the FLN tool and MDM on each tablet",
+        "MIS dashboards for data tracking and real-time progress monitoring",
+        "Customised reports and dashboards per DSWO/CDPO requirements"
+      ],
+      "tags": [
+        "edtech",
+        "platform",
+        "content",
+        "dashboards",
+        "reporting",
+        "government"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Work Order; Ongoing",
+      "library_document": "Work Order - DSWO Dumka Anganwadi Curriculum Digitisation",
+      "project": "Digitisation of curriculum for students aged 3-6 in 150 Anganwadi Centres of Dumka District",
+      "issued_by": "Sunitha Infovision Ltd.",
+      "contracted_as": "OVI Learning LLP (former name)",
+      "work_order_no": "SIV/WO/2024-25/009",
+      "end_client_ref": "DSWO Dumka Memo No. 106/JSC dated 19-01-2024",
+      "quantity": "150 Anganwadi Centres",
+      "value_inr": 26545500,
+      "value_display": "Rs. 2,65,45,500"
     },
     {
       "client": "Pandit Sunderlal Sharma Central Institute of Vocational Education (PSSCIVE), Bhopal",
-      "routed_through": "EdCIL (India) Ltd.",
-      "financial_year": "2024-25",
+      "short_name": "PSSCIVE Bhopal",
+      "scope_label": "2D/3D Digital Content & Animation",
+      "project": "Development of Virtual Skill Labs in 2D & 3D animation",
+      "routed_through": "EdCIL (India) Ltd. / Sunitha Infovision Ltd.",
+      "issued_by": "Sunitha Infovision Ltd.",
+      "contracted_as": "OVI Learning LLP (former name)",
+      "work_order_no": "SIV/WO/2024-25/005",
       "work_order_date": "2024-06-03",
-      "value_inr_lakh": 125.68,
+      "end_client_ref": "EdCIL/DES/Sunitha/PSSCIVE/WO/001 dated 09-05-2024",
+      "financial_year": "2024-25",
+      "quantity": "30 Virtual Skill Labs (2D and 3D)",
+      "value_inr": 12567000,
+      "value_display": "Rs. 1,25,67,000",
+      "value_inr_lakh": 125.67,
       "description": "Design and development of Virtual Skill Lab solutions delivered through a digital platform, including interactive 2D/3D learning modules, multimedia interfaces, digital content integration, testing/acceptance stages and upload to the DIKSHA platform.",
-      "evidence_status": "Work Order; Ongoing"
+      "scope_items": [
+        "Storyboard development and approval",
+        "2D and 3D animations, videos, voiceover and on-screen text",
+        "Upload of the Virtual Skill Labs on the DIKSHA portal",
+        "3-year annual maintenance / O&M"
+      ],
+      "tags": [
+        "edtech",
+        "content",
+        "animation",
+        "video",
+        "government"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Work Order; Ongoing",
+      "library_document": "Work Order - PSSCIVE Bhopal Virtual Skill Labs (EdCIL)"
     },
     {
-      "client": "NCERT",
-      "routed_through": "EdCIL (India) Ltd.",
-      "financial_year": "2025-26",
+      "client": "NCERT (CIET) through EdCIL (India) Ltd.",
+      "short_name": "NCERT OLabs",
+      "scope_label": "Interactive Digital Learning Content",
+      "project": "Design and development of NCERT-aligned Online Labs (OLabs)",
+      "routed_through": "EdCIL (India) Ltd. / Sunitha Infovision Ltd.",
+      "issued_by": "Sunitha Infovision Ltd.",
+      "contracted_as": "OAKS Solutions Pvt Ltd",
+      "work_order_no": "SIV/WO/2025-26/009",
       "work_order_date": "2025-08-28",
-      "value_inr_lakh": 156.00,
+      "end_client_ref": "EdCIL/DES/RC-OLABS/LOI/2025/02 dated 21-04-2025 and EdCIL/DES/RC-OLABS/LOI/2025/05 dated 28-07-2025",
+      "financial_year": "2025-26",
+      "quantity": "40 Online Labs",
+      "value_inr": 15600000,
+      "value_display": "Rs. 1,56,00,000",
+      "value_inr_lakh": 156.0,
       "description": "Design and development of NCERT-aligned Online Labs (OLabs) as interactive digital applications, including storyboard-led solution design, multimedia integration, user-interaction flows, testing, acceptance and deployment on the DIKSHA platform.",
-      "evidence_status": "Work Order; Ongoing"
+      "scope_items": [
+        "Storyboard creation for each lab, approved by CIET, NCERT",
+        "Interactive online lab development aligned to the NCERT curriculum",
+        "Submission for upload on the DIKSHA portal"
+      ],
+      "tags": [
+        "edtech",
+        "content",
+        "interactive",
+        "government"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Work Order; Ongoing",
+      "library_document": "Work Order - NCERT Online Labs OLabs (EdCIL)"
     },
     {
-      "client": "Department of Farmer Welfare & Agriculture Development, Government of Madhya Pradesh",
-      "routed_through": "Sunitha Infovision Ltd.",
-      "financial_year": "2025-26",
-      "work_order_date": "2026-01-28",
-      "value_inr_lakh": 302.50,
-      "description": "Implementation of a technology-enabled outreach and engagement solution involving digital campaign systems, analytics dashboards, monitoring and reporting, digital content workflows and multi-channel online platforms.",
-      "evidence_status": "Work Order; Ongoing"
+      "client": "Vidura Digital Learning Pvt. Ltd.",
+      "short_name": "Vidura Digital Learning",
+      "scope_label": "Digital Education Platform",
+      "financial_year": "2022-23",
+      "work_order_date": "2022-04-25",
+      "value_inr_lakh": 15.0,
+      "description": "Design and development of a digital education platform/application with interactive multimedia modules and structured digital content delivery.",
+      "scope_items": [
+        "Digital education platform/application",
+        "Interactive multimedia modules and structured digital content delivery"
+      ],
+      "tags": [
+        "edtech",
+        "platform",
+        "content"
+      ],
+      "status": "Ongoing",
+      "evidence_status": "Agreement; Ongoing",
+      "value_display": "Rs. 15.00 lakh",
+      "_evidence_comment": "No work order / agreement for this project is in the documents library yet."
     }
   ],
-
   "to_be_verified": [
     "Current full-time employee headcount (last documented at 45 as of 16.09.2026 - reconfirm against current payroll/HR records before every submission)",
-    "Audited turnover / CA-certified turnover figures for the relevant financial years",
     "Bank account and IFSC details for any bank guarantee/EMD instrument",
-    "TAN, if the tender's prescribed tax declaration format requires it"
-  ]
+    "TAN, if the tender's prescribed tax declaration format requires it",
+    "CMMI certificate UQ-2026062708 prints its Date of Certification as 27-06-2029 - after its own expiry (26-06-2029); have UK Certification & Inspection correct it before relying on it"
+  ],
+  "_certifications_comment": "The library's 'ISO 27001 Certificate' PDF holds two certificates: page 1 ISO 9001:2015 (26EQRG27), page 2 ISO/IEC 27001:2022 (26EQRA18)."
 }
