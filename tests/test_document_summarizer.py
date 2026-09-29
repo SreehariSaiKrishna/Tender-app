@@ -110,6 +110,15 @@ def test_extract_text_html(tmp_path):
     assert "EMD: INR 50,000" in text
 
 
+def test_extract_text_reads_html_table_saved_as_xls(tmp_path):
+    path = tmp_path / "download.xls"
+    path.write_text("<table><tr><th>Item Name</th></tr><tr><td>AI CCTV Camera</td></tr></table>", encoding="utf-8")
+
+    text = extract_text(path)
+
+    assert "Item Name" in text and "AI CCTV Camera" in text
+
+
 def test_extract_text_excel(tmp_path):
     pd = pytest.importorskip("pandas")
     path = tmp_path / "boq.xlsx"
@@ -205,23 +214,39 @@ def test_extract_pdf_text_skips_ocr_when_real_text_present(monkeypatch, tmp_path
     """
     import app.intelligence.document_summarizer as doc_sum
 
-    path = tmp_path / "scanned.pdf"
-    _make_blank_pdf(path)
+    import pymupdf
 
-    class FakePage:
-        def extract_text(self):
-            return "Plenty of real text here " * 5
-
-    class FakeReader:
-        def __init__(self, _path):
-            self.pages = [FakePage()]
+    path = tmp_path / "text.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((50, 72), "Plenty of real text here")
+        doc.save(str(path))
 
     calls = []
     monkeypatch.setattr(doc_sum, "_ocr_pdf_page", lambda *a, **k: calls.append(1))
-    monkeypatch.setattr("pypdf.PdfReader", FakeReader)
+
+    assert "Plenty of real text here" in doc_sum._extract_pdf_text(path)
+    assert calls == []
+
+
+def test_extract_pdf_text_caps_ocr_pages_per_file(monkeypatch, tmp_path):
+    """A long scanned bundle mustn't OCR every page - it stalled whole
+    summarization runs at ~2s a page."""
+    import app.intelligence.document_summarizer as doc_sum
+    from pypdf import PdfWriter
+
+    path = tmp_path / "long-scan.pdf"
+    writer = PdfWriter()
+    for _ in range(5):
+        writer.add_blank_page(width=200, height=200)
+    with open(path, "wb") as f:
+        writer.write(f)
+
+    calls = []
+    monkeypatch.setattr(doc_sum, "MAX_OCR_PAGES_PER_FILE", 2)
+    monkeypatch.setattr(doc_sum, "_ocr_pdf_page", lambda pdf_path, page_number, dpi=200: calls.append(page_number) or "x")
 
     doc_sum._extract_pdf_text(path)
-    assert calls == []
+    assert calls == [0, 1]
 
 
 def test_extract_pdf_text_ocr_failure_does_not_crash(monkeypatch, tmp_path):

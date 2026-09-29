@@ -120,10 +120,8 @@ def _extract_and_store_key_dates(page, tender: dict[str, Any], collection: Colle
 # documents' own text (annexure numbers, prescribed formats), so these are
 # downloaded again; the summarizer then re-reads them (documents_downloaded_at
 # is newer than the summary) and stores the text.
-_MISSING_DOCUMENT_TEXT = {
-    "document_summary_generated_at": {"$ne": None},
-    "$or": [{"document_text": {"$exists": False}}, {"document_text": {"$in": [None, ""]}}],
-}
+_NO_DOCUMENT_TEXT = {"$or": [{"document_text": {"$exists": False}}, {"document_text": {"$in": [None, ""]}}]}
+_MISSING_DOCUMENT_TEXT = {"document_summary_generated_at": {"$ne": None}, **_NO_DOCUMENT_TEXT}
 
 
 def _pending_tenders(
@@ -142,9 +140,12 @@ def _pending_tenders(
         pending = list(collection.find({**has_url, "_id": {"$in": tender_ids}}, projection))
         return pending[:limit] if limit else pending
 
+    # Any requested tender still without text - summarized or not: one whose
+    # download was never summarized (its files lost with the run's /tmp)
+    # would otherwise never be due again, and the checklist would wait forever.
     requested = list(
         collection.find(
-            {**has_url, **_MISSING_DOCUMENT_TEXT, "document_text_requested_at": {"$ne": None}}, projection
+            {**has_url, **_NO_DOCUMENT_TEXT, "document_text_requested_at": {"$ne": None}}, projection
         ).sort("document_text_requested_at", 1)
     )
     # Every live tender, not just domain-relevant ones - the dashboard shows

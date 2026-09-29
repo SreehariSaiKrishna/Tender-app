@@ -15,6 +15,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,8 +40,10 @@ from app.processing.normalizer import parse_amount_from_text
 logger = logging.getLogger(__name__)
 
 # Keeps the prompt within a reasonable token budget per file - see
-# app.intelligence.prompts.build_document_user_prompt.
-MAX_CHARS_PER_FILE = 20_000
+# app.intelligence.prompts.build_document_user_prompt. Large enough that a
+# typical RFP's later clauses (eligibility conditions often sit well past the
+# first 20k characters) still make it into the summary's extracted lists.
+MAX_CHARS_PER_FILE = 60_000
 
 
 class DocumentSummarizationError(RuntimeError):
@@ -138,15 +141,32 @@ def _ocr_pdf_page(pdf_path: Path, page_number: int, dpi: int = 200) -> str:
         doc.close()
 
 
+# A long scanned bundle mustn't OCR every page - each page is a rasterize +
+# Tesseract pass, and a few hundred of them stalled whole summarize runs.
+# Beyond this many OCR'd pages per file, later scanned pages are skipped.
+MAX_OCR_PAGES_PER_FILE = 40
+
+
 def _extract_pdf_text(path: Path) -> str:
-    from pypdf import PdfReader  # imported lazily so tests never need the SDK configured
+    # pymupdf reads the text layer too (and faster than pypdf); pages
+    # without one fall back to OCR, up to MAX_OCR_PAGES_PER_FILE.
+    import pymupdf
 
-    reader = PdfReader(str(path))
-    texts = [(page.extract_text() or "") for page in reader.pages]
+    with pymupdf.open(str(path)) as doc:
+        texts = [page.get_text() for page in doc]
 
+    ocr_pages = 0
+    total_chars = sum(len(t) for t in texts)
     for i, text in enumerate(texts):
         if len(text.strip()) >= MIN_TEXT_CHARS_BEFORE_OCR:
             continue
+        if total_chars >= MAX_DOCUMENT_TEXT_CHARS:
+            break
+        if ocr_pages >= MAX_OCR_PAGES_PER_FILE:
+            logger.warning("OCR page limit (%d) reached for %s; later scanned pages skipped",
+                           MAX_OCR_PAGES_PER_FILE, path)
+            break
+        ocr_pages += 1
         # Likely a scanned/image-only page - fall back to OCR rather than
         # treating the whole file as unreadable.
         try:
@@ -156,6 +176,7 @@ def _extract_pdf_text(path: Path) -> str:
             continue
         if ocr_text.strip():
             texts[i] = ocr_text
+            total_chars += len(ocr_text)
 
     return "\n".join(texts)
 
@@ -167,9 +188,20 @@ def _extract_html_text(path: Path) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
+# Real Excel files start with the OLE (.xls) or zip (.xlsx) signature.
+# TenderDetail's own "download.xls" (the tender's BOQ/item list, seen live
+# 2026-09-25) is really an HTML <table> saved under an .xls name - pandas
+# can't open it, so it's read as the HTML it is.
+_EXCEL_SIGNATURES = (bytes.fromhex("d0cf11e0"), bytes.fromhex("504b0304"))
+
+
 def _extract_excel_text(path: Path) -> str:
     import pandas as pd
 
+    with path.open("rb") as fh:
+        head = fh.read(8)
+    if not head.startswith(_EXCEL_SIGNATURES):
+        return _extract_html_text(path)
     sheets = pd.read_excel(path, sheet_name=None, header=None)
     parts = []
     for name, df in sheets.items():
@@ -183,6 +215,52 @@ def _extract_docx_text(path: Path) -> str:
 
     document = docx.Document(str(path))
     return "\n".join(p.text for p in document.paragraphs)
+
+
+# Word 97-2003 .doc: the text is stored as "pieces" in the WordDocument
+# stream, located by the piece table (the Clx) in the 0Table/1Table stream -
+# [MS-DOC] 2.4.1. Each piece is either 8-bit cp1252 ("compressed") or
+# UTF-16LE. Field codes (between \x13 and \x14) are dropped, keeping each
+# field's displayed result; cell/row marks (\x07) become tabs.
+_DOC_FIELD_CODE_RE = re.compile(r"\x13[^\x13\x14\x15]*\x14?")
+_DOC_CONTROL_RE = re.compile(r"[\x00-\x08\x0e-\x1f]")
+
+
+def _extract_doc_text(path: Path) -> str:
+    import struct
+
+    import olefile
+
+    with olefile.OleFileIO(str(path)) as ole:
+        word = ole.openstream("WordDocument").read()
+        flags = struct.unpack_from("<H", word, 0x0A)[0]
+        table = ole.openstream("1Table" if flags & 0x0200 else "0Table").read()
+    fc_clx, lcb_clx = struct.unpack_from("<II", word, 0x01A2)
+    clx = table[fc_clx:fc_clx + lcb_clx]
+
+    pos = 0
+    while pos < len(clx) and clx[pos] == 0x01:  # Prc entries - formatting, skipped
+        pos += 3 + struct.unpack_from("<H", clx, pos + 1)[0]
+    if pos >= len(clx) or clx[pos] != 0x02:
+        raise ValueError("no piece table in .doc")
+    lcb = struct.unpack_from("<I", clx, pos + 1)[0]
+    plc = clx[pos + 5:pos + 5 + lcb]
+    count = (lcb - 4) // 12
+    cps = struct.unpack_from(f"<{count + 1}I", plc, 0)
+
+    parts = []
+    for i in range(count):
+        fc = struct.unpack_from("<I", plc, 4 * (count + 1) + 8 * i + 2)[0]
+        length = cps[i + 1] - cps[i]
+        if fc & 0x40000000:
+            start = (fc & ~0x40000000) // 2
+            parts.append(word[start:start + length].decode("cp1252", errors="ignore"))
+        else:
+            parts.append(word[fc:fc + 2 * length].decode("utf-16-le", errors="ignore"))
+
+    text = _DOC_FIELD_CODE_RE.sub("", "".join(parts))
+    text = text.replace("\x07", "\t").replace("\r", "\n").replace("\x0c", "\n").replace("\x0b", "\n")
+    return _DOC_CONTROL_RE.sub("", text).strip()
 
 
 # winget's WinRAR install (the one found on this machine) doesn't add
@@ -259,7 +337,7 @@ def extract_text(path: Path) -> str:
     bad file must not lose the rest of a tender's documents (same
     philosophy as app.processing.normalizer never dropping a whole row over
     one bad field). "Unsupported" includes binary formats this module has
-    no parser for (e.g. legacy .doc) - those are skipped rather than
+    no parser for - those are skipped rather than
     decoded as garbled text.
     """
     suffix = path.suffix.lower()
@@ -272,6 +350,8 @@ def extract_text(path: Path) -> str:
             return _extract_excel_text(path)
         if suffix == ".docx":
             return _extract_docx_text(path)
+        if suffix == ".doc":
+            return _extract_doc_text(path)
         if suffix == ".zip":
             return _extract_zip_text(path)
         if suffix == ".rar":

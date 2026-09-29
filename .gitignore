@@ -44,3 +44,4 @@ env.json
 
 # Tender documents downloaded at runtime by the document collector
 data/documents/
+data/backups/

@@ -98,6 +98,29 @@ def get_generated_bids_files_collection() -> Collection:
     return get_client()[settings.mongodb_db_name]["generated_bids.files"]
 
 
+_stamp_transfers_indexed = False
+
+# How long an unfinished Sign & Stamp upload or an undownloaded result is kept.
+STAMP_TRANSFER_TTL_SECONDS = 60 * 60
+
+
+def get_stamp_transfers_collection() -> Collection:
+    """Temporary storage for the Sign & Stamp tab (app.api.main) - a file
+    too big for one Lambda request/response travels in parts: one document
+    per part, {kind: "upload"|"result", key, part, data, created_at}. Parts
+    are deleted once read, and a TTL index removes anything left behind
+    (an abandoned upload, a result never downloaded) after an hour. Indexed
+    here on first use, since the API never runs ensure_indexes()."""
+    global _stamp_transfers_indexed
+    settings = get_settings()
+    collection = get_client()[settings.mongodb_db_name]["stamp_transfers"]
+    if not _stamp_transfers_indexed:
+        collection.create_index([("kind", ASCENDING), ("key", ASCENDING), ("part", ASCENDING)], unique=True)
+        collection.create_index("created_at", expireAfterSeconds=STAMP_TRANSFER_TTL_SECONDS)
+        _stamp_transfers_indexed = True
+    return collection
+
+
 def ensure_indexes() -> None:
     """Create the indexes the query helpers rely on, if they don't already
     exist. Safe to call every cold start - `create_index` is idempotent.

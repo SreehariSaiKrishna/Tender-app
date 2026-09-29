@@ -14,23 +14,26 @@ Runs locally the same way the CLI does, alongside app.lambda_handler:
 from __future__ import annotations
 
 import datetime as dt
+import io
+import json
 import logging
 import re
 import uuid
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
 import gridfs
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from mangum import Mangum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pymongo import DESCENDING
 
-from app.config import CONFIG_DIR, load_company_profile, load_saved_queries
+from app.config import CONFIG_DIR, get_settings, load_company_profile, load_saved_queries
 from app.database import (
     get_automation_runs_collection,
     get_collection,
@@ -39,6 +42,7 @@ from app.database import (
     get_eligibility_criteria_collection,
     get_generated_bids_bucket,
     get_generated_bids_files_collection,
+    get_stamp_transfers_collection,
 )
 from app.intelligence.bid_drafter import BidDraftingError, draft_checklist_documents, plan_submission_checklist
 from app.reports.bid_generator import (
@@ -47,16 +51,22 @@ from app.reports.bid_generator import (
     STATUS_NOT_APPLICABLE,
     BidGenerationError,
     CompanyDocumentRef,
+    ContentLayout,
+    MarkPlacement,
+    PageMarks,
     build_checklist,
     build_compliance_matrix,
+    collapse_unfilled_cvs,
     company_background_text,
     drop_resolved_missing_information,
     enclosure_documents,
     established_facts,
     generate_bid_package,
     is_submission_checklist,
+    mark_document,
     merge_drafted_open_items,
     refresh_statuses,
+    signing_assets,
 )
 
 logger = logging.getLogger(__name__)
@@ -301,6 +311,7 @@ def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
                 content_type=metadata.get("content_type") or "application/octet-stream",
                 open_bytes=lambda fid=file_id: bucket.open_download_stream(fid).read(),
                 size=grid_out.length,
+                mark_kind=metadata.get("mark_kind"),
             )
         )
     return refs
@@ -315,6 +326,14 @@ def _find_tender(tender_id: str) -> tuple[ObjectId, dict[str, Any]]:
     if tender is None:
         raise HTTPException(status_code=404, detail="Tender not found")
     return object_id, tender
+
+
+def _letterhead_path(company_profile: dict[str, Any]) -> Path | None:
+    """company_profile.json's letterhead_image, when that file exists."""
+    if not company_profile.get("letterhead_image"):
+        return None
+    candidate = CONFIG_DIR / company_profile["letterhead_image"]
+    return candidate if candidate.is_file() else None
 
 
 def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[CompanyDocumentRef]]:
@@ -336,14 +355,67 @@ def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[Com
 # saved version.
 
 
+# A fetch that hasn't finished by then (the pipeline Lambda's 15-minute
+# limit) is taken to have failed, and the next request starts another.
+_DOCUMENT_FETCH_TIMEOUT = dt.timedelta(minutes=16)
+
+
+def _start_document_fetch(tender: dict[str, Any]) -> bool:
+    """Asks PipelineFunction to download and read this tender's documents
+    right away (see app.lambda_handler.fetch_tender_documents), rather than
+    leaving them for the next scheduled run - at most once per
+    _DOCUMENT_FETCH_TIMEOUT, since the dashboard keeps asking while it
+    waits. True while a fetch is running; False when there's no pipeline
+    function to ask (running locally) or it couldn't be invoked."""
+    function_name = get_settings().pipeline_function_name
+    if not function_name:
+        return False
+    now = dt.datetime.now(dt.timezone.utc)
+    claimed = get_collection().update_one(
+        {
+            "_id": tender["_id"],
+            "$or": [
+                {"document_fetch_started_at": None},
+                {"document_fetch_started_at": {"$lt": now - _DOCUMENT_FETCH_TIMEOUT}},
+            ],
+        },
+        {"$set": {"document_fetch_started_at": now}},
+    )
+    if not claimed.modified_count:
+        return True  # already running
+    try:
+        import boto3
+
+        boto3.client("lambda").invoke(
+            FunctionName=function_name,
+            InvocationType="Event",
+            Payload=json.dumps({"fetch_tender_documents": [str(tender["_id"])]}).encode(),
+        )
+    except Exception as exc:  # noqa: BLE001 - fall back to the scheduled run
+        logger.error("Could not start document fetch for tender %s: %s", tender["_id"], exc)
+        get_collection().update_one({"_id": tender["_id"]}, {"$unset": {"document_fetch_started_at": ""}})
+        return False
+    return True
+
+
+def _documents_unreadable(tender: dict[str, Any]) -> bool:
+    """The last on-demand fetch finished, but left no document text - the
+    files were downloaded and read and none had any (scanned images,
+    unsupported formats), or the download itself failed."""
+    started, finished = tender.get("document_fetch_started_at"), tender.get("document_fetch_finished_at")
+    return started is not None and finished is not None and finished >= started
+
+
 def _require_document_text(tender: dict[str, Any]) -> None:
     """A checklist is only built from the tender's own documents (the files
     under "View Original Notice/Document", read into `document_text` by
     app.intelligence.document_summarizer) - never from its summary alone,
     which drops annexure numbers and prescribed formats. Without that text,
-    the tender is flagged so the next document download fetches it first
-    (see app.browser.document_collector._pending_tenders), and the request
-    is refused with what to do."""
+    the tender is flagged for the next document download (see
+    app.browser.document_collector._pending_tenders), a fetch is started
+    now (_start_document_fetch), and the request is refused (409) with a
+    `detail` of {"message", "fetching"} - the dashboard retries while
+    `fetching` is true."""
     if (tender.get("document_text") or "").strip():
         return
     if not tender.get("source_url"):
@@ -352,10 +424,31 @@ def _require_document_text(tender: dict[str, Any]) -> None:
             detail="This tender has no source page to download its documents from, so a checklist "
                    "can't be built from its documents.",
         )
+    if _documents_unreadable(tender):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "fetching": False,
+                "message": "This tender's documents (View Original Notice/Document) were downloaded, but no "
+                           "text could be read from them (scanned images or an unsupported format, or the "
+                           "download failed), so the checklist can't be built from them. Check the documents "
+                           "on the tender's page, or run "
+                           f"`python main.py fetch-tender-documents {tender['_id']}` to see why.",
+            },
+        )
     get_collection().update_one(
         {"_id": tender["_id"], "document_text_requested_at": None},
         {"$set": {"document_text_requested_at": dt.datetime.now(dt.timezone.utc)}},
     )
+    if _start_document_fetch(tender):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "fetching": True,
+                "message": "Downloading and reading this tender's documents (View Original Notice/Document) "
+                           "now - this takes a few minutes. The checklist is built as soon as they're read.",
+            },
+        )
     raise HTTPException(
         status_code=409,
         detail="This tender's documents (View Original Notice/Document) haven't been read yet, so the "
@@ -468,6 +561,9 @@ class ChecklistRow(BaseModel):
     letterhead: bool = False
     signature: bool = False
     stamp: bool = False
+    # Absent on checklists saved before these existed - defaults keep them loading.
+    notary: bool = False
+    section: str = ""
     format_text: str = ""
     notes: str = ""
     done: bool = False
@@ -587,13 +683,12 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
                 "templates to complete by hand."
             )
 
-    letterhead = None
-    if company_profile.get("letterhead_image"):
-        candidate = CONFIG_DIR / company_profile["letterhead_image"]
-        letterhead = candidate if candidate.is_file() else None
-        if letterhead is None:
-            logger.warning("Letterhead image %s not found - bid pack will use plain pages", candidate)
+    letterhead = _letterhead_path(company_profile)
+    if letterhead is None and company_profile.get("letterhead_image"):
+        logger.warning("Letterhead image %s not found - bid pack will use plain pages",
+                       CONFIG_DIR / company_profile["letterhead_image"])
 
+    drafted = collapse_unfilled_cvs(drafted, to_draft, company_profile)
     checklist = merge_drafted_open_items(checklist, drafted.values())
     checklist = refresh_statuses(checklist, company_documents, drafted)
 
@@ -612,17 +707,18 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc))
 
     bids_bucket = get_generated_bids_bucket()
-    # One bid pack per tender - delete any previous draft before uploading
-    # the new one (rather than accumulating a version per click).
-    for existing in get_generated_bids_files_collection().find({"metadata.tender_id": tender_id}):
-        bids_bucket.delete(existing["_id"])
-
     now = dt.datetime.now(dt.timezone.utc)
     file_id = bids_bucket.upload_from_stream(
         f"bid-pack-{tender_id}.pdf",
         pdf_bytes,
         metadata={"tender_id": tender_id, "content_type": "application/pdf", "generated_at": now},
     )
+    # One bid pack per tender - the previous one is deleted only once the new
+    # one is stored, so there's never a moment with no pack to download.
+    for existing in get_generated_bids_files_collection().find(
+        {"metadata.tender_id": tender_id, "_id": {"$ne": file_id}}
+    ):
+        bids_bucket.delete(existing["_id"])
 
     update: dict[str, Any] = {
         "bid_document_id": str(file_id),
@@ -649,10 +745,24 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
 BID_PART_SIZE = 3 * 1024 * 1024
 
 
-def _open_bid_pack(tender_id: str) -> Any:
-    doc = get_generated_bids_files_collection().find_one({"metadata.tender_id": tender_id})
-    if doc is None:
-        raise HTTPException(status_code=404, detail="No bid pack has been generated for this tender yet")
+def _open_bid_pack(tender_id: str, file_id: str | None = None) -> Any:
+    """This tender's bid pack - the newest, or the exact file a part-by-part
+    download started on (`file_id`, from /bid-document/info), so its parts
+    never mix two versions. 409 when that file was replaced mid-download by
+    a newer generation - the dashboard then starts the download again."""
+    files = get_generated_bids_files_collection()
+    if file_id:
+        try:
+            doc = files.find_one({"_id": ObjectId(file_id), "metadata.tender_id": tender_id})
+        except InvalidId:
+            raise HTTPException(status_code=400, detail="Invalid bid pack file id")
+        if doc is None:
+            raise HTTPException(status_code=409, detail="The bid pack was regenerated while downloading - "
+                                                        "download it again for the new version.")
+    else:
+        doc = files.find_one({"metadata.tender_id": tender_id}, sort=[("uploadDate", DESCENDING)])
+        if doc is None:
+            raise HTTPException(status_code=404, detail="No bid pack has been generated for this tender yet")
     return get_generated_bids_bucket().open_download_stream(doc["_id"])
 
 
@@ -660,6 +770,7 @@ def _open_bid_pack(tender_id: str) -> Any:
 def bid_document_info(tender_id: str) -> dict[str, Any]:
     grid_out = _open_bid_pack(tender_id)
     return {
+        "file_id": str(grid_out._id),
         "filename": grid_out.filename,
         "size": grid_out.length,
         "part_size": BID_PART_SIZE,
@@ -668,8 +779,8 @@ def bid_document_info(tender_id: str) -> dict[str, Any]:
 
 
 @app.get("/tenders/{tender_id}/bid-document")
-def download_bid_document(tender_id: str, part: int | None = None) -> Response:
-    grid_out = _open_bid_pack(tender_id)
+def download_bid_document(tender_id: str, part: int | None = None, file: str | None = None) -> Response:
+    grid_out = _open_bid_pack(tender_id, file)
     if part is None:
         content = grid_out.read()
     else:
@@ -817,11 +928,64 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
 # (see app.database.get_company_documents_bucket) since there's no
 # general-purpose S3 bucket in this stack and Mongo is already provisioned.
 #
-# Capped well under API Gateway's payload limit: Mangum returns the response
-# base64-encoded, which inflates size by ~33%, and a synchronous Lambda
-# invoke response tops out at 6 MB - 4 MB raw keeps the encoded response
-# safely under that even for a download of the largest allowed file.
+# One request or response can carry at most MAX_DOCUMENT_SIZE: Mangum
+# returns the response base64-encoded, which inflates size by ~33%, and a
+# synchronous Lambda invoke tops out at 6 MB - 4 MB raw keeps the encoded
+# payload safely under that. Files up to MAX_UPLOAD_SIZE therefore travel in
+# TRANSFER_PART_SIZE parts instead: uploaded with PUT /uploads/{id}/parts/N
+# then a .../finish call (documents library or Sign & Stamp), and downloaded
+# with ?part=N (as the bid pack is - see BID_PART_SIZE).
 MAX_DOCUMENT_SIZE = 4 * 1024 * 1024
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+TRANSFER_PART_SIZE = 3 * 1024 * 1024
+_TRANSFER_KEY_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _mb(size: int) -> int:
+    return size // (1024 * 1024)
+
+
+def _transfer_key(key: str) -> str:
+    if not _TRANSFER_KEY_RE.match(key):
+        raise HTTPException(status_code=400, detail="Invalid upload id")
+    return key
+
+
+@app.put("/uploads/{upload_id}/parts/{part}")
+async def upload_part(upload_id: str, part: int, request: Request) -> dict[str, Any]:
+    """One TRANSFER_PART_SIZE slice of a file for a .../finish call -
+    `upload_id` is a random 32-hex id the dashboard picks per file. Kept in
+    app.database.get_stamp_transfers_collection() until finished (or for an
+    hour at most)."""
+    key = _transfer_key(upload_id)
+    if not 0 <= part < -(-MAX_UPLOAD_SIZE // TRANSFER_PART_SIZE):
+        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(MAX_UPLOAD_SIZE)} MB limit")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=422, detail="Part is empty")
+    if len(data) > TRANSFER_PART_SIZE:
+        raise HTTPException(status_code=413, detail=f"Parts must be at most {_mb(TRANSFER_PART_SIZE)} MB")
+    get_stamp_transfers_collection().replace_one(
+        {"kind": "upload", "key": key, "part": part},
+        {"kind": "upload", "key": key, "part": part, "data": data, "created_at": dt.datetime.now(dt.timezone.utc)},
+        upsert=True,
+    )
+    return {"part": part, "size": len(data)}
+
+
+def _take_upload(upload_id: str, parts: int) -> bytes:
+    """An upload's `parts` joined back into the file - its parts deleted.
+    409 when any is missing (never sent, or expired)."""
+    key = _transfer_key(upload_id)
+    transfers = get_stamp_transfers_collection()
+    stored = {d["part"]: d["data"] for d in transfers.find({"kind": "upload", "key": key})}
+    if sorted(stored) != list(range(parts)):
+        raise HTTPException(status_code=409, detail="The upload is incomplete or has expired - upload the file again")
+    transfers.delete_many({"kind": "upload", "key": key})
+    content = b"".join(stored[i] for i in range(parts))
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(MAX_UPLOAD_SIZE)} MB limit")
+    return content
 
 
 def _serialize_document(grid_out: Any) -> dict[str, Any]:
@@ -833,6 +997,7 @@ def _serialize_document(grid_out: Any) -> dict[str, Any]:
         "content_type": metadata.get("content_type") or "application/octet-stream",
         "size": grid_out.length,
         "uploaded_at": _iso(grid_out.upload_date),
+        "mark_kind": metadata.get("mark_kind"),
     }
 
 
@@ -855,66 +1020,40 @@ def _get_document_or_404(document_id: str) -> Any:
         raise HTTPException(status_code=404, detail="Document not found")
 
 
-@app.get("/documents")
-def list_documents() -> dict[str, Any]:
-    cursor = get_company_documents_bucket().find(sort=[("uploadDate", DESCENDING)])
-    return {"documents": [_serialize_document(d) for d in cursor]}
-
-
-@app.post("/documents")
-async def upload_document(
-    file: UploadFile = File(...), name: str | None = Form(None)
-) -> dict[str, Any]:
-    content = await file.read()
+def _check_document_content(content: bytes, max_size: int) -> None:
     if not content:
         raise HTTPException(status_code=422, detail="File is empty")
-    if len(content) > MAX_DOCUMENT_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds the {MAX_DOCUMENT_SIZE // (1024 * 1024)} MB limit",
-        )
-    display_name = (name or file.filename or "Untitled").strip() or "Untitled"
-    filename = file.filename or display_name
-
-    file_id = get_company_documents_bucket().upload_from_stream(
-        filename,
-        content,
-        metadata={
-            "display_name": display_name,
-            "content_type": file.content_type or "application/octet-stream",
-        },
-    )
-    grid_out = get_company_documents_bucket().open_download_stream(file_id)
-    return _serialize_document(grid_out)
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(max_size)} MB limit")
 
 
-class DocumentRenameRequest(BaseModel):
-    name: str
+# What a document is used as on the Sign & Stamp tab when it was added there
+# as one (metadata.mark_kind) - see _mark_candidates. NOT_A_MARK: removed
+# from Sign & Stamp (DELETE /stamp-document/marks/{id}) - still in the
+# library, but never offered as a mark, whatever it's named.
+MarkKind = Literal["letterhead", "signature", "stamp"]
+NOT_A_MARK = "none"
 
 
-@app.put("/documents/{document_id}")
-def rename_document(document_id: str, body: DocumentRenameRequest) -> dict[str, Any]:
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="Name is required")
-    try:
-        object_id = ObjectId(document_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid document id")
-
-    result = get_company_documents_files_collection().update_one(
-        {"_id": object_id}, {"$set": {"metadata.display_name": name}}
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    grid_out = get_company_documents_bucket().open_download_stream(object_id)
-    return _serialize_document(grid_out)
+def _store_document(
+    content: bytes, filename: str | None, name: str | None, content_type: str | None, mark_kind: str | None = None
+) -> dict[str, Any]:
+    display_name = (name or filename or "Untitled").strip() or "Untitled"
+    metadata = {"display_name": display_name, "content_type": content_type or "application/octet-stream"}
+    if mark_kind:
+        metadata["mark_kind"] = mark_kind
+    bucket = get_company_documents_bucket()
+    file_id = bucket.upload_from_stream(filename or display_name, content, metadata=metadata)
+    return _serialize_document(bucket.open_download_stream(file_id))
 
 
-@app.put("/documents/{document_id}/replace")
-async def replace_document(
-    document_id: str, file: UploadFile = File(...), name: str | None = Form(None)
+def _replace_document(
+    document_id: str,
+    content: bytes,
+    filename: str | None,
+    name: str | None,
+    content_type: str | None,
+    mark_kind: str | None = None,
 ) -> dict[str, Any]:
     """Swap out a document's file while keeping it as the same row in the
     list - as opposed to DELETE+POST, which would also work but loses the
@@ -931,32 +1070,86 @@ async def replace_document(
     existing = get_company_documents_files_collection().find_one({"_id": object_id})
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    existing_meta = existing.get("metadata") or {}
+    stored = _store_document(content, filename, name or existing_meta.get("display_name"), content_type,
+                             mark_kind or existing_meta.get("mark_kind"))
+    get_company_documents_bucket().delete(object_id)
+    return stored
 
+
+@app.get("/documents")
+def list_documents() -> dict[str, Any]:
+    cursor = get_company_documents_bucket().find(sort=[("uploadDate", DESCENDING)])
+    return {"documents": [_serialize_document(d) for d in cursor]}
+
+
+@app.post("/documents")
+async def upload_document(
+    file: UploadFile = File(...), name: str | None = Form(None)
+) -> dict[str, Any]:
+    """One-request upload, up to MAX_DOCUMENT_SIZE - the dashboard uses
+    PUT /uploads/{id}/parts/N + POST /documents/uploads/{id}/finish."""
     content = await file.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="File is empty")
-    if len(content) > MAX_DOCUMENT_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds the {MAX_DOCUMENT_SIZE // (1024 * 1024)} MB limit",
-        )
+    _check_document_content(content, MAX_DOCUMENT_SIZE)
+    return _store_document(content, file.filename, name, file.content_type)
 
-    existing_name = (existing.get("metadata") or {}).get("display_name")
-    display_name = (name or existing_name or file.filename or "Untitled").strip() or "Untitled"
-    filename = file.filename or display_name
 
-    bucket = get_company_documents_bucket()
-    new_file_id = bucket.upload_from_stream(
-        filename,
-        content,
-        metadata={
-            "display_name": display_name,
-            "content_type": file.content_type or "application/octet-stream",
-        },
-    )
-    bucket.delete(object_id)
-    grid_out = bucket.open_download_stream(new_file_id)
+@app.post("/documents/uploads/{upload_id}/finish")
+def finish_document_upload(
+    upload_id: str,
+    parts: int = Form(..., ge=1),
+    name: str | None = Form(None),
+    filename: str | None = Form(None),
+    content_type: str | None = Form(None),
+    replace: str | None = Form(None),
+    mark_kind: MarkKind | None = Form(None),
+) -> dict[str, Any]:
+    """Stores an upload sent in parts (up to MAX_UPLOAD_SIZE) as a new
+    document - or, with `replace` (a document id), as that document's new
+    file (see PUT /documents/{id}/replace). `mark_kind`: added from the Sign
+    & Stamp tab as a letterhead/signature/stamp (a replaced file keeps the
+    one it had)."""
+    content = _take_upload(upload_id, parts)
+    _check_document_content(content, MAX_UPLOAD_SIZE)
+    if replace:
+        return _replace_document(replace, content, filename, name, content_type, mark_kind)
+    return _store_document(content, filename, name, content_type, mark_kind)
+
+
+class DocumentRenameRequest(BaseModel):
+    name: str
+    mark_kind: MarkKind | None = None  # also files it as a Sign & Stamp letterhead/signature/stamp
+
+
+@app.put("/documents/{document_id}")
+def rename_document(document_id: str, body: DocumentRenameRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+
+    update = {"metadata.display_name": name}
+    if body.mark_kind:
+        update["metadata.mark_kind"] = body.mark_kind
+    result = get_company_documents_files_collection().update_one({"_id": object_id}, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    grid_out = get_company_documents_bucket().open_download_stream(object_id)
     return _serialize_document(grid_out)
+
+
+@app.put("/documents/{document_id}/replace")
+async def replace_document(
+    document_id: str, file: UploadFile = File(...), name: str | None = Form(None)
+) -> dict[str, Any]:
+    """One-request replace, up to MAX_DOCUMENT_SIZE - see _replace_document."""
+    content = await file.read()
+    _check_document_content(content, MAX_DOCUMENT_SIZE)
+    return _replace_document(document_id, content, file.filename, name, file.content_type)
 
 
 @app.delete("/documents/{document_id}")
@@ -972,26 +1165,394 @@ def delete_document(document_id: str) -> dict[str, Any]:
     return {"status": "deleted"}
 
 
-@app.get("/documents/{document_id}/download")
-def download_document(document_id: str) -> Response:
+@app.get("/documents/{document_id}/info")
+def document_info(document_id: str) -> dict[str, Any]:
+    """How many ?part=N requests /download and /view need for this file."""
+    grid_out = _get_document_or_404(document_id)
+    return {**_serialize_document(grid_out), "part_size": TRANSFER_PART_SIZE,
+            "parts": max(1, -(-grid_out.length // TRANSFER_PART_SIZE))}
+
+
+def _document_response(document_id: str, kind: str, part: int | None) -> Response:
+    """The whole document (small files only - see MAX_DOCUMENT_SIZE) or, with
+    `part`, one TRANSFER_PART_SIZE slice of it."""
     grid_out = _get_document_or_404(document_id)
     content_type = (grid_out.metadata or {}).get("content_type") or "application/octet-stream"
+    if part is None:
+        content = grid_out.read()
+    else:
+        if part < 0 or part * TRANSFER_PART_SIZE >= max(grid_out.length, 1):
+            raise HTTPException(status_code=416, detail="Part out of range")
+        grid_out.seek(part * TRANSFER_PART_SIZE)
+        content = grid_out.read(TRANSFER_PART_SIZE)
+        content_type = "application/octet-stream"
     return Response(
-        content=grid_out.read(),
+        content=content,
         media_type=content_type,
-        headers={"Content-Disposition": _content_disposition("attachment", grid_out.filename)},
+        headers={"Content-Disposition": _content_disposition(kind, grid_out.filename)},
     )
+
+
+@app.get("/documents/{document_id}/download")
+def download_document(document_id: str, part: int | None = None) -> Response:
+    return _document_response(document_id, "attachment", part)
 
 
 @app.get("/documents/{document_id}/view")
-def view_document(document_id: str) -> Response:
-    grid_out = _get_document_or_404(document_id)
-    content_type = (grid_out.metadata or {}).get("content_type") or "application/octet-stream"
-    return Response(
-        content=grid_out.read(),
-        media_type=content_type,
-        headers={"Content-Disposition": _content_disposition("inline", grid_out.filename)},
+def view_document(document_id: str, part: int | None = None) -> Response:
+    return _document_response(document_id, "inline", part)
+
+
+# --- Sign & Stamp ------------------------------------------------------------
+# The dashboard's Sign & Stamp tab: upload any PDF or image and get it back
+# with the letterhead, signature and/or seal on every page, placed the same
+# way a bid pack places them (app.reports.bid_generator.mark_document).
+# Nothing is kept - files up to MAX_UPLOAD_SIZE pass through temporary
+# parts (see below) only because one Lambda request/response can't carry
+# them, and those parts are deleted or expire within the hour.
+
+# Which Documents-library entries are offered as each mark, by display name
+# or filename: "OAKS_LetterHead" / "SIV Letter Head.pdf", "Vijaykumari_sign" /
+# "Suman_Signature", "SIV_Stamp" / "Company Seal". The signature and seal
+# named in company_profile.json's authorized_signatory always count too.
+_MARK_NAME_PATTERNS = {
+    "letterhead": re.compile(r"letter[\s_-]*head", re.IGNORECASE),
+    "signature": re.compile(r"sign", re.IGNORECASE),
+    "stamp": re.compile(r"stamp|seal", re.IGNORECASE),
+}
+# `letterhead=default` etc. (or `true`): the letterhead configured in
+# company_profile.json, or its authorized_signatory's signature/seal.
+DEFAULT_MARK = "default"
+
+
+def _is_image_doc(doc: CompanyDocumentRef) -> bool:
+    return doc.content_type.startswith("image/") or bool(
+        re.search(r"\.(png|jpe?g|gif|bmp|webp|tiff?)$", doc.filename, re.IGNORECASE))
+
+
+def _is_pdf_doc(doc: CompanyDocumentRef) -> bool:
+    return doc.content_type == "application/pdf" or doc.filename.lower().endswith(".pdf")
+
+
+def _mark_candidates(
+    company_profile: dict[str, Any], documents: list[CompanyDocumentRef]
+) -> dict[str, list[CompanyDocumentRef]]:
+    """The library documents offered for each mark, in the library's order.
+    Signatures/stamps must be images (drawn over the page); a letterhead can
+    also be a PDF - its first page is used (see _pdf_first_page_as_image)."""
+    signatory = company_profile.get("authorized_signatory", {})
+    configured = {
+        "signature": (signatory.get("signature_document_name") or "").strip().lower(),
+        "stamp": (signatory.get("seal_document_name") or "").strip().lower(),
+    }
+    out: dict[str, list[CompanyDocumentRef]] = {kind: [] for kind in _MARK_NAME_PATTERNS}
+    for doc in documents:
+        if doc.mark_kind == NOT_A_MARK:
+            continue  # removed from Sign & Stamp - kept in the library only
+        for kind, pattern in _MARK_NAME_PATTERNS.items():
+            if doc.mark_kind:  # added on the Sign & Stamp tab as this kind
+                if doc.mark_kind != kind:
+                    continue
+            else:
+                named = bool(pattern.search(doc.name) or pattern.search(doc.filename))
+                if not (named or doc.name.strip().lower() == configured.get(kind)):
+                    continue
+            if _is_image_doc(doc) or (kind == "letterhead" and _is_pdf_doc(doc)):
+                out[kind].append(doc)
+    return out
+
+
+def _pdf_first_page_as_image(data: bytes) -> bytes:
+    """A PDF letterhead's first page as a 200 dpi JPEG - so it's laid over
+    pages and images exactly like an image letterhead."""
+    import pypdfium2  # only needed for PDF letterheads
+
+    try:
+        pdf = pypdfium2.PdfDocument(data)
+        image = pdf[0].render(scale=200 / 72).to_pil().convert("RGB")
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Couldn't read the letterhead PDF: {exc}") from exc
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=92)
+    return out.getvalue()
+
+
+def _stamp_asset(kind: str, choice: str, company_profile: dict[str, Any]) -> tuple[bytes, str]:
+    """(image bytes, content type) of the chosen letterhead, signature or
+    stamp - `choice` is a library document id from GET /stamp-document/marks,
+    or DEFAULT_MARK. A 422 naming what to upload/configure when it isn't there."""
+    if choice == DEFAULT_MARK:
+        if kind == "letterhead":
+            path = _letterhead_path(company_profile)
+            if path is None:
+                raise HTTPException(status_code=422, detail="No letterhead image is configured (company_profile.json's letterhead_image)")
+            return path.read_bytes(), "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+        signatory = company_profile.get("authorized_signatory", {})
+        sig_doc, seal_doc = signing_assets(company_profile, _load_company_documents_for_generation())
+        doc, field = (sig_doc, "signature_document_name") if kind == "signature" else (seal_doc, "seal_document_name")
+        if doc is None:
+            raise HTTPException(status_code=422, detail=(
+                f"No {kind} found - upload it on the Documents tab as '{signatory.get(field) or f'the {kind}'}'"))
+    else:
+        candidates = _mark_candidates(company_profile, _load_company_documents_for_generation())[kind]
+        doc = next((d for d in candidates if d.id == choice), None)
+        if doc is None:
+            raise HTTPException(status_code=422, detail=f"That {kind} is no longer in the Documents library")
+    data = doc.open_bytes()
+    if _is_pdf_doc(doc):
+        return _pdf_first_page_as_image(data), "image/jpeg"
+    return data, doc.content_type
+
+
+@app.get("/stamp-document/marks")
+def stamp_marks() -> dict[str, Any]:
+    """The Sign & Stamp tab's buttons: for each mark, the library documents
+    that can be used, by their Documents-tab names. The configured
+    letterhead image is offered only when the library has none."""
+    company_profile = load_company_profile()
+    candidates = _mark_candidates(company_profile, _load_company_documents_for_generation())
+    marks = {kind: [{"id": d.id, "label": d.name} for d in docs] for kind, docs in candidates.items()}
+    if not marks["letterhead"] and _letterhead_path(company_profile) is not None:
+        marks["letterhead"] = [{"id": DEFAULT_MARK, "label": "Letterhead"}]
+    return marks
+
+
+@app.delete("/stamp-document/marks/{document_id}")
+def remove_stamp_mark(document_id: str) -> dict[str, Any]:
+    """Takes a document out of the Sign & Stamp tab's letterheads/signatures/
+    stamps without deleting it - it stays in the Documents library (DELETE
+    /documents/{id} deletes it). Adding it back: rename it from the Sign &
+    Stamp popup, or PUT /documents/{id} with a mark_kind."""
+    try:
+        object_id = ObjectId(document_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid document id")
+    result = get_company_documents_files_collection().update_one(
+        {"_id": object_id}, {"$set": {"metadata.mark_kind": NOT_A_MARK}}
     )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "removed"}
+
+
+@app.get("/stamp-document/assets/{kind}")
+def stamp_asset(kind: Literal["letterhead", "signature", "stamp"], id: str = DEFAULT_MARK) -> Response:
+    """A mark's image, for the Sign & Stamp tab's preview (a PDF letterhead
+    as an image of its first page)."""
+    data, content_type = _stamp_asset(kind, id, load_company_profile())
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
+
+
+class MarkPlacementModel(BaseModel):
+    page: int = Field(ge=0)
+    mark: Literal["signature", "stamp"]
+    x: float = Field(ge=-1, le=2)
+    y: float = Field(ge=-1, le=2)
+    w: float = Field(gt=0, le=2)
+    h: float = Field(gt=0, le=2)
+
+
+_PLACEMENTS = TypeAdapter(list[MarkPlacementModel])
+
+
+class ContentLayoutModel(BaseModel):
+    page: int = Field(ge=0)
+    scale: float = Field(gt=0, le=1)
+    dx: float = Field(ge=-1, le=1)
+    dy: float = Field(ge=-1, le=1)
+
+
+_LAYOUTS = TypeAdapter(list[ContentLayoutModel])
+
+
+class PageMarksModel(BaseModel):
+    """One page's marks - each a library document id (see GET
+    /stamp-document/marks) or DEFAULT_MARK; missing/null means none."""
+
+    page: int = Field(ge=0)
+    letterhead: str | None = None
+    signature: str | None = None
+    stamp: str | None = None
+
+
+_PAGE_MARKS = TypeAdapter(list[PageMarksModel])
+
+
+@app.post("/stamp-document")
+async def stamp_document(
+    file: UploadFile = File(...),
+    letterhead: str | None = Form(None),
+    signature: str | None = Form(None),
+    stamp: str | None = Form(None),
+    placements: str | None = Form(None),
+    layouts: str | None = Form(None),
+    pages: str | None = Form(None),
+) -> Response:
+    """One-request version for small files (up to MAX_DOCUMENT_SIZE, both
+    ways) - the dashboard uses the part-by-part upload below instead.
+    `placements` (JSON, optional): where the user dragged each signature/
+    stamp in the preview - see app.reports.bid_generator.MarkPlacement.
+    Without it every page gets the marks at their usual bottom-right spot.
+    `layouts` (JSON, optional): how the preview moved pages whose content
+    would run into the letterhead - see ContentLayout."""
+    options = _stamp_options(letterhead, signature, stamp, placements, layouts, pages)
+    content = await file.read()
+    marked, media_type, out_name = _run_stamp(content, file.filename or "document", file.content_type or "",
+                                              options, max_size=MAX_DOCUMENT_SIZE)
+    return Response(
+        content=marked,
+        media_type=media_type,
+        headers={"Content-Disposition": _content_disposition("attachment", out_name)},
+    )
+
+
+# The dashboard sends files up to MAX_UPLOAD_SIZE in parts (PUT
+# /uploads/{id}/parts/N - see the Documents section), then /finish marks the
+# joined file and stores the result in parts too, fetched with one GET per
+# part (as the bid pack download does).
+STAMP_MAX_RESULT_SIZE = 25 * 1024 * 1024  # a letterhead/marks can make the result bigger than the upload
+
+
+@app.post("/stamp-document/uploads/{upload_id}/finish")
+def finish_stamp_upload(
+    upload_id: str,
+    parts: int = Form(..., ge=1),
+    filename: str = Form("document"),
+    content_type: str = Form(""),
+    letterhead: str | None = Form(None),
+    signature: str | None = Form(None),
+    stamp: str | None = Form(None),
+    placements: str | None = Form(None),
+    layouts: str | None = Form(None),
+    pages: str | None = Form(None),
+) -> dict[str, Any]:
+    """Joins an upload's `parts`, marks it (same options as POST
+    /stamp-document) and stores the result for GET .../results/{id}/parts/N."""
+    options = _stamp_options(letterhead, signature, stamp, placements, layouts, pages)
+    content = _take_upload(upload_id, parts)
+    marked, media_type, out_name = _run_stamp(content, filename, content_type, options,
+                                              max_size=MAX_UPLOAD_SIZE, max_result_size=STAMP_MAX_RESULT_SIZE)
+    transfers = get_stamp_transfers_collection()
+    result_id = uuid.uuid4().hex
+    now = dt.datetime.now(dt.timezone.utc)
+    chunks = [marked[i:i + TRANSFER_PART_SIZE] for i in range(0, len(marked), TRANSFER_PART_SIZE)] or [b""]
+    transfers.insert_many([
+        {"kind": "result", "key": result_id, "part": i, "data": chunk, "media_type": media_type, "created_at": now}
+        for i, chunk in enumerate(chunks)
+    ])
+    return {"result_id": result_id, "parts": len(chunks), "filename": out_name, "media_type": media_type,
+            "size": len(marked)}
+
+
+@app.get("/stamp-document/results/{result_id}/parts/{part}")
+def download_stamp_part(result_id: str, part: int) -> Response:
+    doc = get_stamp_transfers_collection().find_one({"kind": "result", "key": _transfer_key(result_id), "part": part})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="This result has expired - mark the file again")
+    return Response(content=bytes(doc["data"]), media_type="application/octet-stream")
+
+
+def _mark_choice(value: str | None) -> str | None:
+    """A letterhead/signature/stamp form field: a library document id,
+    DEFAULT_MARK (also "true"), or None when unset/"false"."""
+    value = (value or "").strip()
+    if value.lower() in ("", "false", "0"):
+        return None
+    return DEFAULT_MARK if value.lower() in ("true", "1", DEFAULT_MARK) else value
+
+
+def _stamp_options(
+    letterhead: str | None,
+    signature: str | None,
+    stamp: str | None,
+    placements: str | None,
+    layouts: str | None,
+    pages: str | None = None,
+) -> dict[str, Any]:
+    """The request's marking options, validated before any file is read -
+    each mark's choice (see _mark_choice), `placements`/`layouts` parsed
+    into bid_generator's types. `pages` (JSON, see PageMarksModel) gives
+    each listed page its own marks instead of the same letterhead/
+    signature/stamp on every page; unlisted pages are left untouched."""
+    letterhead, signature, stamp = _mark_choice(letterhead), _mark_choice(signature), _mark_choice(stamp)
+    per_page = None
+    if pages:
+        try:
+            per_page = {
+                p.page: {kind: _mark_choice(getattr(p, kind)) for kind in ("letterhead", "signature", "stamp")}
+                for p in _PAGE_MARKS.validate_json(pages)
+            }
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid pages: {exc.errors()[0]['msg']}")
+        if not any(any(choices.values()) for choices in per_page.values()):
+            raise HTTPException(status_code=422, detail="Select a letterhead, signature or stamp for at least one page")
+    elif not (letterhead or signature or stamp):
+        raise HTTPException(status_code=422, detail="Select at least one of letterhead, signature or stamp")
+    try:
+        placed = [MarkPlacement(**p.model_dump()) for p in _PLACEMENTS.validate_json(placements)] if placements else None
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid placements: {exc.errors()[0]['msg']}")
+    try:
+        laid_out = [ContentLayout(**p.model_dump()) for p in _LAYOUTS.validate_json(layouts)] if layouts else None
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid layouts: {exc.errors()[0]['msg']}")
+    return {"letterhead": letterhead, "signature": signature, "stamp": stamp, "placements": placed,
+            "layouts": laid_out, "pages": per_page}
+
+
+def _run_stamp(
+    content: bytes,
+    filename: str,
+    content_type: str,
+    options: dict[str, Any],
+    *,
+    max_size: int,
+    max_result_size: int | None = None,
+) -> tuple[bytes, str, str]:
+    """Marks `content` per `options` (see _stamp_options) - (bytes, media
+    type, download filename). `max_size` caps the upload; `max_result_size`
+    (default: the same) the marked file."""
+    if not content:
+        raise HTTPException(status_code=422, detail="File is empty")
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {max_size // (1024 * 1024)} MB limit")
+
+    company_profile = load_company_profile()
+    assets: dict[tuple[str, str], bytes] = {}  # each chosen document read once, however many pages use it
+
+    def asset(kind: str, choice: str | None) -> bytes | None:
+        if not choice:
+            return None
+        if (kind, choice) not in assets:
+            assets[kind, choice] = _stamp_asset(kind, choice, company_profile)[0]
+        return assets[kind, choice]
+
+    pages = None
+    if options["pages"] is not None:
+        pages = {
+            index: PageMarks(asset("letterhead", c["letterhead"]), asset("signature", c["signature"]),
+                             asset("stamp", c["stamp"]))
+            for index, c in options["pages"].items()
+        }
+
+    try:
+        marked, media_type = mark_document(
+            content, filename, content_type,
+            letterhead_image=asset("letterhead", options["letterhead"]),
+            signature=asset("signature", options["signature"]), seal=asset("stamp", options["stamp"]),
+            placements=options["placements"], layouts=options["layouts"], pages=pages,
+        )
+    except BidGenerationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    limit = max_result_size or max_size
+    if len(marked) > limit:
+        raise HTTPException(status_code=413, detail=(
+            f"The marked file comes to over {limit // (1024 * 1024)} MB - "
+            "split it into smaller files and mark each one"))
+
+    stem = Path(filename).stem or "document"
+    extension = {"application/pdf": ".pdf", "image/png": ".png"}.get(media_type, ".jpg")
+    return marked, media_type, f"{stem}-signed{extension}"
 
 
 def _per_query_counts(
