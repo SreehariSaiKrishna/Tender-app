@@ -170,9 +170,8 @@ def ingest_batch(
                 "query_matches": [],
                 "query_match_count": 0,
                 "screenings": [],
-                # Set by app.api.main's apply endpoint when the user pursues
-                # this tender - also what protects it from
-                # app.processing.cleanup's auto-delete of stale closed ones.
+                # Set by app.api.main's apply endpoint (or a bid pack being
+                # generated) when the user pursues this tender.
                 "applied": False,
                 "applied_at": None,
                 # Kept in sync with `latest_priority` once AI screening runs
@@ -216,6 +215,7 @@ def ingest_batch(
             doc["last_seen"] = now
             doc["times_found"] = doc.get("times_found", 0) + 1
             doc["disappeared"] = False
+            doc.pop("disappeared_at", None)
 
         # domain_match: cheap keyword-only relevance check, with no opinion on
         # the value ranges - this is what gates document download (see
@@ -308,6 +308,7 @@ def _mark_disappeared(
     )
 
     operations: list[UpdateOne] = []
+    now = _utcnow()
     for doc in candidates:
         all_match_queries = {m["query_name"] for m in doc.get("query_matches", [])}
         # Only conclude "gone" if every query that ever matched it was
@@ -317,7 +318,9 @@ def _mark_disappeared(
             operations.append(
                 UpdateOne(
                     {"_id": doc["_id"]},
-                    {"$set": {"disappeared": True, "status": TenderStatus.CLOSED.value}},
+                    # disappeared_at: when app.processing.cleanup's grace
+                    # period starts for a tender with no closing_date.
+                    {"$set": {"disappeared": True, "status": TenderStatus.CLOSED.value, "disappeared_at": now}},
                 )
             )
             summary.disappeared += 1

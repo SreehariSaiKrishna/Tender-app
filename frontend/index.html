@@ -107,6 +107,50 @@
     border-color: transparent;
   }
 
+  /* Hidden until the login check finishes, so a signed-out visitor never
+     sees the dashboard's shell flash before the redirect to the login page. */
+  body.auth-pending .shell { visibility: hidden; }
+  .sidebar-account {
+    margin-top: 14px;
+    padding: 14px 8px 0;
+    border-top: 1px solid var(--rule-on-dark);
+    color: var(--ink-on-dark-soft);
+    font-size: 12.5px;
+  }
+  .sidebar-account[hidden] { display: none; }
+  .sidebar-account .account-email { display: block; margin-bottom: 8px; overflow-wrap: anywhere; }
+  .sidebar-account button {
+    padding: 6px 12px;
+    border: 1px solid var(--rule-on-dark);
+    border-radius: 8px;
+    background: none;
+    color: var(--ink-on-dark);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .sidebar-account button:hover { background: rgba(255, 255, 255, 0.1); }
+  .auth-message {
+    max-width: 420px;
+    margin: 18vh auto 0;
+    padding: 26px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    box-shadow: var(--panel-shadow);
+    text-align: center;
+  }
+  .auth-message h2 { margin: 0 0 8px; font-size: 18px; }
+  .auth-message p { margin: 0 0 18px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  .auth-message button {
+    padding: 9px 18px;
+    border: none;
+    border-radius: 10px;
+    background: var(--brand-blue-deep);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
   .main { flex: 1; min-width: 0; }
 
   header {
@@ -1050,6 +1094,8 @@
 
   @media (max-width: 860px) {
     .shell { flex-direction: column; padding: 12px; gap: 12px; }
+    .sidebar-account { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding: 10px 4px 0; }
+    .sidebar-account .account-email { margin-bottom: 0; }
     .sidebar {
       width: 100%;
       height: auto;
@@ -1089,7 +1135,13 @@
   }
 </style>
 </head>
-<body>
+<body class="auth-pending">
+
+<div class="auth-message" id="authMessage" hidden>
+  <h2>Couldn't sign you in</h2>
+  <p id="authMessageText"></p>
+  <button id="authRetryBtn">Sign in again</button>
+</div>
 
 <div class="shell">
 <nav class="sidebar">
@@ -1099,6 +1151,10 @@
   <button class="nav-item" id="navDocuments" data-page="documents">Documents</button>
   <button class="nav-item" id="navStamp" data-page="stamp">Sign &amp; Stamp</button>
   <button class="nav-item" id="navAutomation" data-page="automation">Automation Raw Data</button>
+  <div class="sidebar-account" id="sidebarAccount" hidden>
+    <span class="account-email" id="accountEmail"></span>
+    <button id="signOutBtn">Sign out</button>
+  </div>
 </nav>
 
 <div class="main">
@@ -1458,6 +1514,155 @@
   const IS_LOCAL = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const API_BASE_URL = IS_LOCAL ? "http://127.0.0.1:8001" : "REPLACE_WITH_API_URL";
 
+  // Login - Cognito's hosted page, OAuth2 authorization code + PKCE (no
+  // client secret: anything in this page is public). The deploy script
+  // bakes these two in. The API rejects any call without a valid access
+  // token; locally there's no login at all (uvicorn has none), so all of
+  // this is skipped when IS_LOCAL.
+  const COGNITO_DOMAIN = "REPLACE_WITH_COGNITO_DOMAIN";
+  const COGNITO_CLIENT_ID = "REPLACE_WITH_COGNITO_CLIENT_ID";
+  // Must match the app client's CallbackURLs/LogoutURLs exactly.
+  const AUTH_REDIRECT_URI = `${window.location.origin}/`;
+  // Access/id tokens are kept in memory only. The refresh token goes in
+  // sessionStorage - this tab only, gone when it closes - so a reload
+  // doesn't mean logging in again. Never localStorage.
+  const AUTH_REFRESH_KEY = "tender.auth.refresh";
+  const AUTH_PKCE_KEY = "tender.auth.pkce";
+  const auth = { accessToken: null, expiresAt: 0, email: "", refreshing: null };
+
+  function sessionGet(key) {
+    try { return sessionStorage.getItem(key); } catch { return null; }
+  }
+  function sessionSet(key, value) {
+    try {
+      if (value == null) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, value);
+    } catch {}
+  }
+
+  function base64Url(bytes) {
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  // Only for display (the signed-in email) - the API verifies the tokens.
+  function jwtClaims(token) {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+  }
+
+  // Off to the hosted login page. Never resolves - the page is navigating away.
+  async function login() {
+    const verifier = base64Url(crypto.getRandomValues(new Uint8Array(64)));
+    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
+    const challenge = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+    // The redirect back lands on the bare origin, so remember the page (#route) to return to.
+    sessionSet(AUTH_PKCE_KEY, JSON.stringify({ verifier, state, returnTo: window.location.hash }));
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: COGNITO_CLIENT_ID,
+      redirect_uri: AUTH_REDIRECT_URI,
+      scope: "openid email",
+      state,
+      code_challenge_method: "S256",
+      code_challenge: base64Url(challenge),
+    });
+    window.location.assign(`${COGNITO_DOMAIN}/oauth2/authorize?${params}`);
+    return new Promise(() => {});
+  }
+
+  async function tokenRequest(body) {
+    const res = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: COGNITO_CLIENT_ID, ...body }),
+    });
+    if (!res.ok) throw new Error(`the login service returned HTTP ${res.status}`);
+    const tokens = await res.json();
+    auth.accessToken = tokens.access_token;
+    auth.expiresAt = Date.now() + tokens.expires_in * 1000;
+    if (tokens.id_token) auth.email = jwtClaims(tokens.id_token).email || "";
+    if (tokens.refresh_token) sessionSet(AUTH_REFRESH_KEY, tokens.refresh_token);
+  }
+
+  // One refresh at a time, however many API calls notice the expiry at once.
+  // No refresh token, or it's expired/revoked -> log in again.
+  function refreshTokens() {
+    if (!auth.refreshing) {
+      const refreshToken = sessionGet(AUTH_REFRESH_KEY);
+      auth.refreshing = (refreshToken
+        ? tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken })
+        : Promise.reject(new Error("not signed in")))
+        .catch(() => {
+          sessionSet(AUTH_REFRESH_KEY, null);
+          return login();
+        })
+        .finally(() => { auth.refreshing = null; });
+    }
+    return auth.refreshing;
+  }
+
+  // On page load: finish a login redirect (?code=&state=), or resume this
+  // tab's session from its refresh token, or go to the login page.
+  async function startAuth() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("code") || url.searchParams.has("error")) {
+      const pending = JSON.parse(sessionGet(AUTH_PKCE_KEY) || "null");
+      sessionSet(AUTH_PKCE_KEY, null);
+      history.replaceState(null, "", `${url.pathname}${pending?.returnTo || ""}`);
+      const error = url.searchParams.get("error_description") || url.searchParams.get("error");
+      if (error) throw new Error(error);
+      // A state that doesn't match the one this tab sent means this redirect
+      // wasn't started here - never exchange its code.
+      if (!pending || url.searchParams.get("state") !== pending.state) {
+        throw new Error("the login response didn't match this browser tab");
+      }
+      await tokenRequest({
+        grant_type: "authorization_code",
+        code: url.searchParams.get("code"),
+        redirect_uri: AUTH_REDIRECT_URI,
+        code_verifier: pending.verifier,
+      });
+      return;
+    }
+    await refreshTokens();
+  }
+
+  // fetch() for every API call: adds the access token, refreshing it first
+  // when it's within 2 minutes of expiring. A 401 comes from API Gateway's
+  // authorizer (before the API runs anything), so retrying once with a fresh
+  // token is safe even for a POST.
+  async function apiFetch(url, options = {}) {
+    if (IS_LOCAL) return fetch(url, options);
+    const send = async () => {
+      if (!auth.accessToken || Date.now() > auth.expiresAt - 2 * 60000) await refreshTokens();
+      return fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${auth.accessToken}` } });
+    };
+    let res = await send();
+    if (res.status === 401) {
+      auth.accessToken = null;
+      res = await send();
+      if (res.status === 401) await login();
+    }
+    return res;
+  }
+
+  async function logout() {
+    const refreshToken = sessionGet(AUTH_REFRESH_KEY);
+    sessionSet(AUTH_REFRESH_KEY, null);
+    auth.accessToken = null;
+    if (refreshToken) {
+      try {
+        await fetch(`${COGNITO_DOMAIN}/oauth2/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token: refreshToken, client_id: COGNITO_CLIENT_ID }),
+        });
+      } catch {} // still signed out of this tab; the token expires on its own
+    }
+    const params = new URLSearchParams({ client_id: COGNITO_CLIENT_ID, logout_uri: AUTH_REDIRECT_URI });
+    window.location.assign(`${COGNITO_DOMAIN}/logout?${params}`);
+  }
+
   const PAGE_SIZE = 25;
   let skip = 0;
   let expandedId = null;
@@ -1558,7 +1763,7 @@
   async function loadQueryStats() {
     el("queryBody").innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
     const params = new URLSearchParams();
-    const res = await fetch(`${API_BASE_URL}/stats/by-query?${params}`);
+    const res = await apiFetch(`${API_BASE_URL}/stats/by-query?${params}`);
     const data = await res.json();
     renderQueryStats(data.queries || []);
   }
@@ -1634,7 +1839,7 @@
 
     el("tenderBody").innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
 
-    const res = await fetch(`${API_BASE_URL}/tenders?${params}`);
+    const res = await apiFetch(`${API_BASE_URL}/tenders?${params}`);
     const data = await res.json();
     renderTenders(data);
   }
@@ -1680,11 +1885,13 @@
     el("generateConfirmBtn").textContent = "Generating…";
     el("generateCancelBtn").disabled = true;
     try {
-      const res = await fetch(`${API_BASE_URL}/tenders/${id}/generate-bid`, { method: "POST" });
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/generate-bid`, { method: "POST" });
       if (!res.ok) throw await checklistError(res);
       closeGenerateModal();
       if (!el("checklistPage").hidden) loadChecklist(id);
       else loadTenders();
+      // The pack isn't kept (it expires within a day), so download it now.
+      startBidPackDownload(id).catch((err) => console.error("Bid pack download failed:", err));
     } catch (err) {
       console.error("Failed to generate bid pack:", err);
       el("generateError").textContent = err.fromServer
@@ -1765,7 +1972,7 @@
       ? `<button class="checklist-btn" data-id="${t.id}">See Checklist</button>`
       : `<button class="generate-btn checklist-generate-btn" data-id="${t.id}">Generate Checklist</button>`;
     let bidHtml = "";
-    if (t.bid_document_id) {
+    if (t.bid_pack_available) {
       const generatedTitle = t.bid_generated_at ? ` title="Generated ${escapeHtml(fmtDate(t.bid_generated_at))}"` : "";
       bidHtml = `
         <a class="download-btn bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
@@ -2077,7 +2284,7 @@
   async function loadAutomationRuns() {
     el("automationBody").innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
     const params = new URLSearchParams({ limit: AUTOMATION_PAGE_SIZE, skip: automationSkip });
-    const res = await fetch(`${API_BASE_URL}/automation/runs?${params}`);
+    const res = await apiFetch(`${API_BASE_URL}/automation/runs?${params}`);
     const data = await res.json();
     renderAutomationRuns(data);
   }
@@ -2144,7 +2351,7 @@
 
   async function loadEligibility() {
     el("eligibilityBody").innerHTML = '<tr><td colspan="4" class="loading">Loading...</td></tr>';
-    const res = await fetch(`${API_BASE_URL}/eligibility`);
+    const res = await apiFetch(`${API_BASE_URL}/eligibility`);
     const data = await res.json();
     eligibilityCriteria = data.criteria || [];
     renderEligibility(eligibilityCriteria);
@@ -2235,7 +2442,7 @@
       const url = isEditing
         ? `${API_BASE_URL}/eligibility/${editingCriterionId}`
         : `${API_BASE_URL}/eligibility`;
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: isEditing ? "PUT" : "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ criterion, requirement, supporting_documents }),
@@ -2254,7 +2461,7 @@
   async function deleteCriterion(id) {
     if (!confirm("Delete this eligibility criterion? This can't be undone.")) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/eligibility/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`${API_BASE_URL}/eligibility/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       loadEligibility();
     } catch (err) {
@@ -2310,7 +2517,7 @@
   async function postChecklist(id, onWaiting) {
     const started = Date.now();
     for (;;) {
-      const res = await fetch(`${API_BASE_URL}/tenders/${id}/checklist`, { method: "POST" });
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/checklist`, { method: "POST" });
       if (res.ok) return res.json();
       const err = await checklistError(res);
       if (!err.fetching) throw err;
@@ -2362,7 +2569,7 @@ ${err.message}`);
     checklistState.tenderId = id;
     el("checklistContent").innerHTML = '<div class="cl-empty">Loading...</div>';
     try {
-      const res = await fetch(`${API_BASE_URL}/tenders/${id}/checklist`);
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/checklist`);
       if (res.status === 404) {
         el("checklistContent").innerHTML = `
           <div class="cl-card">
@@ -2555,7 +2762,7 @@ ${err.message}`);
 
   function checklistToolbarHtml() {
     const t = checklistState.tender;
-    const bidBtns = t.bid_document_id
+    const bidBtns = t.bid_pack_available
       ? `<a class="cl-btn success bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
          <button class="cl-btn" id="clBidBtn" data-regenerate="1">Regenerate Bid Pack</button>`
       : `<button class="cl-btn success" id="clBidBtn">Generate Bid Pack</button>`;
@@ -2710,7 +2917,7 @@ ${err.message}`);
     checklistState.saving = true;
     updateChecklistStatus();
     try {
-      const res = await fetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, {
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${checklistState.tenderId}/checklist`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ items: checklistState.items, notes: checklistState.notes, header: checklistState.header }),
@@ -2771,7 +2978,7 @@ ${err.message}`);
 
   async function loadDocuments() {
     el("documentsBody").innerHTML = '<tr><td colspan="5" class="loading">Loading...</td></tr>';
-    const res = await fetch(`${API_BASE_URL}/documents`);
+    const res = await apiFetch(`${API_BASE_URL}/documents`);
     const data = await res.json();
     documentsList = data.documents || [];
     renderDocuments(documentsList);
@@ -2857,7 +3064,7 @@ ${err.message}`);
     const parts = Math.max(1, Math.ceil(file.size / TRANSFER_PART_BYTES));
     for (let i = 0; i < parts; i++) {
       onPart(i, parts);
-      const res = await fetch(`${API_BASE_URL}/uploads/${uploadId}/parts/${i}`, {
+      const res = await apiFetch(`${API_BASE_URL}/uploads/${uploadId}/parts/${i}`, {
         method: "PUT",
         headers: { "Content-Type": "application/octet-stream" },
         body: file.slice(i * TRANSFER_PART_BYTES, (i + 1) * TRANSFER_PART_BYTES),
@@ -2870,12 +3077,12 @@ ${err.message}`);
   // A library document as a Blob, fetched part by part (GET
   // /documents/{id}/info, then ?part=N) - `kind` is "download" or "view".
   async function fetchDocumentBlob(id, kind) {
-    const infoRes = await fetch(`${API_BASE_URL}/documents/${id}/info`);
+    const infoRes = await apiFetch(`${API_BASE_URL}/documents/${id}/info`);
     if (!infoRes.ok) throw await apiError(infoRes);
     const info = await infoRes.json();
     const chunks = [];
     for (let i = 0; i < info.parts; i++) {
-      const res = await fetch(`${API_BASE_URL}/documents/${id}/${kind}?part=${i}`);
+      const res = await apiFetch(`${API_BASE_URL}/documents/${id}/${kind}?part=${i}`);
       if (!res.ok) throw await apiError(res);
       chunks.push(await res.blob());
     }
@@ -2964,7 +3171,7 @@ ${err.message}`);
       formData.append("name", name);
       formData.append("filename", file.name);
       formData.append("content_type", file.type);
-      const res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+      const res = await apiFetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
       if (!res.ok) throw await apiError(res);
       closeUploadDocumentModal();
       loadDocuments();
@@ -3028,9 +3235,9 @@ ${err.message}`);
         formData.append("filename", file.name);
         formData.append("content_type", file.type);
         formData.append("replace", editingDocumentId);
-        res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+        res = await apiFetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
       } else {
-        res = await fetch(`${API_BASE_URL}/documents/${editingDocumentId}`, {
+        res = await apiFetch(`${API_BASE_URL}/documents/${editingDocumentId}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name }),
@@ -3073,7 +3280,7 @@ ${err.message}`);
     el("deleteDocumentConfirmBtn").textContent = "Deleting…";
     el("deleteDocumentError").textContent = "";
     try {
-      const res = await fetch(`${API_BASE_URL}/documents/${deletingDocumentId}`, { method: "DELETE" });
+      const res = await apiFetch(`${API_BASE_URL}/documents/${deletingDocumentId}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       closeDeleteDocumentModal();
       loadDocuments();
@@ -3204,7 +3411,7 @@ ${err.message}`);
   async function stampAsset(kind, id) {
     const key = `${kind}:${id}`;
     if (stampState.assetCache[key]) return stampState.assetCache[key];
-    const res = await fetch(`${API_BASE_URL}/stamp-document/assets/${kind}?id=${encodeURIComponent(id)}`);
+    const res = await apiFetch(`${API_BASE_URL}/stamp-document/assets/${kind}?id=${encodeURIComponent(id)}`);
     if (!res.ok) throw await apiError(res);
     const img = await loadImage(URL.createObjectURL(await res.blob()));
     stampState.assetCache[key] = img;
@@ -3542,7 +3749,7 @@ ${err.message}`);
 
   async function loadStampMarks() {
     try {
-      const res = await fetch(`${API_BASE_URL}/stamp-document/marks`);
+      const res = await apiFetch(`${API_BASE_URL}/stamp-document/marks`);
       if (!res.ok) throw await apiError(res);
       const marks = await res.json();
       for (const kind of MARK_KINDS) {
@@ -3736,12 +3943,12 @@ ${err.message}`);
         formData.append("content_type", file.type);
         formData.append("mark_kind", kind);
         if (mode === "edit") formData.append("replace", id);
-        const res = await fetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+        const res = await apiFetch(`${API_BASE_URL}/documents/uploads/${uploadId}/finish`, { method: "POST", body: formData });
         if (!res.ok) throw await apiError(res);
         const saved = await res.json();
         if (mode === "edit") await useReplacedDocument(kind, id, saved.id);
       } else {
-        const res = await fetch(`${API_BASE_URL}/documents/${id}`, {
+        const res = await apiFetch(`${API_BASE_URL}/documents/${id}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ name, mark_kind: kind }),
@@ -3802,7 +4009,7 @@ ${err.message}`);
       if (!ok) return;
       try {
         // Only out of Sign & Stamp (DELETE /stamp-document/marks/{id}) - the document itself is kept.
-        const res = await fetch(`${API_BASE_URL}/stamp-document/marks/${id}`, { method: "DELETE" });
+        const res = await apiFetch(`${API_BASE_URL}/stamp-document/marks/${id}`, { method: "DELETE" });
         if (!res.ok) throw await apiError(res);
         delete stampState.assetCache[`${kind}:${id}`];
         if (stampDocForm?.id === id) closeStampDocForm();
@@ -3874,14 +4081,14 @@ ${err.message}`);
           if (stampState.allPagesMarks[kind]) formData.append(kind, stampState.allPagesMarks[kind]);
         });
       }
-      const finish = await fetch(`${API_BASE_URL}/stamp-document/uploads/${uploadId}/finish`, { method: "POST", body: formData });
+      const finish = await apiFetch(`${API_BASE_URL}/stamp-document/uploads/${uploadId}/finish`, { method: "POST", body: formData });
       if (!finish.ok) throw await apiError(finish);
       const result = await finish.json();
 
       const chunks = [];
       for (let i = 0; i < result.parts; i++) {
         btn.textContent = result.parts > 1 ? `Downloading ${i + 1}/${result.parts}…` : "Downloading…";
-        const res = await fetch(`${API_BASE_URL}/stamp-document/results/${result.result_id}/parts/${i}`);
+        const res = await apiFetch(`${API_BASE_URL}/stamp-document/results/${result.result_id}/parts/${i}`);
         if (!res.ok) throw await apiError(res);
         chunks.push(await res.blob());
       }
@@ -3970,45 +4177,41 @@ ${err.message}`);
   window.addEventListener("resize", closeAllActionsMenus);
   document.addEventListener("scroll", closeAllActionsMenus, true);
 
-  // A bid pack can be larger than one API response can carry (the
-  // Lambda/API Gateway ~6 MB cap), so it's fetched in parts via
-  // /bid-document/info + ?part=N and joined into a Blob here rather than
-  // followed as a plain link.
+  // A bid pack is larger than one API response can carry (the Lambda/API
+  // Gateway ~6 MB cap) and isn't kept, so the API hands out a 5-minute link
+  // (/bid-document/link) and the browser downloads it straight from file
+  // storage. Running locally there's no bucket (url is null), and the pack
+  // comes from /bid-document itself.
+  async function startBidPackDownload(tenderId) {
+    const base = `${API_BASE_URL}/tenders/${tenderId}/bid-document`;
+    const linkRes = await apiFetch(`${base}/link`);
+    if (linkRes.status === 404) throw new Error("the bid pack has expired - generate it again");
+    if (!linkRes.ok) throw new Error(`HTTP ${linkRes.status}`);
+    const { url, filename } = await linkRes.json();
+    if (url) {
+      // A navigation, not a fetch - the signed link needs no token, and the
+      // response's Content-Disposition makes it a download.
+      const a = document.createElement("a");
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+    const res = await apiFetch(base);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    saveBlob(await res.blob(), filename || "bid-pack.pdf");
+  }
+
   async function downloadBidPack(link) {
     if (link.dataset.busy) return;
     link.dataset.busy = "1";
     const label = link.innerHTML;
-    const base = `${API_BASE_URL}/tenders/${link.dataset.id}/bid-document`;
-    // Every part comes from the file /info named; if that pack is replaced
-    // by a newer generation mid-download (409), start once more on the new one.
-    async function fetchParts() {
-      const infoRes = await fetch(`${base}/info`);
-      if (!infoRes.ok) throw new Error(`HTTP ${infoRes.status}`);
-      const info = await infoRes.json();
-      const parts = [];
-      for (let i = 0; i < info.parts; i++) {
-        link.textContent = info.parts > 1 ? `Downloading ${i + 1}/${info.parts}…` : "Downloading…";
-        const res = await fetch(`${base}?part=${i}&file=${encodeURIComponent(info.file_id || "")}`);
-        if (res.status === 409) return { info, parts: null };
-        if (!res.ok) throw new Error(`HTTP ${res.status} on part ${i + 1}`);
-        parts.push(await res.blob());
-      }
-      return { info, parts };
-    }
+    link.textContent = "Downloading…";
     try {
-      let { info, parts } = await fetchParts();
-      if (!parts) ({ info, parts } = await fetchParts());
-      if (!parts) throw new Error("the bid pack kept changing while downloading - try again in a minute");
-      const url = URL.createObjectURL(new Blob(parts, { type: "application/pdf" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = info.filename || "bid-pack.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      await startBidPackDownload(link.dataset.id);
     } catch (err) {
-      alert(`Couldn't download the bid pack - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+      alert(`Couldn't download the bid pack - ${err.message}.`);
     } finally {
       link.innerHTML = label;
       delete link.dataset.busy;
@@ -4026,8 +4229,22 @@ ${err.message}`);
   window.addEventListener("popstate", applyRouteFromHash);
   window.addEventListener("resize", syncScrollTableHeights);
 
-  applyRouteFromHash();
-  syncScrollTableHeights();
+  el("signOutBtn").addEventListener("click", logout);
+  el("authRetryBtn").addEventListener("click", login);
+
+  // Nothing talks to the API until the login check is done.
+  (IS_LOCAL ? Promise.resolve() : startAuth()).then(() => {
+    if (!IS_LOCAL) {
+      el("accountEmail").textContent = auth.email;
+      el("sidebarAccount").hidden = false;
+    }
+    document.body.classList.remove("auth-pending");
+    applyRouteFromHash();
+    syncScrollTableHeights();
+  }, (err) => {
+    el("authMessageText").textContent = err.message;
+    el("authMessage").hidden = false;
+  });
 </script>
 </body>
 </html>

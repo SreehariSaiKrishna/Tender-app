@@ -6,7 +6,7 @@ for - S.No / Document / What to Upload / Where / Notary / Status (/ Page in
 the pack), like the team's own submission checklists, one row per distinct
 document, grouped in CHECKLIST_SECTIONS order - with, per row, whether it's an existing
 record to attach from the documents library (app.api.main's /documents -
-GridFS, get_company_documents_bucket) or a document the bidder must write,
+see app.database.get_company_documents_collection) or a document the bidder must write,
 and whether it goes on the letterhead and carries the signature and stamp.
 The rows normally come from app.intelligence.bid_drafter's AI reading of
 the tender; when that's unavailable they're derived from the tender's
@@ -126,15 +126,16 @@ class ComplianceRow:
 
 @dataclass
 class CompanyDocumentRef:
-    """One row from get_company_documents_bucket() - just enough to match
-    against eligibility criteria and, for PDFs, merge into the pack."""
+    """One Documents-library file (app.database.get_company_documents_collection)
+    - just enough to match against eligibility criteria and, for PDFs, merge
+    into the pack."""
 
     id: str
     name: str
     filename: str
     content_type: str
     open_bytes: Any  # callable[[], bytes] - lazy, so unrelated docs are never read
-    size: int | None = None  # bytes, from GridFS `length`; None -> measured via open_bytes when needed
+    size: int | None = None  # bytes, from the record's `length`; None -> measured via open_bytes when needed
     # "letterhead" / "signature" / "stamp" when added as one from the Sign &
     # Stamp tab (app.api.main) - offered there whatever it's named.
     mark_kind: str | None = None
@@ -340,8 +341,9 @@ def enclosure_documents(
 
 def _default_byte_budget() -> int:
     """Bytes of library PDFs one pack merges (app.config's
-    enclosure_byte_budget) - the dashboard downloads packs in parts (see
-    app.api.main.BID_PART_SIZE), so it isn't bounded by one Lambda response."""
+    enclosure_byte_budget) - the dashboard downloads packs straight from
+    file storage (see app.api.main.bid_document_link), so it isn't bounded
+    by one Lambda response."""
     from app.config import get_settings
 
     return get_settings().enclosure_byte_budget

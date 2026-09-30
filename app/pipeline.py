@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,9 +48,19 @@ class ProcessResult:
     any_failed: bool = False
 
 
-def run_process(settings: Settings, input_dir: str | None = None) -> ProcessResult:
-    """Read the latest downloaded export per saved query, normalize it, and
-    merge it into the database (dedup + history tracking).
+def run_process(
+    settings: Settings,
+    input_dir: str | None = None,
+    collect_outcomes: list[DownloadOutcome] | None = None,
+) -> ProcessResult:
+    """Normalize each saved query's export and merge it into the database
+    (dedup + history tracking).
+
+    With `collect_outcomes` (a pipeline run), only the files that run
+    downloaded are read, and a query TenderDetail confirmed has 0 live
+    tenders counts as an empty export - so its tenders can be marked closed.
+    Without it (the CLI's `process`), the latest file per query in the raw
+    directory is used.
 
     Also writes normalized JSON per query to the processed/ directory as a
     plain-text audit trail alongside the database.
@@ -58,20 +69,27 @@ def run_process(settings: Settings, input_dir: str | None = None) -> ProcessResu
     processed_dir = settings.resolved_path(settings.processed_dir)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    queries = [q.name for q in load_saved_queries() if q.enabled]
-
     files_by_query: dict[str, Path] = {}
-    for query_name in queries:
-        slug = re.sub(r"[^A-Za-z0-9]+", "_", query_name).strip("_")
-        candidates = sorted(raw_dir.glob(f"{slug}_*.*"), key=lambda p: p.stat().st_mtime)
-        if candidates:
-            files_by_query[query_name] = candidates[-1]
+    normalized_by_query: dict[str, list[NormalizedTender]] = {}
+    if collect_outcomes is not None:
+        for outcome in collect_outcomes:
+            if outcome.status == "success" and outcome.file_path:
+                files_by_query[outcome.query_name] = Path(outcome.file_path)
+            elif outcome.status == "skipped":  # confirmed "0 tenders" - see app.browser.collector
+                normalized_by_query[outcome.query_name] = []
+    else:
+        for query_name in [q.name for q in load_saved_queries() if q.enabled]:
+            slug = re.sub(r"[^A-Za-z0-9]+", "_", query_name).strip("_")
+            candidates = sorted(raw_dir.glob(f"{slug}_*.*"), key=lambda p: p.stat().st_mtime)
+            if candidates:
+                files_by_query[query_name] = candidates[-1]
 
     result = ProcessResult(raw_dir=str(raw_dir))
-    if not files_by_query:
+    for query_name in normalized_by_query:
+        result.query_results[query_name] = QueryProcessResult(query_name=query_name, status="ok")
+    if not files_by_query and not normalized_by_query:
         return result
 
-    normalized_by_query: dict[str, list[NormalizedTender]] = {}
     for query_name, path in files_by_query.items():
         try:
             raw_rows = read_raw_rows(path)
@@ -149,14 +167,39 @@ class DocumentDownloadOutcome:
     error: str | None = None
 
 
-def run_document_download(settings: Settings) -> DocumentDownloadOutcome:
+# Past this many seconds into a run, no new tender's documents are started -
+# leaving the rest of the Lambda's 900s for the tender in progress, the
+# summarize step and screening.
+DOCUMENT_DOWNLOAD_BUDGET_SECONDS = 600
+
+
+def run_document_download(
+    settings: Settings,
+    summarized: SummarizeSummary | None = None,
+    deadline: float | None = None,
+) -> DocumentDownloadOutcome:
     """Download attached documents (Tender Document/BOQ/Notice) for every
-    eligible tender that doesn't have them yet. Errors are caught here
-    (like run_screen/run_cleanup) so a failure never fails the whole
-    pipeline run.
+    eligible tender that doesn't have them yet, summarising each one right
+    after its download (counted into `summarized`) while its files are still
+    on this invocation's disk. Errors are caught here (like
+    run_screen/run_cleanup) so a failure never fails the whole pipeline run.
     """
+    after_each = None
+    if summarized is not None:
+        try:
+            provider = get_provider(settings)
+        except ScreeningError as exc:
+            logger.warning("No AI provider (%s) - documents are summarised by the summarize step instead", exc)
+        else:
+            def after_each(tender_id) -> None:
+                result = summarize_pending_documents(settings, provider=provider, tender_ids=[tender_id])
+                summarized.summarized += result.summarized
+                summarized.failed += result.failed
+
     try:
-        return DocumentDownloadOutcome(summary=run_document_collection(settings))
+        return DocumentDownloadOutcome(
+            summary=run_document_collection(settings, after_each=after_each, deadline=deadline)
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Document download step failed")
         return DocumentDownloadOutcome(error=str(exc))
@@ -168,16 +211,23 @@ class DocumentSummarizeOutcome:
     error: str | None = None
 
 
-def run_document_summarize(settings: Settings) -> DocumentSummarizeOutcome:
+def run_document_summarize(
+    settings: Settings, already: SummarizeSummary | None = None
+) -> DocumentSummarizeOutcome:
     """Summarize every tender that has downloaded documents but no
-    up-to-date AI summary yet. Errors are caught here so a failure never
-    fails the whole pipeline run.
+    up-to-date AI summary yet - whatever wasn't already summarised right
+    after its download (`already`, added into the result). Errors are caught
+    here so a failure never fails the whole pipeline run.
     """
+    already = already or SummarizeSummary()
     try:
-        return DocumentSummarizeOutcome(summary=summarize_pending_documents(settings))
+        summary = summarize_pending_documents(settings)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Document summarize step failed")
-        return DocumentSummarizeOutcome(error=str(exc))
+        return DocumentSummarizeOutcome(summary=already, error=str(exc))
+    summary.summarized += already.summarized
+    summary.failed += already.failed
+    return DocumentSummarizeOutcome(summary=summary)
 
 
 @dataclass
@@ -204,16 +254,20 @@ def run_pipeline(
     """
     summary = PipelineSummary()
     started_at = dt.datetime.now(dt.timezone.utc)
+    download_deadline = time.monotonic() + DOCUMENT_DOWNLOAD_BUDGET_SECONDS
 
     summary.collect_outcomes = run_collection(settings)
-    summary.process_result = run_process(settings)
+    summary.process_result = run_process(settings, collect_outcomes=summary.collect_outcomes)
     # Runs right after ingestion so a tender newly marked `disappeared` this
     # same pass is already eligible for cleanup.
     summary.cleanup_outcome = run_cleanup(settings)
     # Runs after cleanup so this pass's eligibility_match (set during
     # ingestion above) is already in place before deciding what to download.
-    summary.document_download_outcome = run_document_download(settings)
-    summary.document_summarize_outcome = run_document_summarize(settings)
+    summarized_on_download = SummarizeSummary()
+    summary.document_download_outcome = run_document_download(
+        settings, summarized=summarized_on_download, deadline=download_deadline
+    )
+    summary.document_summarize_outcome = run_document_summarize(settings, already=summarized_on_download)
     summary.screen_outcome = run_screen(settings)
 
     if include_report:
@@ -223,7 +277,27 @@ def run_pipeline(
 
     _persist_run(summary, started_at, trigger)
 
+    # Raised only after the rest of the run and its record, so one broken
+    # login doesn't also skip screening - but the invocation still fails,
+    # which is what the CloudWatch alarm (template.yaml) emails about.
+    if collection_failed(summary.collect_outcomes):
+        raise CollectionFailedError(
+            "No saved query could be read from TenderDetail this run (login failed, or every query failed) - "
+            "no new tenders were collected. See this run's logs."
+        )
+
     return summary
+
+
+class CollectionFailedError(RuntimeError):
+    """Nothing could be collected from TenderDetail this run."""
+
+
+def collection_failed(outcomes: list[DownloadOutcome]) -> bool:
+    """True when no query was read at all - an empty list means the login
+    itself failed (see app.browser.collector.run_collection). A query with
+    0 live tenders ("skipped") still counts as read."""
+    return not any(o.status in ("success", "skipped") for o in outcomes)
 
 
 def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str) -> None:
@@ -242,7 +316,8 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
     )
     status = (
         "failed"
-        if (summary.process_result and summary.process_result.any_failed)
+        if collection_failed(summary.collect_outcomes)
+        or (summary.process_result and summary.process_result.any_failed)
         or any_screen_error
         or any_cleanup_error
         or any_document_download_error

@@ -164,6 +164,17 @@ def test_tender_missing_from_reprocessed_query_is_marked_disappeared(collection)
     assert summary.disappeared == 1
 
 
+def test_disappeared_at_is_set_on_closing_and_cleared_when_it_returns(collection):
+    batch = {"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}
+    ingest_batch(batch, collection)
+    ingest_batch({"Q1": []}, collection)
+    assert collection.find_one({"dedup_key": "ref:1"})["disappeared_at"] is not None
+
+    ingest_batch(batch, collection)  # back in the listing
+    tender = collection.find_one({"dedup_key": "ref:1"})
+    assert tender["disappeared"] is False and "disappeared_at" not in tender
+
+
 def test_tender_not_marked_disappeared_if_its_query_was_skipped_this_pass(collection):
     ingest_batch(
         {"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE, query_name="Q1")]}, collection

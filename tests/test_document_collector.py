@@ -119,9 +119,13 @@ def test_pending_tenders_redownloads_summarized_tenders_without_document_text(co
     now = dt.datetime.now(dt.timezone.utc)
     downloaded = {"documents_downloaded_at": now, "content_last_changed": now - dt.timedelta(days=1)}
     make_tender(collection, dedup_key="ref:1", document_summary_generated_at=now, **downloaded)  # text never kept
-    make_tender(collection, dedup_key="ref:2", document_summary_generated_at=now, document_text="", **downloaded)
-    make_tender(collection, dedup_key="ref:3", document_summary_generated_at=now, document_text="RFP", **downloaded)
+    make_tender(collection, dedup_key="ref:2", document_summary_generated_at=now, document_text_chars=0, **downloaded)
+    # Text kept in file storage - only its length is on the tender.
+    make_tender(collection, dedup_key="ref:3", document_summary_generated_at=now,
+                document_text_key="tender-text/3.txt", document_text_chars=3, **downloaded)
     make_tender(collection, dedup_key="ref:4", **downloaded)  # never summarized - nothing to recover
+    # Summarised before the text moved out of Mongo and not migrated yet - it has text.
+    make_tender(collection, dedup_key="ref:5", document_summary_generated_at=now, document_text="RFP", **downloaded)
 
     pending = _pending_tenders(collection, limit=None)
 

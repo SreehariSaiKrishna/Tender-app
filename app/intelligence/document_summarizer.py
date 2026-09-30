@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 from pymongo.collection import Collection
 
+from app import storage
 from app.config import Settings, get_settings
 from app.database import get_collection
 from app.intelligence.prompts import build_document_system_prompt, build_document_user_prompt
@@ -366,11 +367,12 @@ def extract_text(path: Path) -> str:
 
 
 # The downloaded files are deleted once summarised (see
-# _delete_local_documents), so their text is kept on the tender as
-# `document_text` - the submission checklist and bid drafting (see
-# app.intelligence.bid_drafter) read annexure numbers and prescribed
-# formats from it, detail the summary itself doesn't carry. Capped to
-# keep the Mongo document well under its 16 MB limit.
+# _delete_local_documents), so their text is kept - in file storage, not
+# Mongo (see app.storage.tender_text_key / load_document_text), with the
+# tender recording `document_text_key`/`document_text_chars`. The submission
+# checklist and bid drafting (see app.intelligence.bid_drafter) read
+# annexure numbers and prescribed formats from it, detail the summary itself
+# doesn't carry. Capped to keep prompts and storage bounded.
 MAX_DOCUMENT_TEXT_CHARS = 150_000
 
 
@@ -445,6 +447,24 @@ def _delete_local_documents(documents: list[dict[str, Any]]) -> list[dict[str, A
     return cleared
 
 
+def _reset_for_redownload(collection: Collection, tender: dict[str, Any]) -> None:
+    """A tender whose downloaded files are all gone from disk - on Lambda,
+    downloaded into an earlier invocation's /tmp that never got as far as
+    summarising them (seen live 2026-09-30: 93 such tenders, plus 679 whose
+    paths were a local Windows run's) - would otherwise be re-selected and
+    fail every run forever, since app.browser.document_collector only
+    re-downloads a tender whose `documents_downloaded_at` is unset or stale.
+    Clearing it makes the tender due for download again; clearing each
+    local_path stops it being re-selected here until that happens."""
+    collection.update_one(
+        {"_id": tender["_id"]},
+        {
+            "$set": {"documents": [{**entry, "local_path": None} for entry in tender.get("documents", [])]},
+            "$unset": {"documents_downloaded_at": ""},
+        },
+    )
+
+
 @dataclass
 class SummarizeSummary:
     summarized: int = 0
@@ -452,7 +472,10 @@ class SummarizeSummary:
 
 
 def _needs_summary(doc: dict[str, Any]) -> bool:
-    if not doc.get("documents"):
+    # No local_path left means there's nothing on disk to read - either
+    # already summarised, or reset for re-download (see
+    # _reset_for_redownload) and waiting on the collector.
+    if not any(entry.get("local_path") for entry in doc.get("documents") or []):
         return False
     generated_at = doc.get("document_summary_generated_at")
     if generated_at is None:
@@ -489,6 +512,7 @@ def summarize_pending_documents(
     summary = SummarizeSummary()
     for tender in candidates:
         file_texts: dict[str, str] = {}
+        any_on_disk = False
         for entry in tender.get("documents", []):
             local_path = entry.get("local_path")
             if not local_path:
@@ -496,15 +520,32 @@ def summarize_pending_documents(
             path = Path(local_path)
             if not path.exists():
                 continue
+            any_on_disk = True
             text = extract_text(path)
             if text:
                 file_texts[entry.get("filename", path.name)] = text
+
+        if not any_on_disk:
+            logger.warning(
+                "Downloaded files for tender %s (%s) are no longer on disk; queued for re-download.",
+                tender["_id"],
+                tender.get("tender_ref"),
+            )
+            _reset_for_redownload(collection, tender)
+            summary.failed += 1
+            continue
 
         if not file_texts:
             logger.error(
                 "No extractable text for tender %s (%s); skipping summary.",
                 tender["_id"],
                 tender.get("tender_ref"),
+            )
+            # Re-reading the same files would only fail the same way, so
+            # they're dropped - a later content change re-downloads them.
+            collection.update_one(
+                {"_id": tender["_id"]},
+                {"$set": {"documents": _delete_local_documents(tender.get("documents", []))}},
             )
             summary.failed += 1
             continue
@@ -518,6 +559,18 @@ def summarize_pending_documents(
                 tender.get("tender_ref"),
                 exc,
             )
+            summary.failed += 1
+            continue
+
+        # Stored before the local files are deleted, so a storage failure
+        # leaves them in place for a retry rather than losing the text.
+        document_text = joined_document_text(file_texts)
+        text_key = storage.tender_text_key(tender["_id"])
+        try:
+            storage.put_text(text_key, document_text)
+        except Exception as exc:  # noqa: BLE001 - one tender's failure must not stop the batch
+            logger.error("Could not store document text for tender %s (%s): %s",
+                         tender["_id"], tender.get("tender_ref"), exc)
             summary.failed += 1
             continue
 
@@ -572,14 +625,16 @@ def summarize_pending_documents(
             {
                 "$set": {
                     "document_summary": result.model_dump(),
-                    "document_text": joined_document_text(file_texts),
+                    "document_text_key": text_key,
+                    "document_text_chars": len(document_text),
                     "document_summary_generated_at": dt.datetime.now(dt.timezone.utc),
                     "documents": cleared_documents,
                     "domain_match": domain_match,
                     "eligibility_match": eligibility_match,
                 },
-                # A checklist was waiting on this text (see app.api.main).
-                "$unset": {"document_text_requested_at": ""},
+                # A checklist was waiting on this text (see app.api.main);
+                # `document_text` itself is no longer kept in Mongo.
+                "$unset": {"document_text_requested_at": "", "document_text": ""},
             },
         )
         summary.summarized += 1

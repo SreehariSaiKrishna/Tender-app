@@ -20,6 +20,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -120,7 +122,16 @@ def _extract_and_store_key_dates(page, tender: dict[str, Any], collection: Colle
 # documents' own text (annexure numbers, prescribed formats), so these are
 # downloaded again; the summarizer then re-reads them (documents_downloaded_at
 # is newer than the summary) and stores the text.
-_NO_DOCUMENT_TEXT = {"$or": [{"document_text": {"$exists": False}}, {"document_text": {"$in": [None, ""]}}]}
+# The text itself is in file storage; `document_text_chars` says whether
+# there is any (see app.intelligence.document_summarizer). A tender still
+# carrying its text in Mongo (summarised before the move, not yet migrated -
+# scripts/migrate_files_to_s3.py) has text too.
+_NO_DOCUMENT_TEXT = {
+    "$and": [
+        {"$or": [{"document_text_chars": {"$exists": False}}, {"document_text_chars": {"$in": [None, 0]}}]},
+        {"$or": [{"document_text": {"$exists": False}}, {"document_text": {"$in": [None, ""]}}]},
+    ]
+}
 _MISSING_DOCUMENT_TEXT = {"document_summary_generated_at": {"$ne": None}, **_NO_DOCUMENT_TEXT}
 
 
@@ -134,7 +145,8 @@ def _pending_tenders(
     pass to just those tenders, downloaded whether or not they'd otherwise
     be due."""
     has_url = {"source_url": {"$nin": [None, ""]}}
-    # document_text is large and never needed here - only whether it exists.
+    # Tenders summarised before the text moved to file storage may still
+    # carry a large document_text - never needed here.
     projection = {"document_text": 0}
     if tender_ids is not None:
         pending = list(collection.find({**has_url, "_id": {"$in": tender_ids}}, projection))
@@ -253,11 +265,20 @@ def run_key_dates_backfill(
 
 
 def run_document_collection(
-    settings: Settings | None = None, limit: int | None = None, tender_ids: list[Any] | None = None
+    settings: Settings | None = None,
+    limit: int | None = None,
+    tender_ids: list[Any] | None = None,
+    after_each: Callable[[Any], None] | None = None,
+    deadline: float | None = None,
 ) -> DocumentDownloadSummary:
     """Download attached documents for every eligible tender that doesn't
     have them yet (or whose listing changed since the last download, or
     whose document text was never kept) - or just for `tender_ids`.
+
+    `after_each(tender_id)` runs right after each successful download - the
+    pipeline summarises the tender there, while its files are still on this
+    invocation's disk, so a run cut short loses at most one tender's work.
+    `deadline` (a time.monotonic() value): no new tender is started after it.
 
     Never raises for an individual tender's failure - only for login
     failure or a fatal browser error, which stop the whole run safely (same
@@ -306,8 +327,17 @@ def run_document_collection(
             return summary
 
         for tender in pending:
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.warning("Run time budget reached; %d tender(s) left for the next run",
+                               len(pending) - len(summary.outcomes))
+                break
             outcome = _download_one_tender(page, tender, documents_dir, collection)
             summary.outcomes.append(outcome)
+            if after_each is not None and outcome.status in ("success", "partial"):
+                try:
+                    after_each(tender["_id"])
+                except Exception:  # noqa: BLE001 - the tender is picked up again by the summarize step
+                    logger.exception("Summarising tender %s right after download failed", tender["_id"])
 
         context.close()
 

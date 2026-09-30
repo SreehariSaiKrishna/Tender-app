@@ -24,6 +24,16 @@ echo "== Confirming AWS identity (AWS_PROFILE=${AWS_PROFILE}) =="
 aws sts get-caller-identity --query 'Arn' --output text
 
 echo
+echo "== Reading the dashboard URL from the frontend stack =="
+# The API's CORS origin and Cognito's login redirect are both this URL.
+FRONTEND_URL=$(aws cloudformation describe-stacks --stack-name tender-agent-frontend --region "${REGION}"   --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" --output text)
+if [ -z "$FRONTEND_URL" ] || [ "$FRONTEND_URL" = "None" ]; then
+  echo "Could not read the frontend stack's FrontendUrl output - deploy it first (./scripts/deploy-frontend.sh)."
+  exit 1
+fi
+echo "Frontend URL: ${FRONTEND_URL}"
+
+echo
 echo "== Building the container image =="
 sam build
 
@@ -33,7 +43,7 @@ sam validate --region "${REGION}"
 
 echo
 echo "== Deploying =="
-sam deploy --parameter-overrides "AlertEmail=${ALERT_EMAIL}"
+sam deploy --parameter-overrides "AlertEmail=${ALERT_EMAIL}" "FrontendUrl=${FRONTEND_URL}"
 
 echo
 echo "== Done =="
