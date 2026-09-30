@@ -11,7 +11,6 @@ so there's no multi-document transaction to wrap.
 """
 from __future__ import annotations
 
-import gridfs
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.collection import Collection
 
@@ -57,45 +56,18 @@ def get_automation_runs_collection() -> Collection:
     return get_client()[settings.mongodb_db_name]["automation_runs"]
 
 
-def get_company_documents_bucket() -> gridfs.GridFSBucket:
-    """Storage for the Documents tab (app.api.main) - reference documents the
+def get_company_documents_collection() -> Collection:
+    """The Documents tab's library (app.api.main) - reference documents the
     user uploads and manages by hand (certificates, licenses, etc), as
     opposed to the `documents` array on a tender (attachments collected by
-    the pipeline - see app.browser.document_collector). Backed by GridFS
-    (Mongo) rather than S3 since there's no general-purpose bucket in this
-    stack yet and the files involved are small.
+    the pipeline - see app.browser.document_collector). One record per file:
+    {_id, filename, length, uploadDate, s3_key, metadata: {display_name,
+    content_type, mark_kind?}} - the bytes themselves are in file storage
+    (app.storage) under `s3_key`. Laid out like the GridFS `.files`
+    collection it replaced, so ids carried over unchanged.
     """
     settings = get_settings()
-    return gridfs.GridFSBucket(get_client()[settings.mongodb_db_name], bucket_name="company_documents")
-
-
-def get_company_documents_files_collection() -> Collection:
-    """The `<bucket>.files` collection GridFS maintains alongside
-    get_company_documents_bucket() - metadata only (no chunk data), used to
-    rename a document without re-uploading its bytes.
-    """
-    settings = get_settings()
-    return get_client()[settings.mongodb_db_name]["company_documents.files"]
-
-
-def get_generated_bids_bucket() -> gridfs.GridFSBucket:
-    """Storage for the PDF bid packs app.reports.bid_generator produces
-    (one per tender, see POST /tenders/{id}/generate-bid) - a separate
-    bucket from get_company_documents_bucket() since these are generated
-    output tied to a specific tender_id, not user-managed reference
-    documents.
-    """
-    settings = get_settings()
-    return gridfs.GridFSBucket(get_client()[settings.mongodb_db_name], bucket_name="generated_bids")
-
-
-def get_generated_bids_files_collection() -> Collection:
-    """The `<bucket>.files` collection GridFS maintains alongside
-    get_generated_bids_bucket() - used to find/replace a tender's existing
-    bid pack by its `metadata.tender_id` without scanning file contents.
-    """
-    settings = get_settings()
-    return get_client()[settings.mongodb_db_name]["generated_bids.files"]
+    return get_client()[settings.mongodb_db_name]["company_documents"]
 
 
 _stamp_transfers_indexed = False
@@ -147,12 +119,6 @@ def ensure_indexes() -> None:
         ]
     )
     # Supports app.processing.cleanup's stale-closed-tender query.
-    collection.create_index(
-        [
-            ("disappeared", ASCENDING),
-            ("closing_date", ASCENDING),
-            ("applied", ASCENDING),
-        ]
-    )
+    collection.create_index([("disappeared", ASCENDING), ("closing_date", ASCENDING)])
 
     get_automation_runs_collection().create_index([("started_at", DESCENDING)])

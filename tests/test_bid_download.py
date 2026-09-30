@@ -1,91 +1,67 @@
-"""GET /tenders/{id}/bid-document(/info) - a part-by-part download stays on
-the file it started with, even when the pack is regenerated in between.
-A small in-memory GridFS bucket stands in for MongoDB."""
+"""GET /tenders/{id}/bid-document(/link) - bid packs aren't kept: one is
+offered for download only for a while after it's generated (the bucket's
+bid-packs/ rule deletes it after a day). A temporary folder stands in for
+the bucket (see tests/conftest.py), so the link's `url` is null here and
+the pack comes from /bid-document itself."""
 from __future__ import annotations
 
 import datetime as dt
-import io
 
 import mongomock
 import pytest
 from bson import ObjectId
 from fastapi.testclient import TestClient
 
+from app import storage
 from app.api import main as api
 
 TENDER_ID = "6ab1e8837754c947b03a5759"
-
-
-class _GridOut(io.BytesIO):
-    def __init__(self, doc, data):
-        super().__init__(data)
-        self._id, self.filename, self.length = doc["_id"], doc["filename"], doc["length"]
-
-
-class FakeBucket:
-    """upload_from_stream / delete / open_download_stream over a mongomock
-    `files` collection, the file bytes kept alongside."""
-
-    def __init__(self):
-        self.files = mongomock.MongoClient().db["generated_bids.files"]
-        self.data = {}
-        self._clock = dt.datetime(2026, 1, 1)
-
-    def upload_from_stream(self, filename, data, metadata=None):
-        self._clock += dt.timedelta(seconds=1)
-        _id = ObjectId()
-        self.files.insert_one({"_id": _id, "filename": filename, "length": len(data), "metadata": metadata or {},
-                               "uploadDate": self._clock})
-        self.data[_id] = data
-        return _id
-
-    def delete(self, _id):
-        self.files.delete_one({"_id": _id})
-        self.data.pop(_id, None)
-
-    def open_download_stream(self, _id):
-        return _GridOut(self.files.find_one({"_id": _id}), self.data[_id])
+PACK_KEY = f"bid-packs/{TENDER_ID}/abc.pdf"
 
 
 @pytest.fixture()
-def bucket(monkeypatch):
-    bids = FakeBucket()
-    monkeypatch.setattr(api, "get_generated_bids_bucket", lambda: bids)
-    monkeypatch.setattr(api, "get_generated_bids_files_collection", lambda: bids.files)
-    monkeypatch.setattr(api, "BID_PART_SIZE", 4)
-    return bids
+def tenders(monkeypatch):
+    collection = mongomock.MongoClient().db["tenders"]
+    monkeypatch.setattr(api, "get_collection", lambda: collection)
+    return collection
 
 
-def _upload(bucket, data: bytes):
-    return bucket.upload_from_stream("bid-pack.pdf", data, metadata={"tender_id": TENDER_ID})
+def _tender(tenders, generated_hours_ago: float | None, **extra):
+    doc = {"_id": ObjectId(TENDER_ID), "tender_ref": "57708084", **extra}
+    if generated_hours_ago is not None:
+        storage.put_bytes(PACK_KEY, b"%PDF-pack", "application/pdf")
+        doc["bid_pack_key"] = PACK_KEY
+        doc["bid_generated_at"] = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=generated_hours_ago)
+    tenders.insert_one(doc)
+    return doc
 
 
-def test_parts_come_from_the_file_the_download_started_on(bucket):
+def test_a_fresh_pack_can_be_downloaded(tenders):
+    _tender(tenders, generated_hours_ago=1)
     client = TestClient(api.app)
-    old = _upload(bucket, b"OLD-PACK-1234")
-    info = client.get(f"/tenders/{TENDER_ID}/bid-document/info").json()
-    assert info["file_id"] == str(old) and info["parts"] == 4
-
-    first = client.get(f"/tenders/{TENDER_ID}/bid-document", params={"part": 0, "file": info["file_id"]})
-    assert first.content == b"OLD-"
-
-    # Regenerated mid-download: the new pack is stored, then the old one deleted.
-    new = _upload(bucket, b"NEW-PACK-5678")
-    bucket.delete(old)
-    gone = client.get(f"/tenders/{TENDER_ID}/bid-document", params={"part": 1, "file": info["file_id"]})
-    assert gone.status_code == 409  # never a mix of old and new parts
-
-    restart = client.get(f"/tenders/{TENDER_ID}/bid-document/info").json()
-    assert restart["file_id"] == str(new)
-    data = b"".join(
-        client.get(f"/tenders/{TENDER_ID}/bid-document", params={"part": i, "file": restart["file_id"]}).content
-        for i in range(restart["parts"])
-    )
-    assert data == b"NEW-PACK-5678"
+    link = client.get(f"/tenders/{TENDER_ID}/bid-document/link").json()
+    assert link == {"url": None, "filename": "bid-pack-57708084.pdf"}  # no bucket locally
+    res = client.get(f"/tenders/{TENDER_ID}/bid-document")
+    assert res.content == b"%PDF-pack"
+    assert "bid-pack-57708084.pdf" in res.headers["content-disposition"]
 
 
-def test_without_a_file_id_the_newest_pack_is_served(bucket):
+def test_an_expired_pack_is_not_offered(tenders):
+    _tender(tenders, generated_hours_ago=21)
     client = TestClient(api.app)
-    _upload(bucket, b"older")
-    _upload(bucket, b"newer")
-    assert client.get(f"/tenders/{TENDER_ID}/bid-document").content == b"newer"
+    assert client.get(f"/tenders/{TENDER_ID}/bid-document/link").status_code == 404
+    assert client.get(f"/tenders/{TENDER_ID}").json()["bid_pack_available"] is False
+
+
+def test_no_pack_until_one_is_generated(tenders):
+    _tender(tenders, generated_hours_ago=None)
+    client = TestClient(api.app)
+    assert client.get(f"/tenders/{TENDER_ID}/bid-document/link").status_code == 404
+    tender = client.get(f"/tenders/{TENDER_ID}").json()
+    assert tender["bid_pack_available"] is False and "bid_pack_key" not in tender
+
+
+def test_the_tender_row_says_when_a_pack_is_available(tenders):
+    _tender(tenders, generated_hours_ago=2)
+    tender = TestClient(api.app).get(f"/tenders/{TENDER_ID}").json()
+    assert tender["bid_pack_available"] is True and "bid_pack_key" not in tender

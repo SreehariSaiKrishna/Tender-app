@@ -12,6 +12,7 @@ import json
 import mongomock
 import pytest
 
+from app import storage
 from app.intelligence.document_summarizer import (
     DocumentSummarizationError,
     DocumentSummary,
@@ -380,7 +381,12 @@ def test_summarize_pending_documents_persists_result(collection, tmp_path):
     assert stored["document_summary"]["estimated_bid_amount"] == "INR 45,00,000 (estimated)"
     assert stored["document_summary_generated_at"] is not None
     # The documents' own text is kept for the submission checklist - the files themselves are deleted.
-    assert stored["document_text"] == "--- Document: notice.txt ---\nTender notice text"
+    # Kept in file storage, not on the tender - only its key and length are.
+    expected_text = "--- Document: notice.txt ---\nTender notice text"
+    assert "document_text" not in stored
+    assert stored["document_text_chars"] == len(expected_text)
+    assert storage.get_text(stored["document_text_key"]) == expected_text
+    assert storage.load_document_text(stored)["document_text"] == expected_text
 
 
 def test_summarize_pending_documents_clears_checklist_request_and_honours_tender_ids(collection, tmp_path):
@@ -400,7 +406,7 @@ def test_summarize_pending_documents_clears_checklist_request_and_honours_tender
 
     assert summary.summarized == 1
     stored = collection.find_one({"_id": wanted})
-    assert stored["document_text"] and "document_text_requested_at" not in stored
+    assert stored["document_text_chars"] and "document_text_requested_at" not in stored
     assert "document_summary" not in collection.find_one({"dedup_key": "ref:1"})
 
 
@@ -514,7 +520,10 @@ def test_summarize_pending_documents_resummarizes_after_redownload(collection, t
     assert summary.summarized == 1
 
 
-def test_summarize_pending_documents_skips_tenders_with_no_extractable_text(collection, tmp_path):
+def test_summarize_pending_documents_queues_redownload_when_files_are_gone(collection, tmp_path):
+    """Regression (seen live 2026-09-30): files downloaded into an earlier
+    Lambda invocation's /tmp are gone by the next run - the tender must be
+    handed back to the collector, not re-selected and failed every run."""
     missing_path = tmp_path / "does_not_exist.pdf"
     make_tender(
         collection,
@@ -528,6 +537,39 @@ def test_summarize_pending_documents_skips_tenders_with_no_extractable_text(coll
     assert summary.summarized == 0
     assert summary.failed == 1
     assert len(provider.calls) == 0
+    stored = collection.find_one({"dedup_key": "ref:1"})
+    assert "documents_downloaded_at" not in stored  # due for download again
+    assert stored["documents"][0]["local_path"] is None
+    assert stored["documents"][0]["filename"] == "does_not_exist.pdf"
+
+    again = summarize_pending_documents(provider=provider, collection=collection)
+    assert again.failed == 0  # not re-selected until re-downloaded
+
+
+def test_summarize_pending_documents_drops_files_with_no_extractable_text(collection, tmp_path):
+    tender_dir = tmp_path / "tender"
+    tender_dir.mkdir()
+    doc_path = tender_dir / "scan.bin"  # no extractor for this type
+    doc_path.write_bytes(b"\x00\x01")
+    downloaded_at = dt.datetime(2026, 9, 29, 13, 4)
+    make_tender(
+        collection,
+        documents=[{"filename": "scan.bin", "local_path": str(doc_path)}],
+        documents_downloaded_at=downloaded_at,
+    )
+    provider = FakeProvider(response=VALID_SUMMARY)
+
+    summary = summarize_pending_documents(provider=provider, collection=collection)
+
+    assert summary.failed == 1
+    assert len(provider.calls) == 0
+    assert not doc_path.exists()
+    stored = collection.find_one({"dedup_key": "ref:1"})
+    assert stored["documents_downloaded_at"] == downloaded_at  # not re-downloaded
+    assert stored["documents"][0]["local_path"] is None
+
+    again = summarize_pending_documents(provider=provider, collection=collection)
+    assert again.failed == 0
 
 
 def test_summarize_pending_documents_continues_past_a_single_failure(collection, tmp_path):

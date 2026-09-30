@@ -45,3 +45,5 @@ env.json
 # Tender documents downloaded at runtime by the document collector
 data/documents/
 data/backups/
+# Local stand-in for the S3 files bucket (app.storage)
+data/files/

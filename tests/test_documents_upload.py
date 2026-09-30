@@ -1,66 +1,32 @@
 """Documents library files up to MAX_UPLOAD_SIZE: uploaded (or replaced) in
 parts via PUT /uploads/{id}/parts/N + POST /documents/uploads/{id}/finish,
-and downloaded/viewed in parts via /documents/{id}/info + ?part=N. A small
-in-memory GridFS bucket stands in for MongoDB."""
+and downloaded/viewed in parts via /documents/{id}/info + ?part=N. A
+mongomock collection holds the records; the bytes go to a temporary folder
+standing in for the S3 bucket (see tests/conftest.py)."""
 from __future__ import annotations
 
-import datetime as dt
 import io
 
 import mongomock
 import pytest
-from bson import ObjectId
 from fastapi.testclient import TestClient
 
+from app import storage
 from app.api import main as api
 
 UPLOAD_ID = "b" * 32
 
 
-class _GridOut(io.BytesIO):
-    def __init__(self, doc, data):
-        super().__init__(data)
-        self._id, self.filename, self.length = doc["_id"], doc["filename"], doc["length"]
-        self.metadata, self.upload_date = doc["metadata"], doc["uploadDate"]
-
-
-class FakeBucket:
-    def __init__(self):
-        self.files = mongomock.MongoClient().db["company_documents.files"]
-        self.data = {}
-
-    def upload_from_stream(self, filename, data, metadata=None):
-        _id = ObjectId()
-        self.files.insert_one({"_id": _id, "filename": filename, "length": len(data), "metadata": metadata or {},
-                               "uploadDate": dt.datetime(2026, 9, 29)})
-        self.data[_id] = data
-        return _id
-
-    def open_download_stream(self, _id):
-        doc = self.files.find_one({"_id": _id})
-        if doc is None:
-            raise api.gridfs.errors.NoFile()
-        return _GridOut(doc, self.data[_id])
-
-    def delete(self, _id):
-        self.files.delete_one({"_id": _id})
-        self.data.pop(_id, None)
-
-    def find(self, sort=None):
-        return [self.open_download_stream(d["_id"]) for d in self.files.find()]
-
-
 @pytest.fixture()
 def client(monkeypatch):
-    bucket = FakeBucket()
-    monkeypatch.setattr(api, "get_company_documents_bucket", lambda: bucket)
-    monkeypatch.setattr(api, "get_company_documents_files_collection", lambda: bucket.files)
+    records = mongomock.MongoClient().db["company_documents"]
+    monkeypatch.setattr(api, "get_company_documents_collection", lambda: records)
     transfers = mongomock.MongoClient().db["stamp_transfers"]
     monkeypatch.setattr(api, "get_stamp_transfers_collection", lambda: transfers)
     monkeypatch.setattr(api, "TRANSFER_PART_SIZE", 1000)
     monkeypatch.setattr(api, "MAX_DOCUMENT_SIZE", 1500)  # the one-request endpoints' cap
     c = TestClient(api.app)
-    c.bucket, c.transfers = bucket, transfers
+    c.records, c.transfers = records, transfers
     return c
 
 
@@ -107,8 +73,23 @@ def test_replacing_in_parts_keeps_the_name(client):
     assert res.status_code == 200
     replaced = res.json()
     assert replaced["name"] == "SIV_Stamp" and replaced["filename"] == "new.png"
-    assert [d["id"] for d in client.get("/documents").json()["documents"]] == [replaced["id"]]
+    # Same id, so checklist rows and Sign & Stamp choices that point at it still work.
+    assert replaced["id"] == original["id"]
+    assert [d["id"] for d in client.get("/documents").json()["documents"]] == [original["id"]]
     assert _fetch(client, replaced["id"]) == data
+    # The old file is gone from storage; only the new one is kept.
+    record = client.records.find_one({})
+    assert record["s3_key"].endswith("/new.png")
+    assert storage.get_bytes(record["s3_key"].replace("new.png", "old.png")) is None
+
+
+def test_deleting_a_document_removes_its_file(client):
+    doc = client.post("/documents", files={"file": ("a.txt", b"hello", "text/plain")}).json()
+    key = client.records.find_one({})["s3_key"]
+    assert storage.get_bytes(key) == b"hello"
+    assert client.delete(f"/documents/{doc['id']}").status_code == 200
+    assert storage.get_bytes(key) is None and client.records.count_documents({}) == 0
+    assert client.delete(f"/documents/{doc['id']}").status_code == 404
 
 
 def test_whole_file_download_still_works_for_small_files(client):

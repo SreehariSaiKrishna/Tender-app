@@ -79,13 +79,18 @@ class Settings(BaseSettings):
     # Bytes of library PDFs merged into one bid pack (see
     # app.reports.bid_generator.plan_rows) - anything past it gets a
     # placeholder page to attach separately. The dashboard downloads packs
-    # in 3 MB parts (app.api.main.BID_PART_SIZE), so this isn't bounded by
-    # the Lambda response cap.
+    # straight from file storage (app.api.main.bid_document_link), so this
+    # isn't bounded by the Lambda response cap.
     enclosure_byte_budget: int = 30 * 1024 * 1024
     # Set on the API Lambda only (see template.yaml): a checklist waiting on
     # a tender's documents asks this function to fetch them right away (see
     # app.api.main._start_document_fetch). Empty when running locally.
     pipeline_function_name: str = ""
+    # File storage (see app.storage): the S3 bucket holding company
+    # documents, tender document text and short-lived bid packs. Set on both
+    # Lambdas by template.yaml; empty locally, where files_dir is used instead.
+    files_bucket: str = ""
+    files_dir: str = "./data/files"
 
     @property
     def base_dir(self) -> Path:

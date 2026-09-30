@@ -8,6 +8,18 @@ Description: >
   API URL baked into index.html as a plain static value at upload time
   (see scripts/deploy-frontend.sh), not a CloudFormation reference.
 
+# Only used to build the Content-Security-Policy below - scripts/
+# deploy-frontend.sh passes the backend stack's outputs in.
+Parameters:
+  ApiUrl:
+    Type: String
+    Default: ""
+    Description: The backend stack's ApiUrl output
+  CognitoDomain:
+    Type: String
+    Default: ""
+    Description: The backend stack's CognitoDomain output (the hosted login page)
+
 Resources:
   FrontendBucket:
     Type: AWS::S3::Bucket
@@ -32,6 +44,47 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # Browser-side hardening for the dashboard page. The CSP matters most:
+  # the page holds the user's login tokens, so it only lets the page talk
+  # to this origin, the API, the Cognito login endpoints and the pdf.js CDN.
+  # 'unsafe-inline' is needed because the dashboard's script and styles are
+  # inline in index.html. blob:/data: cover the rendered PDFs and images
+  # (document view, stamp preview) the page builds itself.
+  FrontendSecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-security-headers"
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          # Keeps the one-time ?code= from the login redirect out of any
+          # Referer header.
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub >-
+              default-src 'self';
+              script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;
+              worker-src 'self' blob: https://cdnjs.cloudflare.com;
+              style-src 'self' 'unsafe-inline';
+              img-src 'self' blob: data:;
+              font-src 'self' data:;
+              object-src 'self' blob:;
+              connect-src 'self' ${ApiUrl} ${CognitoDomain} https://cdnjs.cloudflare.com;
+              frame-ancestors 'none';
+              base-uri 'self';
+              form-action 'self' ${CognitoDomain}
+
   FrontendDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -53,6 +106,7 @@ Resources:
           # AWS managed "CachingOptimized" policy - a fixed, documented ID,
           # not something this account needs to define itself.
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref FrontendSecurityHeaders
         PriceClass: PriceClass_100
 
   FrontendBucketPolicy:

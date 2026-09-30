@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
-import gridfs
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -33,15 +32,13 @@ from mangum import Mangum
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pymongo import DESCENDING
 
+from app import storage
 from app.config import CONFIG_DIR, get_settings, load_company_profile, load_saved_queries
 from app.database import (
     get_automation_runs_collection,
     get_collection,
-    get_company_documents_bucket,
-    get_company_documents_files_collection,
+    get_company_documents_collection,
     get_eligibility_criteria_collection,
-    get_generated_bids_bucket,
-    get_generated_bids_files_collection,
     get_stamp_transfers_collection,
 )
 from app.intelligence.bid_drafter import BidDraftingError, draft_checklist_documents, plan_submission_checklist
@@ -73,17 +70,17 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tender Intelligence API")
 
-# Mirrors template.yaml's CorsConfiguration for the deployed API Gateway -
-# needed locally too since uvicorn serves no CORS headers on its own and the
-# frontend is a different origin (e.g. a local static server or file://).
-# No auth, nothing sensitive returned/accepted (the write endpoints below
-# only set a decision flag, a free-text reason, or an eligibility criterion
-# - by id), so allowing any origin is a reasonable choice here.
+# Local dev only: deployed, API Gateway answers CORS itself (template.yaml's
+# CorsConfiguration, locked to the dashboard's CloudFront origin) and its
+# Cognito authorizer rejects any request without a login before it reaches
+# this app. Locally, uvicorn serves no CORS headers on its own and the
+# dashboard is served from a different localhost port, so allow just that.
+# There's no login locally - keep uvicorn bound to 127.0.0.1.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["content-type"],
+    allow_headers=["content-type", "authorization"],
 )
 
 CLOSING_SOON_DAYS = 7
@@ -120,6 +117,9 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     # The editable submission checklist is served on its own (GET
     # /tenders/{id}/checklist) - rows only need checklist_generated_at.
     out.pop("checklist", None)
+    out.pop("document_text_key", None)
+    out["bid_pack_available"] = _bid_pack_available(doc)
+    out.pop("bid_pack_key", None)
 
     for key in (
         "first_seen",
@@ -231,10 +231,10 @@ def get_tender(tender_id: str) -> dict[str, Any]:
 
 @app.post("/tenders/{tender_id}/apply")
 def mark_applied(tender_id: str) -> dict[str, Any]:
-    """Record that the user applied to this tender. This is what protects
-    it from app.processing.cleanup's auto-delete of stale closed tenders -
-    a one-way flag; once set, the frontend disables the decline option for
-    this tender and there's no "unapply".
+    """Record that the user applied to this tender - a one-way flag; once
+    set, the frontend disables the decline option for this tender and
+    there's no "unapply". It doesn't keep the tender past
+    app.processing.cleanup's deletion of closed tenders.
     """
     collection = get_collection()
     try:
@@ -262,9 +262,7 @@ def mark_declined(tender_id: str, body: DeclineRequest) -> dict[str, Any]:
     """Record that the user decided not to bid on this tender, and why -
     the mirror of POST /tenders/{id}/apply. Also a one-way flag; once set,
     the frontend disables the apply option for this tender, and there's no
-    "undecline". Unlike `applied`, this does NOT protect the tender from
-    app.processing.cleanup's auto-delete of stale closed tenders - a
-    decline is a decision already made, not one still pending review.
+    "undecline".
     """
     reason = body.reason.strip()
     if not reason:
@@ -298,19 +296,17 @@ def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
     for app.reports.bid_generator - `open_bytes` is lazy so generating a bid
     pack only reads the bytes of documents it actually ends up referencing.
     """
-    bucket = get_company_documents_bucket()
     refs = []
-    for grid_out in bucket.find():
-        metadata = grid_out.metadata or {}
-        file_id = grid_out._id
+    for record in get_company_documents_collection().find():
+        metadata = record.get("metadata") or {}
         refs.append(
             CompanyDocumentRef(
-                id=str(file_id),
-                name=metadata.get("display_name") or grid_out.filename,
-                filename=grid_out.filename,
+                id=str(record["_id"]),
+                name=metadata.get("display_name") or record["filename"],
+                filename=record["filename"],
                 content_type=metadata.get("content_type") or "application/octet-stream",
-                open_bytes=lambda fid=file_id: bucket.open_download_stream(fid).read(),
-                size=grid_out.length,
+                open_bytes=lambda key=record["s3_key"]: _document_bytes(key),
+                size=record.get("length"),
                 mark_kind=metadata.get("mark_kind"),
             )
         )
@@ -318,6 +314,8 @@ def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
 
 
 def _find_tender(tender_id: str) -> tuple[ObjectId, dict[str, Any]]:
+    """The tender, with its document text read back from file storage (see
+    app.storage.load_document_text) for the checklist and bid pack."""
     try:
         object_id = ObjectId(tender_id)
     except InvalidId:
@@ -325,7 +323,7 @@ def _find_tender(tender_id: str) -> tuple[ObjectId, dict[str, Any]]:
     tender = get_collection().find_one({"_id": object_id})
     if tender is None:
         raise HTTPException(status_code=404, detail="Tender not found")
-    return object_id, tender
+    return object_id, storage.load_document_text(tender)
 
 
 def _letterhead_path(company_profile: dict[str, Any]) -> Path | None:
@@ -510,7 +508,7 @@ def _checklist_response(
                     "tender_opening_date", "key_dates", "technical_criteria_table",
                 )
             },
-            "bid_document_id": tender.get("bid_document_id"),
+            "bid_pack_available": _bid_pack_available(tender),
         },
         "checklist": checklist,
         # What a row's "Attach" picker can choose from.
@@ -636,11 +634,14 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     checklist (see app.reports.bid_generator.generate_bid_package): every
     row's document in S.No order - library documents attached, and each
     document the bidder must write AI-drafted from the tender (see
-    app.intelligence.bid_drafter.draft_checklist_documents) - then stores
-    it in GridFS (get_generated_bids_bucket, one file per tender, replacing
-    any previous draft) and marks the tender applied, same one-way
-    protection POST /tenders/{id}/apply gives against
-    app.processing.cleanup's stale-closed-tender deletion.
+    app.intelligence.bid_drafter.draft_checklist_documents) - and marks the
+    tender applied.
+
+    The pack isn't kept: it's put in file storage under bid-packs/ only so
+    the browser can download it (GET /tenders/{id}/bid-document/link), and
+    that prefix expires after a day (template.yaml). It's too big for one
+    API response, and generating it can outlast the API's 30s limit - a
+    request that times out still leaves the pack there to download.
 
     This never contacts the tendering authority or any external system -
     see this project's stated scope in README.md. It only drafts a local
@@ -706,22 +707,18 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     except BidGenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    bids_bucket = get_generated_bids_bucket()
     now = dt.datetime.now(dt.timezone.utc)
-    file_id = bids_bucket.upload_from_stream(
-        f"bid-pack-{tender_id}.pdf",
-        pdf_bytes,
-        metadata={"tender_id": tender_id, "content_type": "application/pdf", "generated_at": now},
-    )
-    # One bid pack per tender - the previous one is deleted only once the new
-    # one is stored, so there's never a moment with no pack to download.
-    for existing in get_generated_bids_files_collection().find(
-        {"metadata.tender_id": tender_id, "_id": {"$ne": file_id}}
-    ):
-        bids_bucket.delete(existing["_id"])
+    pack_key = f"{storage.BID_PACKS_PREFIX}{tender_id}/{uuid.uuid4().hex}.pdf"
+    storage.put_bytes(pack_key, pdf_bytes, "application/pdf")
+    # The previous pack goes as soon as the new one is stored.
+    if tender.get("bid_pack_key"):
+        try:
+            storage.delete(tender["bid_pack_key"])
+        except Exception as exc:  # noqa: BLE001 - it expires on its own anyway
+            logger.warning("Could not delete the previous bid pack for tender %s: %s", tender_id, exc)
 
     update: dict[str, Any] = {
-        "bid_document_id": str(file_id),
+        "bid_pack_key": pack_key,
         "bid_generated_at": now,
         "checklist": checklist,
     }
@@ -736,62 +733,60 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     return _serialize(doc)
 
 
-# A bid pack encloses library documents, so it easily outgrows what one
-# Lambda response can carry (6 MB after Mangum's base64 inflation - see
-# MAX_DOCUMENT_SIZE) and API Gateway answers 500. The dashboard therefore
-# reads /bid-document/info, fetches each ?part=N slice (3 MB raw, ~4 MB
-# encoded) and joins them in the browser. With no ?part the whole file is
-# returned in one response, which only works for small packs.
-BID_PART_SIZE = 3 * 1024 * 1024
+# How long after generation a bid pack is offered for download. The
+# bid-packs/ lifecycle rule (template.yaml) deletes it after a day; S3 runs
+# those rules lazily, so the pack may linger a little past that, but it's
+# never offered past this window.
+BID_PACK_AVAILABLE_FOR = dt.timedelta(hours=20)
 
 
-def _open_bid_pack(tender_id: str, file_id: str | None = None) -> Any:
-    """This tender's bid pack - the newest, or the exact file a part-by-part
-    download started on (`file_id`, from /bid-document/info), so its parts
-    never mix two versions. 409 when that file was replaced mid-download by
-    a newer generation - the dashboard then starts the download again."""
-    files = get_generated_bids_files_collection()
-    if file_id:
-        try:
-            doc = files.find_one({"_id": ObjectId(file_id), "metadata.tender_id": tender_id})
-        except InvalidId:
-            raise HTTPException(status_code=400, detail="Invalid bid pack file id")
-        if doc is None:
-            raise HTTPException(status_code=409, detail="The bid pack was regenerated while downloading - "
-                                                        "download it again for the new version.")
-    else:
-        doc = files.find_one({"metadata.tender_id": tender_id}, sort=[("uploadDate", DESCENDING)])
-        if doc is None:
-            raise HTTPException(status_code=404, detail="No bid pack has been generated for this tender yet")
-    return get_generated_bids_bucket().open_download_stream(doc["_id"])
+def _bid_pack_available(tender: dict[str, Any]) -> bool:
+    generated_at = tender.get("bid_generated_at")
+    if not tender.get("bid_pack_key") or generated_at is None:
+        return False
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=dt.timezone.utc)
+    return dt.datetime.now(dt.timezone.utc) - generated_at < BID_PACK_AVAILABLE_FOR
 
 
-@app.get("/tenders/{tender_id}/bid-document/info")
-def bid_document_info(tender_id: str) -> dict[str, Any]:
-    grid_out = _open_bid_pack(tender_id)
-    return {
-        "file_id": str(grid_out._id),
-        "filename": grid_out.filename,
-        "size": grid_out.length,
-        "part_size": BID_PART_SIZE,
-        "parts": max(1, -(-grid_out.length // BID_PART_SIZE)),
-    }
+def _bid_pack_key_or_404(tender_id: str) -> tuple[dict[str, Any], str]:
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    tender = get_collection().find_one({"_id": object_id}, {"bid_pack_key": 1, "bid_generated_at": 1, "tender_ref": 1})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    if not _bid_pack_available(tender):
+        raise HTTPException(status_code=404, detail="No bid pack to download - generate it again.")
+    return tender, tender["bid_pack_key"]
+
+
+def _bid_pack_filename(tender: dict[str, Any]) -> str:
+    return f"bid-pack-{tender.get('tender_ref') or tender['_id']}.pdf"
+
+
+@app.get("/tenders/{tender_id}/bid-document/link")
+def bid_document_link(tender_id: str) -> dict[str, Any]:
+    """A short-lived link the browser downloads the bid pack from directly
+    (it's too big for one API response). `url` is null when running
+    locally without a bucket - GET /tenders/{id}/bid-document serves it then."""
+    tender, key = _bid_pack_key_or_404(tender_id)
+    return {"url": storage.download_url(key, _bid_pack_filename(tender)), "filename": _bid_pack_filename(tender)}
 
 
 @app.get("/tenders/{tender_id}/bid-document")
-def download_bid_document(tender_id: str, part: int | None = None, file: str | None = None) -> Response:
-    grid_out = _open_bid_pack(tender_id, file)
-    if part is None:
-        content = grid_out.read()
-    else:
-        if part < 0 or part * BID_PART_SIZE >= max(grid_out.length, 1):
-            raise HTTPException(status_code=416, detail="Part out of range")
-        grid_out.seek(part * BID_PART_SIZE)
-        content = grid_out.read(BID_PART_SIZE)
+def download_bid_document(tender_id: str) -> Response:
+    """The whole pack in one response - for local runs only (see
+    bid_document_link); deployed, packs outgrow the Lambda response cap."""
+    tender, key = _bid_pack_key_or_404(tender_id)
+    content = storage.get_bytes(key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="No bid pack to download - generate it again.")
     return Response(
         content=content,
-        media_type="application/pdf" if part is None else "application/octet-stream",
-        headers={"Content-Disposition": _content_disposition("attachment", grid_out.filename)},
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition("attachment", _bid_pack_filename(tender))},
     )
 
 
@@ -924,9 +919,9 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
 # A small document library the user manages by hand from the dashboard
 # (company certificates, licenses, etc) - upload, rename, delete, view and
 # download. Distinct from the `documents` array on a tender, which is
-# attachments collected automatically by the pipeline. Stored in GridFS
-# (see app.database.get_company_documents_bucket) since there's no
-# general-purpose S3 bucket in this stack and Mongo is already provisioned.
+# attachments collected automatically by the pipeline. Each file's details
+# are a record in app.database.get_company_documents_collection(); its
+# bytes are in file storage (app.storage, under company-documents/).
 #
 # One request or response can carry at most MAX_DOCUMENT_SIZE: Mangum
 # returns the response base64-encoded, which inflates size by ~33%, and a
@@ -934,7 +929,7 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
 # payload safely under that. Files up to MAX_UPLOAD_SIZE therefore travel in
 # TRANSFER_PART_SIZE parts instead: uploaded with PUT /uploads/{id}/parts/N
 # then a .../finish call (documents library or Sign & Stamp), and downloaded
-# with ?part=N (as the bid pack is - see BID_PART_SIZE).
+# with ?part=N.
 MAX_DOCUMENT_SIZE = 4 * 1024 * 1024
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 TRANSFER_PART_SIZE = 3 * 1024 * 1024
@@ -988,17 +983,31 @@ def _take_upload(upload_id: str, parts: int) -> bytes:
     return content
 
 
-def _serialize_document(grid_out: Any) -> dict[str, Any]:
-    metadata = grid_out.metadata or {}
+def _serialize_document(record: dict[str, Any]) -> dict[str, Any]:
+    metadata = record.get("metadata") or {}
     return {
-        "id": str(grid_out._id),
-        "name": metadata.get("display_name") or grid_out.filename,
-        "filename": grid_out.filename,
+        "id": str(record["_id"]),
+        "name": metadata.get("display_name") or record["filename"],
+        "filename": record["filename"],
         "content_type": metadata.get("content_type") or "application/octet-stream",
-        "size": grid_out.length,
-        "uploaded_at": _iso(grid_out.upload_date),
+        "size": record.get("length"),
+        "uploaded_at": _iso(record.get("uploadDate")),
         "mark_kind": metadata.get("mark_kind"),
     }
+
+
+def _document_key(document_id: object, filename: str) -> str:
+    # The filename is kept for readability in the bucket; slashes would
+    # otherwise add path levels.
+    safe = re.sub(r"[\\/]+", "_", filename).strip() or "document"
+    return f"{storage.COMPANY_DOCUMENTS_PREFIX}{document_id}/{safe}"
+
+
+def _document_bytes(key: str) -> bytes:
+    content = storage.get_bytes(key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Document file not found in storage")
+    return content
 
 
 def _content_disposition(kind: str, filename: str) -> str:
@@ -1009,15 +1018,18 @@ def _content_disposition(kind: str, filename: str) -> str:
     return f'{kind}; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quote(filename)}'
 
 
-def _get_document_or_404(document_id: str) -> Any:
+def _document_object_id(document_id: str) -> ObjectId:
     try:
-        object_id = ObjectId(document_id)
+        return ObjectId(document_id)
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid document id")
-    try:
-        return get_company_documents_bucket().open_download_stream(object_id)
-    except gridfs.errors.NoFile:
+
+
+def _get_document_or_404(document_id: str) -> dict[str, Any]:
+    record = get_company_documents_collection().find_one({"_id": _document_object_id(document_id)})
+    if record is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    return record
 
 
 def _check_document_content(content: bytes, max_size: int) -> None:
@@ -1042,9 +1054,20 @@ def _store_document(
     metadata = {"display_name": display_name, "content_type": content_type or "application/octet-stream"}
     if mark_kind:
         metadata["mark_kind"] = mark_kind
-    bucket = get_company_documents_bucket()
-    file_id = bucket.upload_from_stream(filename or display_name, content, metadata=metadata)
-    return _serialize_document(bucket.open_download_stream(file_id))
+    document_id = ObjectId()
+    stored_filename = filename or display_name
+    key = _document_key(document_id, stored_filename)
+    storage.put_bytes(key, content, metadata["content_type"])
+    record = {
+        "_id": document_id,
+        "filename": stored_filename,
+        "length": len(content),
+        "uploadDate": dt.datetime.now(dt.timezone.utc),
+        "s3_key": key,
+        "metadata": metadata,
+    }
+    get_company_documents_collection().insert_one(record)
+    return _serialize_document(record)
 
 
 def _replace_document(
@@ -1056,30 +1079,41 @@ def _replace_document(
     mark_kind: str | None = None,
 ) -> dict[str, Any]:
     """Swap out a document's file while keeping it as the same row in the
-    list - as opposed to DELETE+POST, which would also work but loses the
-    display name unless the caller re-types it. Uploads the replacement
-    before deleting the old file (rather than the other way round) so a
-    failed upload never leaves the document missing its content; the row's
-    id does change, but the frontend always reloads the full list after a
-    write, so that's invisible to the user.
+    list - same id, so checklist rows and Sign & Stamp choices that point
+    at it keep working - as opposed to DELETE+POST, which would also lose
+    the display name unless the caller re-types it. The new file is stored
+    before the old one is deleted, so a failed upload never leaves the
+    document missing its content.
     """
-    try:
-        object_id = ObjectId(document_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid document id")
-    existing = get_company_documents_files_collection().find_one({"_id": object_id})
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+    existing = _get_document_or_404(document_id)
     existing_meta = existing.get("metadata") or {}
-    stored = _store_document(content, filename, name or existing_meta.get("display_name"), content_type,
-                             mark_kind or existing_meta.get("mark_kind"))
-    get_company_documents_bucket().delete(object_id)
-    return stored
+    stored_filename = filename or existing["filename"]
+    key = _document_key(existing["_id"], stored_filename)
+    new_content_type = content_type or "application/octet-stream"
+    storage.put_bytes(key, content, new_content_type)
+    metadata = {
+        **existing_meta,
+        "display_name": (name or existing_meta.get("display_name") or stored_filename).strip(),
+        "content_type": new_content_type,
+    }
+    if mark_kind:
+        metadata["mark_kind"] = mark_kind
+    update = {
+        "filename": stored_filename,
+        "length": len(content),
+        "uploadDate": dt.datetime.now(dt.timezone.utc),
+        "s3_key": key,
+        "metadata": metadata,
+    }
+    get_company_documents_collection().update_one({"_id": existing["_id"]}, {"$set": update})
+    if existing.get("s3_key") and existing["s3_key"] != key:
+        storage.delete(existing["s3_key"])
+    return _serialize_document({**existing, **update})
 
 
 @app.get("/documents")
 def list_documents() -> dict[str, Any]:
-    cursor = get_company_documents_bucket().find(sort=[("uploadDate", DESCENDING)])
+    cursor = get_company_documents_collection().find(sort=[("uploadDate", DESCENDING)])
     return {"documents": [_serialize_document(d) for d in cursor]}
 
 
@@ -1126,20 +1160,16 @@ def rename_document(document_id: str, body: DocumentRenameRequest) -> dict[str, 
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Name is required")
-    try:
-        object_id = ObjectId(document_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid document id")
+    object_id = _document_object_id(document_id)
 
     update = {"metadata.display_name": name}
     if body.mark_kind:
         update["metadata.mark_kind"] = body.mark_kind
-    result = get_company_documents_files_collection().update_one({"_id": object_id}, {"$set": update})
+    documents = get_company_documents_collection()
+    result = documents.update_one({"_id": object_id}, {"$set": update})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    grid_out = get_company_documents_bucket().open_download_stream(object_id)
-    return _serialize_document(grid_out)
+    return _serialize_document(documents.find_one({"_id": object_id}))
 
 
 @app.put("/documents/{document_id}/replace")
@@ -1154,42 +1184,35 @@ async def replace_document(
 
 @app.delete("/documents/{document_id}")
 def delete_document(document_id: str) -> dict[str, Any]:
-    try:
-        object_id = ObjectId(document_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid document id")
-    try:
-        get_company_documents_bucket().delete(object_id)
-    except gridfs.errors.NoFile:
-        raise HTTPException(status_code=404, detail="Document not found")
+    record = _get_document_or_404(document_id)
+    get_company_documents_collection().delete_one({"_id": record["_id"]})
+    storage.delete(record["s3_key"])
     return {"status": "deleted"}
 
 
 @app.get("/documents/{document_id}/info")
 def document_info(document_id: str) -> dict[str, Any]:
     """How many ?part=N requests /download and /view need for this file."""
-    grid_out = _get_document_or_404(document_id)
-    return {**_serialize_document(grid_out), "part_size": TRANSFER_PART_SIZE,
-            "parts": max(1, -(-grid_out.length // TRANSFER_PART_SIZE))}
+    record = _get_document_or_404(document_id)
+    return {**_serialize_document(record), "part_size": TRANSFER_PART_SIZE,
+            "parts": max(1, -(-record["length"] // TRANSFER_PART_SIZE))}
 
 
 def _document_response(document_id: str, kind: str, part: int | None) -> Response:
     """The whole document (small files only - see MAX_DOCUMENT_SIZE) or, with
     `part`, one TRANSFER_PART_SIZE slice of it."""
-    grid_out = _get_document_or_404(document_id)
-    content_type = (grid_out.metadata or {}).get("content_type") or "application/octet-stream"
-    if part is None:
-        content = grid_out.read()
-    else:
-        if part < 0 or part * TRANSFER_PART_SIZE >= max(grid_out.length, 1):
+    record = _get_document_or_404(document_id)
+    content_type = (record.get("metadata") or {}).get("content_type") or "application/octet-stream"
+    content = _document_bytes(record["s3_key"])
+    if part is not None:
+        if part < 0 or part * TRANSFER_PART_SIZE >= max(len(content), 1):
             raise HTTPException(status_code=416, detail="Part out of range")
-        grid_out.seek(part * TRANSFER_PART_SIZE)
-        content = grid_out.read(TRANSFER_PART_SIZE)
+        content = content[part * TRANSFER_PART_SIZE:(part + 1) * TRANSFER_PART_SIZE]
         content_type = "application/octet-stream"
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": _content_disposition(kind, grid_out.filename)},
+        headers={"Content-Disposition": _content_disposition(kind, record["filename"])},
     )
 
 
@@ -1323,12 +1346,8 @@ def remove_stamp_mark(document_id: str) -> dict[str, Any]:
     stamps without deleting it - it stays in the Documents library (DELETE
     /documents/{id} deletes it). Adding it back: rename it from the Sign &
     Stamp popup, or PUT /documents/{id} with a mark_kind."""
-    try:
-        object_id = ObjectId(document_id)
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid document id")
-    result = get_company_documents_files_collection().update_one(
-        {"_id": object_id}, {"$set": {"metadata.mark_kind": NOT_A_MARK}}
+    result = get_company_documents_collection().update_one(
+        {"_id": _document_object_id(document_id)}, {"$set": {"metadata.mark_kind": NOT_A_MARK}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")

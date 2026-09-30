@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Tender Intelligence Agent - BACKEND stack: the pipeline Lambda (scheduled
-  2x/day), the read-only API Lambda + HTTP API, secrets from SSM Parameter
-  Store, and a CloudWatch alarm on failure. The frontend (S3 + CloudFront)
+  2x/day), the API Lambda + HTTP API behind a Cognito login, secrets from
+  SSM Parameter Store, and a CloudWatch alarm on failure. The frontend (S3 + CloudFront)
   is a deliberately separate stack - see frontend/template.yaml - so the
   two can be deployed and reasoned about independently. The report email
   itself (Phase 6) isn't built yet - the evening run already passes
@@ -15,6 +15,14 @@ Parameters:
     Description: >
       Email address to receive a notification when a scheduled pipeline
       run fails (login broke, Atlas unreachable, etc).
+  FrontendUrl:
+    Type: String
+    AllowedPattern: "^https://[^/]+$"
+    Description: >
+      The dashboard's CloudFront origin (the frontend stack's FrontendUrl
+      output, no trailing slash) - the only origin CORS allows and the only
+      place Cognito will redirect back to after login. scripts/deploy.sh
+      reads it from the frontend stack automatically.
 
 Resources:
   PipelineFunction:
@@ -61,6 +69,19 @@ Resources:
           PROCESSED_DIR: "/tmp/processed"
           DOCUMENTS_DIR: "/tmp/documents"
           DOCUMENTS_BATCH_LIMIT: "15"
+          # Tender document text is written here (see app.storage).
+          FILES_BUCKET: !Ref FilesBucket
+      # Only what the pipeline does with FilesBucket: the summarizer writes
+      # tender-text/, cleanup deletes it. No access to company documents or
+      # bid packs, and none to the bucket's own settings.
+      Policies:
+        - Statement:
+            - Sid: WriteTenderText
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: !Sub "${FilesBucket.Arn}/tender-text/*"
       Events:
         MorningRun:
           Type: Schedule
@@ -81,21 +102,98 @@ Resources:
       DockerContext: .
       Dockerfile: Dockerfile
 
-  # Explicit (not the SAM-implicit one) specifically so it can carry a Cors
-  # config: the browser dashboard (a CloudFront origin) calling this API
-  # (an execute-api origin) is a cross-origin request, and unlike curl/
-  # Invoke-RestMethod - which don't enforce CORS at all, it's purely a
-  # browser-side check - a real browser silently blocks the response
-  # without these headers. No auth, nothing sensitive returned/accepted (the
-  # only write is toggling a single boolean by tender id), so allowing any
-  # origin is a reasonable choice here.
+  # Login for the dashboard. Accounts are created by an admin only (see
+  # scripts/manage-users.sh) - there is no public sign-up - and every user
+  # must enrol an authenticator app (TOTP) on first login: this API can
+  # download the company's documents and stamp the authorised signatory's
+  # signature and seal, so a password alone isn't enough.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: tender-agent-users
+      DeletionProtection: ACTIVE
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "ON"
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 3
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  # Hosted login page: https://<domain>.auth.<region>.amazoncognito.com
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub "tender-agent-${AWS::AccountId}"
+
+  # A public (browser) client: no secret - the dashboard uses the
+  # authorization-code flow with PKCE via the hosted page instead, and can't
+  # submit passwords to Cognito directly (no USER_PASSWORD/SRP auth flows).
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: tender-dashboard
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!Sub "${FrontendUrl}/"]
+      LogoutURLs: [!Sub "${FrontendUrl}/"]
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 12
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: hours
+
+  # Explicit (not the SAM-implicit one) so it can carry the CORS config and
+  # the Cognito authorizer. Every route requires a valid access token from
+  # UserPoolClient except GET /health (see ApiFunction's ApiHealth event);
+  # API Gateway rejects the rest with a 401 before ApiFunction even runs.
+  # CORS preflight (OPTIONS) is answered by API Gateway itself, ahead of the
+  # authorizer, and only for the dashboard's own origin.
   TenderHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       CorsConfiguration:
-        AllowOrigins: ["*"]
+        AllowOrigins: [!Ref FrontendUrl]
         AllowMethods: ["GET", "POST", "PUT", "DELETE"]
-        AllowHeaders: ["content-type"]
+        AllowHeaders: ["content-type", "authorization"]
+      Auth:
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              # Matched against the access token's client_id claim.
+              audience:
+                - !Ref UserPoolClient
+        DefaultAuthorizer: CognitoJwt
+      # Caps how hard anyone - even a signed-in user or a leaked token - can
+      # hit the API (and so the OpenAI bill behind generate-bid/checklist).
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -107,7 +205,7 @@ Resources:
       # POST /tenders/{id}/generate-bid that runs long still 504s the
       # caller at 30s regardless. Kept at the max this Lambda's own timeout
       # can usefully reach so a run that's already lost the client still
-      # gets to finish writing the bid pack to GridFS rather than being
+      # gets to finish writing the bid pack to FilesBucket rather than being
       # killed mid-write.
       Timeout: 30
       # Lambda's CPU share scales with memory - 512 MB is ~1/3 of a vCPU,
@@ -134,12 +232,46 @@ Resources:
           # fetch them right away (see app.api.main._start_document_fetch)
           # instead of waiting for the next scheduled run.
           PIPELINE_FUNCTION_NAME: !Ref PipelineFunction
+          # Company documents, tender document text and bid packs (see app.storage).
+          FILES_BUCKET: !Ref FilesBucket
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PipelineFunction
+        # Object access by prefix only - nothing on the bucket's own settings
+        # (lifecycle, policy, ACLs), so a compromised function can't switch
+        # off the bid-pack expiry or open the bucket up.
+        - Statement:
+            - Sid: CompanyDocumentsAndBidPacks
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource:
+                - !Sub "${FilesBucket.Arn}/company-documents/*"
+                - !Sub "${FilesBucket.Arn}/bid-packs/*"
+            - Sid: ReadTenderText
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "${FilesBucket.Arn}/tender-text/*"
+            # Without it S3 answers a missing key with 403 instead of 404, and
+            # a deleted file would look like a permissions failure.
+            - Sid: MissingKeysReadAsNotFound
+              Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt FilesBucket.Arn
       # Root ("/") and every subpath need separate event mappings - API
       # Gateway's {proxy+} wildcard does not also match the bare root path.
       Events:
+        # Public, for uptime checks - the one route with no login.
+        ApiHealth:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TenderHttpApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
         ApiRoot:
           Type: HttpApi
           Properties:
@@ -156,6 +288,74 @@ Resources:
       DockerTag: api-latest
       DockerContext: .
       Dockerfile: app/api/Dockerfile
+
+  # File storage for both functions (app.storage): the Documents library
+  # (PAN, ITRs, financials, signatures - hence private, encrypted, TLS-only
+  # and versioned), each tender's document text, and bid packs, which are
+  # never kept - the browser downloads them through a 5-minute presigned
+  # link and the bid-packs/ rule deletes them after a day. Retained if the
+  # stack is ever deleted, so the company's documents can't go with it.
+  FilesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "tender-agent-files-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # A deleted or replaced company document can be restored for 30 days
+      # (other prefixes expire their old versions sooner - see the rules below).
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireBidPacks
+            Status: Enabled
+            Prefix: bid-packs/
+            ExpirationInDays: 1
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+          # A closed tender's text is deleted with the tender (see
+          # app.processing.cleanup) - its old version isn't kept around.
+          - Id: ExpireDeletedTenderText
+            Status: Enabled
+            Prefix: tender-text/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            ExpiredObjectDeleteMarker: true
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  FilesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FilesBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt FilesBucket.Arn
+              - !Sub "${FilesBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
   AlertTopic:
     Type: AWS::SNS::Topic
@@ -192,6 +392,18 @@ Outputs:
     Value: !Ref PipelineFunction
   AlertTopicArn:
     Value: !Ref AlertTopic
+  FilesBucketName:
+    Description: For the one-off migration scripts (scripts/migrate_files_to_s3.py)
+    Value: !Ref FilesBucket
   ApiUrl:
-    Description: Base URL for the read-only tender API (try /health, /stats, /tenders)
+    Description: Base URL for the tender API (every route but /health needs a Cognito access token)
     Value: !Sub "https://${TenderHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  UserPoolId:
+    Description: For scripts/manage-users.sh (adding/removing dashboard users)
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Baked into index.html by scripts/deploy-frontend.sh
+    Value: !Ref UserPoolClient
+  CognitoDomain:
+    Description: The hosted login page's base URL - baked into index.html by scripts/deploy-frontend.sh
+    Value: !Sub "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
