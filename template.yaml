@@ -234,6 +234,9 @@ Resources:
           PIPELINE_FUNCTION_NAME: !Ref PipelineFunction
           # Company documents, tender document text and bid packs (see app.storage).
           FILES_BUCKET: !Ref FilesBucket
+          # The dashboard's origin, allowed by the app's CORSMiddleware too
+          # (see app.api.main) - same value TenderHttpApi's CORS allows.
+          FRONTEND_URL: !Ref FrontendUrl
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PipelineFunction
@@ -284,6 +287,19 @@ Resources:
             ApiId: !Ref TenderHttpApi
             Path: /{proxy+}
             Method: ANY
+        # ANY above also matches OPTIONS, so without this the browser's CORS
+        # preflight (which never carries the Authorization header) hits the
+        # Cognito authorizer and gets a 401 instead of TenderHttpApi's
+        # CorsConfiguration answer. Only OPTIONS is exempted - every real
+        # method still requires a token.
+        ApiPreflight:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TenderHttpApi
+            Path: /{proxy+}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
     Metadata:
       DockerTag: api-latest
       DockerContext: .

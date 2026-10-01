@@ -46,6 +46,17 @@ echo "== Deploying =="
 sam deploy --parameter-overrides "AlertEmail=${ALERT_EMAIL}" "FrontendUrl=${FRONTEND_URL}"
 
 echo
+echo "== Branding the Cognito login page =="
+# OAKS logo + colours on the hosted page the dashboard's "Sign in" button
+# opens (see branding/). Not in the template: CloudFormation can set the
+# page's CSS but not its logo, and one call sets both together.
+POOL_ID=$(aws cloudformation describe-stacks --stack-name tender-agent --region "${REGION}" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
+aws cognito-idp set-ui-customization --region "${REGION}" --user-pool-id "${POOL_ID}" --client-id ALL \
+  --css "$(cat branding/cognito-login.css)" --image-file fileb://branding/oaks-wordmark.png > /dev/null
+echo "Login page branded."
+
+echo
 echo "== Done =="
 echo "If this is the first deploy (or AlertEmail changed), confirm the SNS"
 echo "subscription link AWS just emailed to ${ALERT_EMAIL} - alarms can't"
