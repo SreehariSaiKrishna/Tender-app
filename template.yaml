@@ -23,6 +23,16 @@ Parameters:
       output, no trailing slash) - the only origin CORS allows and the only
       place Cognito will redirect back to after login. scripts/deploy.sh
       reads it from the frontend stack automatically.
+  FrontendCustomUrl:
+    Type: String
+    Default: "https://tenders.oaks.guru"
+    AllowedPattern: "^https://[^/]+$"
+    Description: >
+      The dashboard's custom domain (an alias on the frontend's CloudFront
+      distribution, no trailing slash), allowed by CORS and Cognito
+      alongside FrontendUrl. Plain lists below, not !If - SAM moves an !If
+      under CorsConfiguration.AllowOrigins up to replace the whole CORS
+      block, which API Gateway then silently ignores.
 
 Resources:
   PipelineFunction:
@@ -155,8 +165,8 @@ Resources:
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, email]
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: [!Sub "${FrontendUrl}/"]
-      LogoutURLs: [!Sub "${FrontendUrl}/"]
+      CallbackURLs: [!Sub "${FrontendUrl}/", !Sub "${FrontendCustomUrl}/"]
+      LogoutURLs: [!Sub "${FrontendUrl}/", !Sub "${FrontendCustomUrl}/"]
       ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
       # Minutes a sign-in may sit between steps (the most Cognito allows) -
       # enough to install an authenticator app and scan the code.
@@ -176,12 +186,13 @@ Resources:
   # UserPoolClient except GET /health (see ApiFunction's ApiHealth event);
   # API Gateway rejects the rest with a 401 before ApiFunction even runs.
   # CORS preflight (OPTIONS) is answered by API Gateway itself, ahead of the
-  # authorizer, and only for the dashboard's own origin.
+  # authorizer, and only for the dashboard's own origins (its CloudFront
+  # address and its custom domain).
   TenderHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       CorsConfiguration:
-        AllowOrigins: [!Ref FrontendUrl]
+        AllowOrigins: [!Ref FrontendUrl, !Ref FrontendCustomUrl]
         AllowMethods: ["GET", "POST", "PUT", "DELETE"]
         AllowHeaders: ["content-type", "authorization"]
       Auth:
@@ -238,9 +249,10 @@ Resources:
           PIPELINE_FUNCTION_NAME: !Ref PipelineFunction
           # Company documents, tender document text and bid packs (see app.storage).
           FILES_BUCKET: !Ref FilesBucket
-          # The dashboard's origin, allowed by the app's CORSMiddleware too
-          # (see app.api.main) - same value TenderHttpApi's CORS allows.
-          FRONTEND_URL: !Ref FrontendUrl
+          # The dashboard's origins (comma-separated), allowed by the app's
+          # CORSMiddleware too (see app.api.main) - same values
+          # TenderHttpApi's CORS allows.
+          FRONTEND_URL: !Sub "${FrontendUrl},${FrontendCustomUrl}"
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PipelineFunction

@@ -18,6 +18,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 export AWS_PROFILE="${AWS_PROFILE:-tender-agent}"
 ALERT_EMAIL="${ALERT_EMAIL:-sreeharisai@oaks.guru}"
+# The dashboard's custom domain (an alias on the frontend's CloudFront
+# distribution) - allowed by CORS and Cognito alongside the CloudFront URL.
+FRONTEND_CUSTOM_URL="${FRONTEND_CUSTOM_URL:-https://tenders.oaks.guru}"
 REGION="ap-south-1"
 
 echo "== Confirming AWS identity (AWS_PROFILE=${AWS_PROFILE}) =="
@@ -43,7 +46,7 @@ sam validate --region "${REGION}"
 
 echo
 echo "== Deploying =="
-sam deploy --parameter-overrides "AlertEmail=${ALERT_EMAIL}" "FrontendUrl=${FRONTEND_URL}"
+sam deploy --parameter-overrides "AlertEmail=${ALERT_EMAIL}" "FrontendUrl=${FRONTEND_URL}" "FrontendCustomUrl=${FRONTEND_CUSTOM_URL}"
 
 echo
 echo "== Done =="

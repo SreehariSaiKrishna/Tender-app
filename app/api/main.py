@@ -80,13 +80,18 @@ app = FastAPI(title="Tender Intelligence API")
 # locally - keep uvicorn bound to 127.0.0.1. Deployed, API Gateway sets the
 # CORS headers itself (template.yaml's CorsConfiguration) and its Cognito
 # authorizer rejects any request without a login before it reaches this
-# app; FRONTEND_URL (the dashboard's CloudFront origin, from the same
-# FrontendUrl parameter) is allowed too so this middleware never 400s a
-# request from the real dashboard.
+# app; FRONTEND_URL (the dashboard's origins, comma-separated - its
+# CloudFront address and custom domain, from the FrontendUrl and
+# FrontendCustomUrl parameters) are allowed too so this middleware never
+# 400s a request from the real dashboard.
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_origins=[origin for origin in [os.environ.get("FRONTEND_URL")] if origin],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("FRONTEND_URL", "").split(",")
+        if origin.strip()
+    ],
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["content-type", "authorization"],
 )
