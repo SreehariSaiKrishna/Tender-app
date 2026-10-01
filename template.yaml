@@ -140,9 +140,11 @@ Resources:
       UserPoolId: !Ref UserPool
       Domain: !Sub "tender-agent-${AWS::AccountId}"
 
-  # A public (browser) client: no secret - the dashboard uses the
-  # authorization-code flow with PKCE via the hosted page instead, and can't
-  # submit passwords to Cognito directly (no USER_PASSWORD/SRP auth flows).
+  # A public (browser) client: no secret. The dashboard's own sign-in screens
+  # send the email + password straight to Cognito's API over HTTPS
+  # (USER_PASSWORD_AUTH), then walk the challenges it returns - new password,
+  # authenticator setup, 6-digit code - and the password reset flow. The
+  # OAuth/hosted-page settings are no longer used by the dashboard.
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -155,7 +157,10 @@ Resources:
       SupportedIdentityProviders: [COGNITO]
       CallbackURLs: [!Sub "${FrontendUrl}/"]
       LogoutURLs: [!Sub "${FrontendUrl}/"]
-      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      # Minutes a sign-in may sit between steps (the most Cognito allows) -
+      # enough to install an authenticator app and scan the code.
+      AuthSessionValidity: 15
       PreventUserExistenceErrors: ENABLED
       EnableTokenRevocation: true
       AccessTokenValidity: 1
@@ -199,15 +204,14 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       PackageType: Image
-      # 30s is this function's own execution limit, not the client-visible
-      # one: TenderHttpApi (an HTTP API) has a hard, non-configurable 30s
-      # integration timeout of its own that this Timeout can't raise - a
-      # POST /tenders/{id}/generate-bid that runs long still 504s the
-      # caller at 30s regardless. Kept at the max this Lambda's own timeout
-      # can usefully reach so a run that's already lost the client still
-      # gets to finish writing the bid pack to FilesBucket rather than being
-      # killed mid-write.
-      Timeout: 30
+      # TenderHttpApi (an HTTP API) has a hard, non-configurable 30s
+      # integration timeout that this Timeout can't raise, so API requests
+      # are still cut off at 30s. This limit is for the bid-pack build POST
+      # /tenders/{id}/generate-bid hands off to this same function as an
+      # async invocation (app.api.main._run_bid_generation) - AI drafting
+      # plus the PDF merge regularly takes longer than 30s. Keep it under
+      # app.api.main._BID_GENERATION_TIMEOUT.
+      Timeout: 300
       # Lambda's CPU share scales with memory - 512 MB is ~1/3 of a vCPU,
       # too slow for /generate-bid's PDF build (merging and stamping every
       # attached page) inside the 30s limit. 2048 MB gives more than one vCPU.
@@ -240,6 +244,13 @@ Resources:
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PipelineFunction
+        # Invoking itself for the bid-pack build (see Timeout above). By
+        # name pattern - !GetAtt ApiFunction.Arn here would be circular.
+        - Statement:
+            - Sid: InvokeSelfForBidPack
+              Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-ApiFunction-*"
         # Object access by prefix only - nothing on the bucket's own settings
         # (lifecycle, policy, ACLs), so a compromised function can't switch
         # off the bid-pack expiry or open the bucket up.

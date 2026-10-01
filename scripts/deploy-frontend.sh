@@ -32,16 +32,17 @@ backend_output() {
   aws cloudformation describe-stacks --stack-name "${BACKEND_STACK}" --region "${REGION}"     --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
 }
 API_URL=$(backend_output ApiUrl)
-COGNITO_DOMAIN=$(backend_output CognitoDomain)
 COGNITO_CLIENT_ID=$(backend_output UserPoolClientId)
-for v in API_URL COGNITO_DOMAIN COGNITO_CLIENT_ID; do
+for v in API_URL COGNITO_CLIENT_ID; do
   if [ -z "${!v}" ] || [ "${!v}" = "None" ]; then
     echo "Could not read ${v} from the backend stack - is '${BACKEND_STACK}' deployed with the Cognito login (./scripts/deploy.sh)?"
     exit 1
   fi
 done
 echo "API URL:      ${API_URL}"
-echo "Login page:   ${COGNITO_DOMAIN}"
+# The sign-in screens call Cognito's API in the backend's region.
+COGNITO_ENDPOINT="https://cognito-idp.${REGION}.amazonaws.com"
+echo "Sign-in API:  ${COGNITO_ENDPOINT}"
 
 echo
 echo "== Deploying frontend infrastructure (S3 + CloudFront) =="
@@ -54,7 +55,7 @@ echo "== Deploying frontend infrastructure (S3 + CloudFront) =="
 # samconfig.toml has confirm_changeset = true: the "Deploy this changeset?"
 # prompt has to be visible, or the script just hangs waiting for a "y".
 DEPLOY_LOG="$(mktemp)"
-if (cd frontend && sam deploy --parameter-overrides "ApiUrl=${API_URL}" "CognitoDomain=${COGNITO_DOMAIN}" 2>&1) | tee "${DEPLOY_LOG}"; then
+if (cd frontend && sam deploy --parameter-overrides "ApiUrl=${API_URL}" "CognitoEndpoint=${COGNITO_ENDPOINT}" 2>&1) | tee "${DEPLOY_LOG}"; then
   :
 elif grep -q "No changes to deploy" "${DEPLOY_LOG}"; then
   echo "No infrastructure changes (S3/CloudFront already up to date) - that 'Error' above is fine - continuing to re-upload the dashboard."
@@ -77,7 +78,7 @@ echo "Distribution: ${DISTRIBUTION_ID}"
 echo
 echo "== Injecting the API URL and login settings into index.html and uploading =="
 mkdir -p /tmp/frontend-build
-sed -e "s#REPLACE_WITH_API_URL#${API_URL}#"     -e "s#REPLACE_WITH_COGNITO_DOMAIN#${COGNITO_DOMAIN}#"     -e "s#REPLACE_WITH_COGNITO_CLIENT_ID#${COGNITO_CLIENT_ID}#"     frontend/index.html > /tmp/frontend-build/index.html
+sed -e "s#REPLACE_WITH_API_URL#${API_URL}#"     -e "s#REPLACE_WITH_COGNITO_REGION#${REGION}#"     -e "s#REPLACE_WITH_COGNITO_CLIENT_ID#${COGNITO_CLIENT_ID}#"     frontend/index.html > /tmp/frontend-build/index.html
 if grep -q "REPLACE_WITH_" /tmp/frontend-build/index.html; then
   echo "index.html still has an unfilled REPLACE_WITH_ placeholder - not uploading."
   exit 1

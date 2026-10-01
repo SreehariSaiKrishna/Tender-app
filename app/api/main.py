@@ -13,6 +13,7 @@ Runs locally the same way the CLI does, alongside app.lambda_handler:
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import io
 import json
@@ -29,6 +30,7 @@ from bson.errors import InvalidId
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from mangum import Mangum
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pymongo import DESCENDING
@@ -55,7 +57,9 @@ from app.reports.bid_generator import (
     build_checklist,
     build_compliance_matrix,
     collapse_unfilled_cvs,
+    combine_marked,
     company_background_text,
+    document_page_count,
     drop_resolved_missing_information,
     enclosure_documents,
     established_facts,
@@ -640,28 +644,166 @@ def update_checklist(tender_id: str, body: ChecklistUpdateRequest) -> dict[str, 
     return _checklist_response({**tender, "checklist": checklist}, company_profile, company_documents)
 
 
-@app.post("/tenders/{tender_id}/generate-bid")
-def generate_bid(tender_id: str) -> dict[str, Any]:
-    """Builds a bid pack PDF for this tender from its saved submission
-    checklist (see app.reports.bid_generator.generate_bid_package): every
-    row's document in S.No order - library documents attached, and each
-    document the bidder must write AI-drafted from the tender (see
-    app.intelligence.bid_drafter.draft_checklist_documents) - and marks the
-    tender applied.
+# A bid-pack build that hasn't finished by then (ApiFunction's own Timeout
+# in template.yaml, plus a margin) is taken to have failed, and the next
+# request starts another.
+_BID_GENERATION_TIMEOUT = dt.timedelta(minutes=6)
 
-    The pack isn't kept: it's put in file storage under bid-packs/ only so
-    the browser can download it (GET /tenders/{id}/bid-document/link), and
-    that prefix expires after a day (template.yaml). It's too big for one
-    API response, and generating it can outlast the API's 30s limit - a
-    request that times out still leaves the pack there to download.
+
+@app.post("/tenders/{tender_id}/generate-bid")
+def generate_bid(tender_id: str, response: Response) -> dict[str, Any]:
+    """Builds a bid pack PDF for this tender (see _build_bid_pack) and
+    marks the tender applied.
+
+    Deployed, the build (AI drafting plus the PDF merge) regularly outlasts
+    TenderHttpApi's hard 30s limit, so this only starts it - ApiFunction
+    invokes itself asynchronously with {"generate_bid": tender_id} (see
+    handler) - and answers 202 with the same body as GET
+    /tenders/{id}/generate-bid, which the dashboard polls until it's
+    "done" or "failed". Locally (no Lambda) it builds in this request and
+    returns the updated tender, as before.
 
     This never contacts the tendering authority or any external system -
     see this project's stated scope in README.md. It only drafts a local
     PDF for a human to review, complete and sign before anything is
     actually submitted.
     """
-    collection = get_collection()
     object_id, tender = _find_tender(tender_id)
+    # Without a saved checklist the build makes one first, which needs the
+    # tender's documents - refuse now (and start fetching them) rather than
+    # have the background build fail on it.
+    if not is_submission_checklist(tender.get("checklist")):
+        _require_document_text(tender)
+
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    if not function_name:
+        return _build_bid_pack(object_id, tender)
+
+    collection = get_collection()
+    now = dt.datetime.now(dt.timezone.utc)
+    run_id = uuid.uuid4().hex
+    claimed = collection.update_one(
+        {
+            "_id": object_id,
+            "$or": [
+                {"bid_generation_started_at": None},
+                {"bid_generation_started_at": {"$lt": now - _BID_GENERATION_TIMEOUT}},
+            ],
+        },
+        {
+            "$set": {"bid_generation_started_at": now, "bid_generation_run": run_id},
+            "$unset": {"bid_generation_error": ""},
+        },
+    )
+    if claimed.modified_count:  # otherwise one is already running
+        try:
+            import boto3
+
+            boto3.client("lambda").invoke(
+                FunctionName=function_name,
+                InvocationType="Event",
+                Payload=json.dumps({"generate_bid": tender_id, "run": run_id}).encode(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Could not start bid-pack generation for tender %s: %s", tender_id, exc)
+            collection.update_one(
+                {"_id": object_id}, {"$unset": {"bid_generation_started_at": "", "bid_generation_run": ""}}
+            )
+            raise HTTPException(status_code=503, detail="Couldn't start generating the bid pack - try again.")
+
+    response.status_code = 202
+    return _bid_generation_status(collection.find_one({"_id": object_id}))
+
+
+@app.get("/tenders/{tender_id}/generate-bid")
+def bid_generation_status(tender_id: str) -> dict[str, Any]:
+    """Where the background bid-pack build POST /generate-bid started has
+    got to - see _bid_generation_status."""
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    tender = get_collection().find_one({"_id": object_id})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    return _bid_generation_status(tender)
+
+
+def _bid_generation_status(tender: dict[str, Any]) -> dict[str, Any]:
+    """{"status": "running" | "done" | "failed" | "none", "message"}, plus
+    the serialized tender once it's "done"."""
+    started = tender.get("bid_generation_started_at")
+    if started is not None:
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=dt.timezone.utc)
+        if dt.datetime.now(dt.timezone.utc) - started < _BID_GENERATION_TIMEOUT:
+            return {"status": "running", "message": None}
+        return {"status": "failed", "message": "Generating the bid pack took too long and was stopped - try again."}
+    if tender.get("bid_generation_error"):
+        return {"status": "failed", "message": tender["bid_generation_error"]}
+    if _bid_pack_available(tender):
+        return {"status": "done", "message": None, "tender": _serialize(tender)}
+    return {"status": "none", "message": None}
+
+
+def _run_bid_generation(tender_id: str, run_id: str | None) -> None:
+    """The background half of POST /generate-bid (ApiFunction invoked with
+    {"generate_bid": tender_id, "run": run_id}). Never raises - a failure is
+    recorded on the tender for GET /generate-bid to report.
+
+    Lambda retries an async invocation that timed out or crashed (up to
+    twice), which would re-run - and re-bill - the OpenAI drafting. So each
+    run first takes its `run` id off the tender: a retry, or a run another
+    request has since replaced, finds it gone and does nothing."""
+    if not run_id:
+        logger.warning("Skipping bid-pack generation for tender %s - no run id", tender_id)
+        return
+    try:
+        picked_up = get_collection().update_one(
+            {"_id": ObjectId(tender_id), "bid_generation_run": run_id},
+            {"$unset": {"bid_generation_run": ""}},
+        )
+    except Exception:  # noqa: BLE001 - the status times out on its own
+        logger.exception("Could not pick up bid-pack generation for tender %s", tender_id)
+        return
+    if not picked_up.modified_count:
+        logger.warning("Skipping bid-pack generation for tender %s - run %s is a retry or was replaced",
+                       tender_id, run_id)
+        return
+    try:
+        object_id, tender = _find_tender(tender_id)
+        _build_bid_pack(object_id, tender)
+    except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, HTTPException):
+            detail = exc.detail
+            message = detail.get("message") if isinstance(detail, dict) else str(detail)
+        else:
+            logger.exception("Bid-pack generation failed for tender %s", tender_id)
+            message = "Generating the bid pack failed unexpectedly - try again."
+        try:
+            get_collection().update_one(
+                {"_id": ObjectId(tender_id)},
+                {"$set": {"bid_generation_error": message}, "$unset": {"bid_generation_started_at": ""}},
+            )
+        except Exception:  # noqa: BLE001 - the status times out on its own
+            logger.exception("Could not record the bid-pack failure for tender %s", tender_id)
+
+
+def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, Any]:
+    """Builds a bid pack PDF for this tender from its saved submission
+    checklist (see app.reports.bid_generator.generate_bid_package): every
+    row's document in S.No order - library documents attached, and each
+    document the bidder must write AI-drafted from the tender (see
+    app.intelligence.bid_drafter.draft_checklist_documents) - marks the
+    tender applied and returns it.
+
+    The pack isn't kept: it's put in file storage under bid-packs/ only so
+    the browser can download it (GET /tenders/{id}/bid-document/link), and
+    that prefix expires after a day (template.yaml) - it's too big for one
+    API response.
+    """
+    tender_id = str(object_id)
+    collection = get_collection()
     eligibility_criteria, company_profile, company_documents = _generation_inputs()
 
     checklist = tender.get("checklist")
@@ -739,7 +881,10 @@ def generate_bid(tender_id: str) -> dict[str, Any]:
     if not tender.get("applied"):
         update["applied"] = True
         update["applied_at"] = now
-    collection.update_one({"_id": object_id}, {"$set": update})
+    collection.update_one(
+        {"_id": object_id},
+        {"$set": update, "$unset": {"bid_generation_started_at": "", "bid_generation_error": ""}},
+    )
 
     doc = collection.find_one({"_id": object_id})
     return _serialize(doc)
@@ -941,7 +1086,8 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
 # payload safely under that. Files up to MAX_UPLOAD_SIZE therefore travel in
 # TRANSFER_PART_SIZE parts instead: uploaded with PUT /uploads/{id}/parts/N
 # then a .../finish call (documents library or Sign & Stamp), and downloaded
-# with ?part=N.
+# with ?part=N. The Sign & Stamp tab alone sets no size limit - only the
+# API Lambda's memory bounds what it can mark.
 MAX_DOCUMENT_SIZE = 4 * 1024 * 1024
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 TRANSFER_PART_SIZE = 3 * 1024 * 1024
@@ -963,16 +1109,21 @@ async def upload_part(upload_id: str, part: int, request: Request) -> dict[str, 
     """One TRANSFER_PART_SIZE slice of a file for a .../finish call -
     `upload_id` is a random 32-hex id the dashboard picks per file. Kept in
     app.database.get_stamp_transfers_collection() until finished (or for an
-    hour at most)."""
+    hour at most). Any number of parts is accepted - Sign & Stamp has no
+    size limit; the Documents library's .../finish enforces its own (see
+    _take_upload)."""
     key = _transfer_key(upload_id)
-    if not 0 <= part < -(-MAX_UPLOAD_SIZE // TRANSFER_PART_SIZE):
-        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(MAX_UPLOAD_SIZE)} MB limit")
+    if part < 0:
+        raise HTTPException(status_code=400, detail="Invalid part number")
     data = await request.body()
     if not data:
         raise HTTPException(status_code=422, detail="Part is empty")
     if len(data) > TRANSFER_PART_SIZE:
         raise HTTPException(status_code=413, detail=f"Parts must be at most {_mb(TRANSFER_PART_SIZE)} MB")
-    get_stamp_transfers_collection().replace_one(
+    # In a thread: pymongo blocks, and the dashboard sends several parts at
+    # once - on the event loop they'd be stored one after another.
+    await run_in_threadpool(
+        get_stamp_transfers_collection().replace_one,
         {"kind": "upload", "key": key, "part": part},
         {"kind": "upload", "key": key, "part": part, "data": data, "created_at": dt.datetime.now(dt.timezone.utc)},
         upsert=True,
@@ -980,18 +1131,22 @@ async def upload_part(upload_id: str, part: int, request: Request) -> dict[str, 
     return {"part": part, "size": len(data)}
 
 
-def _take_upload(upload_id: str, parts: int) -> bytes:
-    """An upload's `parts` joined back into the file - its parts deleted.
-    409 when any is missing (never sent, or expired)."""
+def _take_upload(upload_id: str, parts: int, max_size: int | None = MAX_UPLOAD_SIZE, keep: bool = False) -> bytes:
+    """An upload's `parts` joined back into the file - its parts deleted, or
+    with `keep` left for reuse (their hour restarted). 409 when any is
+    missing (never sent, or expired), 413 over `max_size` (None: no limit)."""
     key = _transfer_key(upload_id)
     transfers = get_stamp_transfers_collection()
     stored = {d["part"]: d["data"] for d in transfers.find({"kind": "upload", "key": key})}
     if sorted(stored) != list(range(parts)):
         raise HTTPException(status_code=409, detail="The upload is incomplete or has expired - upload the file again")
-    transfers.delete_many({"kind": "upload", "key": key})
+    if keep:
+        transfers.update_many({"kind": "upload", "key": key}, {"$set": {"created_at": dt.datetime.now(dt.timezone.utc)}})
+    else:
+        transfers.delete_many({"kind": "upload", "key": key})
     content = b"".join(stored[i] for i in range(parts))
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(MAX_UPLOAD_SIZE)} MB limit")
+    if max_size is not None and len(content) > max_size:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {_mb(max_size)} MB limit")
     return content
 
 
@@ -1239,12 +1394,14 @@ def view_document(document_id: str, part: int | None = None) -> Response:
 
 
 # --- Sign & Stamp ------------------------------------------------------------
-# The dashboard's Sign & Stamp tab: upload any PDF or image and get it back
-# with the letterhead, signature and/or seal on every page, placed the same
-# way a bid pack places them (app.reports.bid_generator.mark_document).
-# Nothing is kept - files up to MAX_UPLOAD_SIZE pass through temporary
-# parts (see below) only because one Lambda request/response can't carry
-# them, and those parts are deleted or expire within the hour.
+# The dashboard's Sign & Stamp tab: upload one or more PDFs/images and get
+# them back with the letterhead, signature and/or seal on every page, placed
+# the same way a bid pack places them (app.reports.bid_generator.mark_document)
+# - several files come back combined into one PDF. Nothing is kept: files
+# (of any size) pass through temporary parts only
+# because one Lambda request/response can't carry them, and those parts
+# expire an hour after they were last used; the marked result sits under bid-packs/
+# (deleted after a day, see template.yaml) only for the browser to download.
 
 # Which Documents-library entries are offered as each mark, by display name
 # or filename: "OAKS_LetterHead" / "SIV Letter Head.pdf", "Vijaykumari_sign" /
@@ -1437,50 +1594,218 @@ async def stamp_document(
     )
 
 
-# The dashboard sends files up to MAX_UPLOAD_SIZE in parts (PUT
-# /uploads/{id}/parts/N - see the Documents section), then /finish marks the
-# joined file and stores the result in parts too, fetched with one GET per
-# part (as the bid pack download does).
-STAMP_MAX_RESULT_SIZE = 25 * 1024 * 1024  # a letterhead/marks can make the result bigger than the upload
+# The dashboard sends each file (no size limit) in parts (PUT
+# /uploads/{id}/parts/N - see the Documents section), then POST
+# /stamp-document/jobs marks them. Deployed, marking large files can outlast
+# TenderHttpApi's 30s limit, so - as with POST /tenders/{id}/generate-bid -
+# ApiFunction does it in an async invocation of itself ({"stamp_job": id},
+# see handler) while the dashboard polls GET /stamp-document/jobs/{id}. The
+# result is downloaded straight from file storage through a short-lived link.
+STAMP_MAX_FILES = 50
+_STAMP_JOB_TIMEOUT = dt.timedelta(minutes=6)  # ApiFunction's Timeout plus a margin
 
 
-@app.post("/stamp-document/uploads/{upload_id}/finish")
-def finish_stamp_upload(
-    upload_id: str,
-    parts: int = Form(..., ge=1),
-    filename: str = Form("document"),
-    content_type: str = Form(""),
+class StampFileModel(BaseModel):
+    """One file of a POST /stamp-document/jobs - an upload sent in parts."""
+
+    upload_id: str
+    parts: int = Field(ge=1)
+    filename: str = "document"
+    content_type: str = ""
+
+
+_STAMP_FILES = TypeAdapter(list[StampFileModel])
+
+
+@app.post("/stamp-document/jobs")
+def start_stamp_job(
+    files: str = Form(...),
     letterhead: str | None = Form(None),
     signature: str | None = Form(None),
     stamp: str | None = Form(None),
     placements: str | None = Form(None),
     layouts: str | None = Form(None),
     pages: str | None = Form(None),
+    as_pdf: bool = Form(False),
 ) -> dict[str, Any]:
-    """Joins an upload's `parts`, marks it (same options as POST
-    /stamp-document) and stores the result for GET .../results/{id}/parts/N."""
-    options = _stamp_options(letterhead, signature, stamp, placements, layouts, pages)
-    content = _take_upload(upload_id, parts)
-    marked, media_type, out_name = _run_stamp(content, filename, content_type, options,
-                                              max_size=MAX_UPLOAD_SIZE, max_result_size=STAMP_MAX_RESULT_SIZE)
+    """Marks the uploads in `files` (JSON, see StampFileModel - in order) with
+    the same options as POST /stamp-document, page numbers counting through
+    all the files in turn. One file comes back as it went in (a PDF for a
+    PDF, an image for an image - or, with `as_pdf`, always a PDF); several,
+    as one combined PDF. Answers with
+    GET /stamp-document/jobs/{id}'s body - "done" already when run locally."""
+    form = {"letterhead": letterhead, "signature": signature, "stamp": stamp,
+            "placements": placements, "layouts": layouts, "pages": pages}
+    _stamp_options(**form)  # refused now rather than in the background
+    try:
+        uploads = _STAMP_FILES.validate_json(files)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid files: {exc.errors()[0]['msg']}")
+    if not uploads:
+        raise HTTPException(status_code=422, detail="Choose at least one file")
+    if len(uploads) > STAMP_MAX_FILES:
+        raise HTTPException(status_code=422, detail=f"Choose at most {STAMP_MAX_FILES} files at a time")
+    for upload in uploads:
+        _transfer_key(upload.upload_id)
+
+    job_id = uuid.uuid4().hex
     transfers = get_stamp_transfers_collection()
-    result_id = uuid.uuid4().hex
-    now = dt.datetime.now(dt.timezone.utc)
-    chunks = [marked[i:i + TRANSFER_PART_SIZE] for i in range(0, len(marked), TRANSFER_PART_SIZE)] or [b""]
-    transfers.insert_many([
-        {"kind": "result", "key": result_id, "part": i, "data": chunk, "media_type": media_type, "created_at": now}
-        for i, chunk in enumerate(chunks)
-    ])
-    return {"result_id": result_id, "parts": len(chunks), "filename": out_name, "media_type": media_type,
-            "size": len(marked)}
+    transfers.insert_one({
+        "kind": "job", "key": job_id, "status": "queued", "files": [u.model_dump() for u in uploads],
+        "form": form, "as_pdf": as_pdf, "created_at": dt.datetime.now(dt.timezone.utc),
+    })
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    if not function_name:
+        _run_stamp_job(job_id)
+    else:
+        try:
+            import boto3
+
+            boto3.client("lambda").invoke(
+                FunctionName=function_name,
+                InvocationType="Event",
+                Payload=json.dumps({"stamp_job": job_id}).encode(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Could not start Sign & Stamp job %s: %s", job_id, exc)
+            transfers.delete_one({"kind": "job", "key": job_id})
+            raise HTTPException(status_code=503, detail="Couldn't start marking the files - try again.")
+    return _stamp_job_status(transfers.find_one({"kind": "job", "key": job_id}))
 
 
-@app.get("/stamp-document/results/{result_id}/parts/{part}")
-def download_stamp_part(result_id: str, part: int) -> Response:
-    doc = get_stamp_transfers_collection().find_one({"kind": "result", "key": _transfer_key(result_id), "part": part})
-    if doc is None:
-        raise HTTPException(status_code=404, detail="This result has expired - mark the file again")
-    return Response(content=bytes(doc["data"]), media_type="application/octet-stream")
+@app.get("/stamp-document/jobs/{job_id}")
+def stamp_job_status(job_id: str) -> dict[str, Any]:
+    job = get_stamp_transfers_collection().find_one({"kind": "job", "key": _transfer_key(job_id)})
+    if job is None:
+        raise HTTPException(status_code=404, detail="This job has expired - mark the files again")
+    return _stamp_job_status(job)
+
+
+@app.get("/stamp-document/jobs/{job_id}/result")
+def download_stamp_result(job_id: str) -> Response:
+    """The marked file in one response - for local runs only; deployed, the
+    status's `url` links straight to file storage (results outgrow the
+    Lambda response cap)."""
+    job = get_stamp_transfers_collection().find_one({"kind": "job", "key": _transfer_key(job_id)})
+    result = (job or {}).get("result")
+    content = storage.get_bytes(result["key"]) if result else None
+    if content is None:
+        raise HTTPException(status_code=404, detail="This result has expired - mark the files again")
+    return Response(content=content, media_type=result["media_type"],
+                    headers={"Content-Disposition": _content_disposition("attachment", result["filename"])})
+
+
+def _stamp_job_status(job: dict[str, Any]) -> dict[str, Any]:
+    """{"job_id", "status": "queued" | "running" | "done" | "failed", "message"},
+    plus the result's filename/media_type/size and a download `url` (null
+    locally - GET .../result serves it then) once it's "done"."""
+    out = {"job_id": job["key"], "status": job["status"], "message": job.get("message")}
+    if job["status"] in ("queued", "running"):
+        created = job["created_at"]
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=dt.timezone.utc)
+        if dt.datetime.now(dt.timezone.utc) - created > _STAMP_JOB_TIMEOUT:
+            return {**out, "status": "failed", "message": "Marking the files took too long and was stopped - try again."}
+    if job["status"] == "done":
+        result = job["result"]
+        out.update(filename=result["filename"], media_type=result["media_type"], size=result["size"],
+                   url=storage.download_url(result["key"], result["filename"]))
+    return out
+
+
+def _run_stamp_job(job_id: str) -> None:
+    """The background half of POST /stamp-document/jobs. Never raises - the
+    outcome is recorded on the job for GET .../jobs/{id} to report. Only a
+    "queued" job is picked up, so a Lambda retry of the invocation does nothing."""
+    transfers = get_stamp_transfers_collection()
+    job_filter = {"kind": "job", "key": job_id}
+    try:
+        job = transfers.find_one_and_update({**job_filter, "status": "queued"}, {"$set": {"status": "running"}})
+    except Exception:  # noqa: BLE001 - the status times out on its own
+        logger.exception("Could not pick up Sign & Stamp job %s", job_id)
+        return
+    if job is None:
+        logger.warning("Skipping Sign & Stamp job %s - already picked up or expired", job_id)
+        return
+    try:
+        options = _stamp_options(**job["form"])
+        files = []
+        for f in job["files"]:
+            # Kept: the dashboard reuses a file's upload when it's marked again
+            # (other marks, another download) - no 100 MB re-upload each time.
+            content = _take_upload(f["upload_id"], f["parts"], max_size=None, keep=True)
+            files.append((content, f["filename"] or "document", f["content_type"] or ""))
+        marked, media_type, out_name = _run_stamp_files(files, options, as_pdf=bool(job.get("as_pdf")))
+        safe_name = re.sub(r"[\\/]+", "_", out_name)
+        key = f"{storage.BID_PACKS_PREFIX}stamped/{job_id}/{safe_name}"
+        storage.put_bytes(key, marked, media_type)
+        transfers.update_one(job_filter, {"$set": {
+            "status": "done",
+            "result": {"key": key, "filename": out_name, "media_type": media_type, "size": len(marked)},
+        }})
+    except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, HTTPException):
+            message = str(exc.detail)
+        else:
+            logger.exception("Sign & Stamp job %s failed", job_id)
+            message = "Marking the files failed unexpectedly - try again."
+        try:
+            transfers.update_one(job_filter, {"$set": {"status": "failed", "message": message}})
+        except Exception:  # noqa: BLE001 - the status times out on its own
+            logger.exception("Could not record the failure of Sign & Stamp job %s", job_id)
+
+
+def _options_for_pages(options: dict[str, Any], start: int, count: int) -> dict[str, Any]:
+    """`options` (see _stamp_options) for one of several files - the pages
+    `start` .. `start + count - 1` of them all, numbered from 0 again."""
+    def within(page: int) -> bool:
+        return start <= page < start + count
+
+    return {
+        **options,
+        "pages": None if options["pages"] is None
+        else {page - start: marks for page, marks in options["pages"].items() if within(page)},
+        "placements": None if options["placements"] is None
+        else [dataclasses.replace(p, page=p.page - start) for p in options["placements"] if within(p.page)],
+        "layouts": None if options["layouts"] is None
+        else [dataclasses.replace(lo, page=lo.page - start) for lo in options["layouts"] if within(lo.page)],
+    }
+
+
+def _run_stamp_files(
+    files: list[tuple[bytes, str, str]], options: dict[str, Any], as_pdf: bool = False
+) -> tuple[bytes, str, str]:
+    """Marks each (content, filename, content type) per `options`, its pages
+    numbered on from the previous file's - (bytes, media type, download
+    filename). One file comes back as _run_stamp returns it (a marked image
+    as a one-page PDF with `as_pdf`); several are combined into one PDF."""
+    if len(files) == 1:
+        content, filename, content_type = files[0]
+        marked, media_type, out_name = _run_stamp(content, filename, content_type, options, max_size=None)
+        if as_pdf and media_type != "application/pdf":
+            try:
+                marked = combine_marked([(marked, media_type)])
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=422, detail=f"Couldn't make a PDF of '{filename}': {exc}") from exc
+            media_type, out_name = "application/pdf", f"{Path(out_name).stem}.pdf"
+        return marked, media_type, out_name
+    assets: dict[tuple[str, str], bytes] = {}  # shared, so each mark is read once for all the files
+    marked, start = [], 0
+    for content, filename, content_type in files:
+        try:
+            count = document_page_count(content, filename, content_type)
+        except BidGenerationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        data, media_type, _ = _run_stamp(content, filename, content_type, _options_for_pages(options, start, count),
+                                         max_size=None, assets=assets)
+        marked.append((data, media_type))
+        start += count
+    try:
+        combined = combine_marked(marked)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Couldn't combine the files: {exc}") from exc
+    stem = Path(files[0][1]).stem or "documents"
+    return combined, "application/pdf", f"{stem}-and-{len(files) - 1}-more-signed.pdf"
 
 
 def _mark_choice(value: str | None) -> str | None:
@@ -1537,19 +1862,22 @@ def _run_stamp(
     content_type: str,
     options: dict[str, Any],
     *,
-    max_size: int,
+    max_size: int | None,
     max_result_size: int | None = None,
+    assets: dict[tuple[str, str], bytes] | None = None,
 ) -> tuple[bytes, str, str]:
     """Marks `content` per `options` (see _stamp_options) - (bytes, media
     type, download filename). `max_size` caps the upload; `max_result_size`
-    (default: the same) the marked file."""
+    (default: the same) the marked file - None: no limit. `assets`: mark images already read,
+    by (kind, choice) - added to as more are read."""
     if not content:
-        raise HTTPException(status_code=422, detail="File is empty")
-    if len(content) > max_size:
+        raise HTTPException(status_code=422, detail=f"'{filename}' is empty")
+    if max_size is not None and len(content) > max_size:
         raise HTTPException(status_code=413, detail=f"File exceeds the {max_size // (1024 * 1024)} MB limit")
 
     company_profile = load_company_profile()
-    assets: dict[tuple[str, str], bytes] = {}  # each chosen document read once, however many pages use it
+    if assets is None:
+        assets = {}  # each chosen document read once, however many pages use it
 
     def asset(kind: str, choice: str | None) -> bytes | None:
         if not choice:
@@ -1576,7 +1904,7 @@ def _run_stamp(
     except BidGenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     limit = max_result_size or max_size
-    if len(marked) > limit:
+    if limit is not None and len(marked) > limit:
         raise HTTPException(status_code=413, detail=(
             f"The marked file comes to over {limit // (1024 * 1024)} MB - "
             "split it into smaller files and mark each one"))
@@ -1788,7 +2116,18 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     route - no login) is answered here with an empty 204 and never reaches
     the app: CORSMiddleware above only allows localhost and would 400 the
     CloudFront origin. API Gateway adds its own CorsConfiguration headers to
-    this response, so the allowed origin stays locked to the dashboard."""
+    this response, so the allowed origin stays locked to the dashboard.
+
+    {"generate_bid": tender_id} is this function invoking itself from POST
+    /tenders/{id}/generate-bid - the bid-pack build, run outside the API's
+    30s limit (see _run_bid_generation). {"stamp_job": id} is the same for
+    POST /stamp-document/jobs (see _run_stamp_job)."""
+    if "generate_bid" in event:
+        _run_bid_generation(str(event["generate_bid"]), event.get("run"))
+        return {"ok": True}
+    if "stamp_job" in event:
+        _run_stamp_job(str(event["stamp_job"]))
+        return {"ok": True}
     if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
         return {"statusCode": 204, "headers": {}, "body": ""}
     return _asgi_handler(event, context)

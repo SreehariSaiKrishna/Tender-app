@@ -57,6 +57,8 @@ copy .env.example .env
 #   - TENDERDETAIL_USERNAME (just your login identifier, NOT your password)
 #   - OPENAI_API_KEY
 #   - SMTP_* values
+#   - FILES_BUCKET (the backend stack's FilesBucketName output) and
+#     AWS_PROFILE (a ~/.aws profile that can reach it, e.g. tender-agent)
 # Never commit .env. It is already in .gitignore.
 
 # 5. Initialize the database
@@ -65,6 +67,28 @@ python main.py init-db
 # 6. Check your configuration
 python main.py status
 ```
+
+### Running the dashboard locally
+
+```powershell
+.\scripts\dev.ps1
+```
+
+This starts the API on http://127.0.0.1:8001 (uvicorn, reloading on code
+changes) and the dashboard on http://localhost:8000. Ctrl+C stops both.
+
+- **No login locally.** On localhost the dashboard skips Cognito, and uvicorn
+  has no authorizer in front of it. To review the sign-in screens, open
+  `#/signin`, or `#/signin/<step>` for one step: `code`, `newpass`, `setup`,
+  `forgot` or `reset`.
+- **Real data.** It uses the same MongoDB and S3 bucket as production.
+  Generating a bid pack, marking a tender applied or uploading a document
+  locally changes the live data.
+- **Bid packs build in the request.** There's no Lambda to hand the build to
+  locally, so POST /generate-bid waits for the PDF. There's no 30s limit.
+- **Checklists wait on document fetches.** A checklist for a tender whose
+  documents haven't been read can't start the pipeline Lambda locally. Run
+  `python main.py fetch-tender-documents <id>` instead.
 
 ## Security model (read this before running anything)
 

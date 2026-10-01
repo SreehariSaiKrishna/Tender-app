@@ -15,10 +15,10 @@ Parameters:
     Type: String
     Default: ""
     Description: The backend stack's ApiUrl output
-  CognitoDomain:
+  CognitoEndpoint:
     Type: String
     Default: ""
-    Description: The backend stack's CognitoDomain output (the hosted login page)
+    Description: Cognito's API endpoint for the backend's region (https://cognito-idp.<region>.amazonaws.com) - the sign-in screens call it
 
 Resources:
   FrontendBucket:
@@ -46,7 +46,8 @@ Resources:
 
   # Browser-side hardening for the dashboard page. The CSP matters most:
   # the page holds the user's login tokens, so it only lets the page talk
-  # to this origin, the API, the Cognito login endpoints and the pdf.js CDN.
+  # to this origin, the API, Cognito's sign-in API and cdnjs (pdf.js, the
+  # authenticator QR code).
   # 'unsafe-inline' is needed because the dashboard's script and styles are
   # inline in index.html. blob:/data: cover the rendered PDFs and images
   # (document view, stamp preview) the page builds itself.
@@ -65,8 +66,7 @@ Resources:
           FrameOptions:
             FrameOption: DENY
             Override: true
-          # Keeps the one-time ?code= from the login redirect out of any
-          # Referer header.
+          # Keeps the dashboard's URLs out of any Referer header.
           ReferrerPolicy:
             ReferrerPolicy: no-referrer
             Override: true
@@ -80,10 +80,10 @@ Resources:
               img-src 'self' blob: data:;
               font-src 'self' data:;
               object-src 'self' blob:;
-              connect-src 'self' ${ApiUrl} ${CognitoDomain} https://cdnjs.cloudflare.com;
+              connect-src 'self' ${ApiUrl} ${CognitoEndpoint} https://cdnjs.cloudflare.com;
               frame-ancestors 'none';
               base-uri 'self';
-              form-action 'self' ${CognitoDomain}
+              form-action 'self'
 
   FrontendDistribution:
     Type: AWS::CloudFront::Distribution

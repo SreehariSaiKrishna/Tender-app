@@ -191,10 +191,15 @@ def test_layout_moves_an_image_s_content():
 
 
 @pytest.fixture()
-def transfers(monkeypatch):
+def transfers(monkeypatch, tmp_path):
     collection = mongomock.MongoClient().db["stamp_transfers"]
     monkeypatch.setattr(api, "get_stamp_transfers_collection", lambda: collection)
-    monkeypatch.setattr(api, "TRANSFER_PART_SIZE", 64 * 1024)  # several parts without a 10 MB fixture
+    monkeypatch.setattr(api, "TRANSFER_PART_SIZE", 64 * 1024)  # several parts without a 100 MB fixture
+    monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)  # jobs run in the request
+    results: dict[str, bytes] = {}
+    monkeypatch.setattr(api.storage, "put_bytes", lambda key, data, content_type=None: results.__setitem__(key, data))
+    monkeypatch.setattr(api.storage, "get_bytes", lambda key: results.get(key))
+    monkeypatch.setattr(api.storage, "download_url", lambda key, filename, expires_in=300: None)
     return collection
 
 
@@ -208,6 +213,12 @@ def _upload_in_parts(client, data: bytes, upload_id: str = "a" * 32) -> int:
     return len(chunks)
 
 
+def _job(client, files: list[dict], **form) -> dict:
+    res = client.post("/stamp-document/jobs", data={"files": json.dumps(files), **form})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
 def test_a_file_bigger_than_one_request_round_trips_in_parts(client, transfers):
     buf = io.BytesIO()
     Image.effect_noise((600, 600), 80).convert("RGB").save(buf, "PNG")  # noise: barely compresses
@@ -215,33 +226,98 @@ def test_a_file_bigger_than_one_request_round_trips_in_parts(client, transfers):
     parts = _upload_in_parts(client, data)
     assert parts > 1
 
-    res = client.post(f"/stamp-document/uploads/{'a' * 32}/finish",
-                      data={"parts": parts, "filename": "scan.png", "content_type": "image/png", "stamp": "true"})
-    assert res.status_code == 200
-    result = res.json()
-    assert result["filename"] == "scan-signed.png" and result["media_type"] == "image/png"
-    assert transfers.count_documents({"kind": "upload"}) == 0  # upload parts are deleted once used
+    job = _job(client, [{"upload_id": "a" * 32, "parts": parts, "filename": "scan.png", "content_type": "image/png"}],
+               stamp="true")
+    assert job["status"] == "done", job
+    assert job["filename"] == "scan-signed.png" and job["media_type"] == "image/png"
+    assert transfers.count_documents({"kind": "upload"}) == parts  # kept, so marking it again needs no re-upload
+    assert client.get(f"/stamp-document/jobs/{job['job_id']}").json()["status"] == "done"
+    again = _job(client, [{"upload_id": "a" * 32, "parts": parts, "filename": "scan.png", "content_type": "image/png"}],
+                 signature="true")
+    assert again["status"] == "done", again
 
-    marked = b"".join(
-        client.get(f"/stamp-document/results/{result['result_id']}/parts/{i}").content for i in range(result["parts"])
-    )
-    assert len(marked) == result["size"]
+    marked = client.get(f"/stamp-document/jobs/{job['job_id']}/result").content
+    assert len(marked) == job["size"]
     assert Image.open(io.BytesIO(marked)).size == (600, 600)
 
 
-def test_finish_refuses_a_missing_part(client, transfers):
+def test_several_files_come_back_as_one_pdf_marked_per_page(client, transfers, library):
+    buf = io.BytesIO()
+    Image.new("RGB", (620, 877), "white").save(buf, "JPEG")
+    files = [("a" * 32, "first.pdf", "application/pdf", _pdf(2)),
+             ("b" * 32, "scan.jpg", "image/jpeg", buf.getvalue()),
+             ("c" * 32, "last.pdf", "application/pdf", _pdf(1))]
+    sent = [{"upload_id": uid, "parts": _upload_in_parts(client, data, uid), "filename": name, "content_type": ct}
+            for uid, name, ct, data in files]
+    # Pages count on through the files: 0-1 first.pdf, 2 the scan, 3 last.pdf.
+    pages = [{"page": 1, "stamp": "id-SIV_Stamp"}, {"page": 2, "stamp": "id-SIV_Stamp"}]
+    placements = [{"page": 2, "mark": "stamp", "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.14}]
+    job = _job(client, sent, pages=json.dumps(pages), placements=json.dumps(placements))
+    assert job["status"] == "done", job
+    assert job["media_type"] == "application/pdf" and job["filename"] == "first-and-2-more-signed.pdf"
+
+    out = PdfReader(io.BytesIO(client.get(f"/stamp-document/jobs/{job['job_id']}/result").content)).pages
+    assert len(out) == 4
+    assert "Page 1" in out[0].extract_text() and "Page 1" in out[3].extract_text()
+    assert [_xobjects(p) for p in out] == [0, 0, 1, 0]  # page 1 has no placement; the scan is one image
+    scan = out[2]
+    assert float(scan.mediabox.height) / float(scan.mediabox.width) == pytest.approx(877 / 620, rel=1e-3)
+
+
+def test_as_pdf_turns_a_marked_image_into_a_pdf(client, transfers):
+    buf = io.BytesIO()
+    Image.new("RGB", (620, 877), "white").save(buf, "JPEG")
+    parts = _upload_in_parts(client, buf.getvalue())
+    job = _job(client, [{"upload_id": "a" * 32, "parts": parts, "filename": "scan.jpg", "content_type": "image/jpeg"}],
+               stamp="true", as_pdf="true")
+    assert job["status"] == "done", job
+    assert job["media_type"] == "application/pdf" and job["filename"] == "scan-signed.pdf"
+    page = PdfReader(io.BytesIO(client.get(f"/stamp-document/jobs/{job['job_id']}/result").content)).pages[0]
+    assert float(page.mediabox.height) / float(page.mediabox.width) == pytest.approx(877 / 620, rel=1e-3)
+
+
+def test_a_pdf_padded_after_startxref_is_still_read(client):
+    # A small real PDF filled out with padding before its final %%EOF (like a
+    # "100 MB" test file) - PDF viewers open it, so marking must too.
+    original = _pdf(1)
+    end = original.rindex(b"%%EOF")
+    padded = original[:end] + b"0" * 200_000 + b"\n" + original[end:]
+    res = client.post("/stamp-document", files={"file": ("padded.pdf", padded, "application/pdf")},
+                      data={"stamp": "true"})
+    assert res.status_code == 200, res.text
+    page = PdfReader(io.BytesIO(res.content)).pages[0]
+    assert "Page 1" in page.extract_text() and len(page["/Resources"]["/XObject"]) == 1
+
+
+def test_a_failed_job_says_why(client, transfers):
     parts = _upload_in_parts(client, _pdf(40))
     transfers.delete_one({"kind": "upload", "part": 0})
-    res = client.post(f"/stamp-document/uploads/{'a' * 32}/finish", data={"parts": parts, "stamp": "true"})
-    assert res.status_code == 409
+    job = _job(client, [{"upload_id": "a" * 32, "parts": parts}], stamp="true")
+    assert job["status"] == "failed" and "upload the file again" in job["message"]
 
 
-def test_uploads_are_capped_at_10_mb(client, transfers):
-    assert api.MAX_UPLOAD_SIZE == 10 * 1024 * 1024
-    last = -(-api.MAX_UPLOAD_SIZE // api.TRANSFER_PART_SIZE)
-    res = client.put(f"/uploads/{'a' * 32}/parts/{last}", content=b"x")
-    assert res.status_code == 413
+def test_a_job_is_refused_up_front_without_marks_or_files(client, transfers):
+    files = json.dumps([{"upload_id": "a" * 32, "parts": 1}])
+    assert client.post("/stamp-document/jobs", data={"files": files}).status_code == 422
+    assert client.post("/stamp-document/jobs", data={"files": "[]", "stamp": "true"}).status_code == 422
+    assert client.post("/stamp-document/jobs", data={"files": json.dumps([{"upload_id": "x", "parts": 1}]),
+                                                     "stamp": "true"}).status_code == 400
+    assert transfers.count_documents({"kind": "job"}) == 0
+
+
+def test_sign_and_stamp_uploads_have_no_size_limit(client, transfers, monkeypatch):
+    # Even with the Documents library's limit tiny, a Sign & Stamp job takes the file.
+    monkeypatch.setattr(api, "MAX_UPLOAD_SIZE", 1000)
+    monkeypatch.setattr(api, "MAX_DOCUMENT_SIZE", 1000)
+    data = _pdf(40)
+    assert len(data) > 1000
+    assert client.put(f"/uploads/{'a' * 32}/parts/10000", content=b"x").status_code == 200  # no part-count cap
+    transfers.delete_many({})
+    job = _job(client, [{"upload_id": "a" * 32, "parts": _upload_in_parts(client, data), "filename": "big.pdf"}],
+               stamp="true")
+    assert job["status"] == "done", job
     assert client.put("/uploads/not-an-id/parts/0", content=b"x").status_code == 400
+    assert client.put(f"/uploads/{'a' * 32}/parts/-1", content=b"x").status_code in (400, 404, 422)
 
 
 def _doc(name: str, filename: str, content_type: str, data: bytes) -> CompanyDocumentRef:

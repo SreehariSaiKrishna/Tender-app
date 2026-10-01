@@ -152,6 +152,8 @@ def test_an_unknown_mark_kind_is_refused(client):
 
 
 def test_uploads_over_10_mb_are_refused(client, monkeypatch):
+    # Parts are taken up to Sign & Stamp's bigger limit; the library's own finish refuses the file.
     monkeypatch.setattr(api, "MAX_UPLOAD_SIZE", 2000)
-    parts = _send(client, b"x" * 2000)
-    assert client.put(f"/uploads/{UPLOAD_ID}/parts/{parts}", content=b"x").status_code == 413
+    parts = _send(client, b"x" * 2001)
+    res = client.post(f"/documents/uploads/{UPLOAD_ID}/finish", data={"parts": parts, "filename": "x.pdf"})
+    assert res.status_code == 413
