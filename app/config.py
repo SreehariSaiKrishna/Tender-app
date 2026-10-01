@@ -88,9 +88,14 @@ class Settings(BaseSettings):
     pipeline_function_name: str = ""
     # File storage (see app.storage): the S3 bucket holding company
     # documents, tender document text and short-lived bid packs. Set on both
-    # Lambdas by template.yaml; empty locally, where files_dir is used instead.
+    # Lambdas by template.yaml. Locally, set it in .env to the same bucket
+    # (with AWS credentials) - the local run shares the production database,
+    # so its files must go where production reads them. files_dir stands in
+    # for the bucket only with LOCAL_FILES=true: tests, or a local run
+    # against its own separate database.
     files_bucket: str = ""
     files_dir: str = "./data/files"
+    local_files: bool = False
 
     @property
     def base_dir(self) -> Path:

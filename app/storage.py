@@ -41,11 +41,23 @@ def _s3():
     return _s3_client
 
 
+class StorageNotConfiguredError(RuntimeError):
+    """No bucket is set and a local folder wasn't explicitly allowed."""
+
+
 def _bucket() -> str:
     return get_settings().files_bucket
 
 
 def _local_path(key: str) -> Path:
+    # A local folder only when asked for: a local run usually shares the
+    # production database, and a file written to this machine's disk would
+    # leave Mongo pointing at something production can never read.
+    if not get_settings().local_files:
+        raise StorageNotConfiguredError(
+            "File storage isn't configured: set FILES_BUCKET in .env to the stack's FilesBucketName "
+            "(with AWS credentials), or LOCAL_FILES=true only when using a separate local database."
+        )
     root = get_settings().resolved_path(get_settings().files_dir).resolve()
     path = (root / key).resolve()
     if root not in path.parents:

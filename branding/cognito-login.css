@@ -1,0 +1,62 @@
+.banner-customizable {
+  background-color: #172b3a;
+  padding: 26px 0 22px 0;
+}
+.logo-customizable {
+  max-width: 60%;
+  max-height: 64px;
+}
+.background-customizable {
+  background-color: #ffffff;
+}
+.label-customizable {
+  color: #172b3a;
+  font-weight: 600;
+}
+.textDescription-customizable {
+  color: #52646f;
+  font-size: 14px;
+}
+.inputField-customizable {
+  border-color: #d6e0e6;
+  border-radius: 8px;
+  height: 42px;
+  color: #172b3a;
+  background-color: #f7fafb;
+}
+.inputField-customizable:focus {
+  border-color: #1199cc;
+  background-color: #ffffff;
+}
+.submitButton-customizable {
+  background-color: #0c7ca3;
+  border-color: #0c7ca3;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  height: 44px;
+  color: #ffffff;
+}
+.submitButton-customizable:hover {
+  background-color: #1199cc;
+  border-color: #1199cc;
+  color: #ffffff;
+}
+.redirect-customizable {
+  color: #0c7ca3;
+}
+.errorMessage-customizable {
+  background-color: #fbe7e3;
+  border-color: #ad3b2a;
+  color: #ad3b2a;
+  border-radius: 8px;
+}
+.legalText-customizable {
+  color: #52646f;
+}
+.passwordCheck-valid-customizable {
+  color: #2f7a4b;
+}
+.passwordCheck-notValid-customizable {
+  color: #ad3b2a;
+}

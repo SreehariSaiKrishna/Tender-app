@@ -17,6 +17,7 @@ import datetime as dt
 import io
 import json
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -27,7 +28,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from mangum import Mangum
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pymongo import DESCENDING
@@ -70,18 +71,29 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tender Intelligence API")
 
-# Local dev only: deployed, API Gateway answers CORS itself (template.yaml's
-# CorsConfiguration, locked to the dashboard's CloudFront origin) and its
-# Cognito authorizer rejects any request without a login before it reaches
-# this app. Locally, uvicorn serves no CORS headers on its own and the
-# dashboard is served from a different localhost port, so allow just that.
-# There's no login locally - keep uvicorn bound to 127.0.0.1.
+# Locally, uvicorn serves no CORS headers on its own and the dashboard is
+# served from a different localhost port, so allow that. There's no login
+# locally - keep uvicorn bound to 127.0.0.1. Deployed, API Gateway sets the
+# CORS headers itself (template.yaml's CorsConfiguration) and its Cognito
+# authorizer rejects any request without a login before it reaches this
+# app; FRONTEND_URL (the dashboard's CloudFront origin, from the same
+# FrontendUrl parameter) is allowed too so this middleware never 400s a
+# request from the real dashboard.
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=[origin for origin in [os.environ.get("FRONTEND_URL")] if origin],
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["content-type", "authorization"],
 )
+
+
+
+@app.exception_handler(storage.StorageNotConfiguredError)
+def _storage_not_configured(request: Request, exc: storage.StorageNotConfiguredError) -> JSONResponse:
+    """A local run with no FILES_BUCKET - say so rather than a bare 500."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 
 CLOSING_SOON_DAYS = 7
 
@@ -1768,4 +1780,15 @@ def list_automation_runs(
     return {"total": total, "count": len(runs), "runs": runs}
 
 
-handler = Mangum(app)
+_asgi_handler = Mangum(app)
+
+
+def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Lambda entry point. A CORS preflight (template.yaml's ApiPreflight
+    route - no login) is answered here with an empty 204 and never reaches
+    the app: CORSMiddleware above only allows localhost and would 400 the
+    CloudFront origin. API Gateway adds its own CorsConfiguration headers to
+    this response, so the allowed origin stays locked to the dashboard."""
+    if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
+        return {"statusCode": 204, "headers": {}, "body": ""}
+    return _asgi_handler(event, context)

@@ -40,7 +40,10 @@ def migrate_company_documents(db, apply: bool) -> tuple[int, int]:
     records = get_company_documents_collection()
     moved = skipped = 0
     for grid_out in grid.find():
-        if records.find_one({"_id": grid_out._id}):
+        existing = records.find_one({"_id": grid_out._id})
+        # Done only if its file is really in the bucket - a record written
+        # elsewhere (e.g. a local run) without the file is copied again.
+        if existing and storage.get_bytes(existing["s3_key"]) is not None:
             skipped += 1
             continue
         key = _document_key(grid_out._id, grid_out.filename)
@@ -54,7 +57,8 @@ def migrate_company_documents(db, apply: bool) -> tuple[int, int]:
         stored = storage.get_bytes(key)
         if stored != content:
             raise SystemExit(f"Verification failed for document {grid_out._id} ({grid_out.filename}) - stopped.")
-        records.insert_one(
+        records.replace_one(
+            {"_id": grid_out._id},
             {
                 "_id": grid_out._id,
                 "filename": grid_out.filename,
@@ -62,7 +66,8 @@ def migrate_company_documents(db, apply: bool) -> tuple[int, int]:
                 "uploadDate": grid_out.upload_date,
                 "s3_key": key,
                 "metadata": metadata,
-            }
+            },
+            upsert=True,
         )
         moved += 1
     return moved, skipped
