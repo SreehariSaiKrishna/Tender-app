@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     files_bucket: str = ""
     files_dir: str = "./data/files"
     local_files: bool = False
+    # Local runs only: the ~/.aws profile app.storage reaches FILES_BUCKET
+    # with (e.g. tender-agent). Read from .env here because boto3 itself only
+    # sees AWS_PROFILE in the real environment. Never set on the Lambdas,
+    # which use their own role.
+    aws_profile: str = ""
 
     @property
     def base_dir(self) -> Path:

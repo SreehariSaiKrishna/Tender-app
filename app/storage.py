@@ -37,7 +37,8 @@ def _s3():
     if _s3_client is None:
         import boto3
 
-        _s3_client = boto3.client("s3")
+        session = boto3.Session(profile_name=get_settings().aws_profile or None)
+        _s3_client = session.client("s3")
     return _s3_client
 
 

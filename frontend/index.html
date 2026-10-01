@@ -130,10 +130,10 @@
   }
   .sidebar-account button:hover { background: rgba(255, 255, 255, 0.1); }
 
-  /* Signed-out screen: the "Tender Desk" start page. Credentials are never
-     typed here - its one button goes to Cognito's hosted page (see login()).
-     Also shows why a sign-in failed. Everything is prefixed si- so it can't
-     collide with the dashboard's own classes. */
+  /* Signed-out screen: the "Tender Desk" sign-in. One card, one step at a
+     time (sign in, 6-digit code, new password, authenticator setup, password
+     reset) - see the sign-in steps in the script. Everything is prefixed si-
+     so it can't collide with the dashboard's own classes. */
   body.signed-out .shell { display: none; }
   .si { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 1fr); }
   .si[hidden] { display: none; }
@@ -211,12 +211,45 @@
   .si-primary:hover { filter: brightness(1.05); }
   .si-primary:active { transform: translateY(1px); }
   .si-primary:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 3px; }
-  .si-steps { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 13px; color: var(--ink-soft); counter-reset: si-step; }
-  .si-steps li { display: flex; gap: 10px; align-items: baseline; counter-increment: si-step; }
-  .si-steps li::before {
-    content: counter(si-step); flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center;
-    background: #e0f2f9; color: var(--brand-blue-deep); font-size: 11px; font-weight: 700;
+  .si-primary:disabled { opacity: 0.5; cursor: not-allowed; filter: none; transform: none; }
+  .si-primary[aria-busy="true"] { opacity: 0.75; cursor: progress; }
+  .si-note { background: #e0f2f9; color: var(--brand-blue-deep); }
+  .si-form { display: flex; flex-direction: column; gap: 14px; }
+  .si-form[hidden] { display: none; }
+  .si-field { display: flex; flex-direction: column; gap: 6px; }
+  .si-field label { font-size: 13px; font-weight: 600; }
+  .si-row-label { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .si-link { align-self: center; padding: 0; border: 0; background: none; color: var(--brand-blue-deep); font-size: 13px; cursor: pointer; }
+  .si-link:hover { text-decoration: underline; }
+  .si-link:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; border-radius: 4px; }
+  .si-input {
+    width: 100%; height: 44px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 10px;
+    background: #f7fafb; color: var(--ink); font: inherit; font-size: 15px; transition: border-color 0.15s, box-shadow 0.15s;
   }
+  .si-input:focus, .si-digits input:focus { outline: none; border-color: var(--brand-blue); box-shadow: 0 0 0 4px rgba(17, 153, 204, 0.18); background: #fff; }
+  .si-pw { position: relative; }
+  .si-pw .si-input { padding-right: 64px; }
+  .si-pw button { position: absolute; right: 6px; top: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-soft); font-size: 12.5px; cursor: pointer; }
+  .si-pw button:hover { background: #f7fafb; color: var(--ink); }
+  .si-digits { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .si-digits input {
+    width: 100%; min-width: 0; height: 52px; text-align: center; border: 1px solid var(--rule); border-radius: 10px;
+    background: #f7fafb; color: var(--ink); font: 600 20px/1 Consolas, "SFMono-Regular", Menlo, monospace;
+  }
+  .si-code-input { font: 600 18px/1 Consolas, "SFMono-Regular", Menlo, monospace; letter-spacing: 0.3em; }
+  .si-hint { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .si-rules { list-style: none; margin: 2px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; font-size: 12.5px; color: var(--ink-soft); }
+  .si-rules li { display: flex; align-items: center; gap: 7px; }
+  .si-rules li::before { content: ""; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--rule); }
+  .si-rules li.met { color: #2f7a4b; }
+  .si-rules li.met::before { background: #2f7a4b; border-color: #2f7a4b; box-shadow: inset 0 0 0 3px #fff; }
+  .si-mismatch { margin: -6px 0 0; min-height: 1em; font-size: 12.5px; color: var(--high); }
+  .si-setup { display: grid; grid-template-columns: 112px 1fr; gap: 14px; align-items: center; }
+  .si-qr { width: 112px; height: 112px; padding: 8px; border: 1px solid var(--rule); border-radius: 10px; background: #fff; display: grid; place-items: center; }
+  .si-qr canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+  .si-qr span { font-size: 11.5px; color: var(--ink-soft); text-align: center; }
+  .si-steps-mini { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; color: var(--ink-soft); }
+  .si-key { padding: 7px 9px; border: 1px dashed var(--rule); border-radius: 8px; background: #f7fafb; font: 500 12.5px/1.4 Consolas, "SFMono-Regular", Menlo, monospace; word-break: break-all; user-select: all; }
   .si-secure { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--rule); font-size: 12.5px; color: var(--ink-soft); }
   .si-secure svg { flex: none; }
   .si-foot { max-width: 400px; margin: 0; text-align: center; font-size: 12.5px; color: var(--ink-soft); }
@@ -228,6 +261,10 @@
     .si-title { font-size: 26px; }
     .si-lede, .si-desk-fit, .si-facts { display: none; }
     .si-side { justify-content: flex-start; padding: 24px 16px 32px; }
+  }
+  @media (max-width: 380px) {
+    .si-setup { grid-template-columns: 1fr; justify-items: start; }
+    .si-rules { grid-template-columns: 1fr; }
   }
   @media (prefers-reduced-motion: reduce) {
     .si-seal { animation: none; }
@@ -542,26 +579,142 @@
   .cl-btn:disabled { opacity: 0.55; cursor: default; }
   .stamp-error { font-size: 13px; color: #c92a2a; margin-bottom: 12px; }
   .stamp-error:empty { display: none; }
-  .stamp-preview-card { background: var(--page-bg); min-height: 240px; margin-bottom: 0; }
-  .stamp-pages { display: flex; flex-direction: column; align-items: center; gap: 22px; }
-  .stamp-page-wrap { width: 100%; max-width: 900px; }
+  /* --- Sign & Stamp ------------------------------------------------------ */
+  .stamp-drop {
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 6px; padding: 44px 24px 34px;
+    background: var(--panel-bg);
+    border: 2px dashed var(--panel-border); border-radius: 16px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .stamp-drop[hidden] { display: none; }
+  .stamp-drop.dragover, #stampPreviewCard.dragover { border-color: var(--brand-blue); background: #eef8fc; }
+  .stamp-drop-icon {
+    display: grid; place-items: center; width: 60px; height: 60px; margin-bottom: 6px;
+    border-radius: 50%; background: #e0f2f9; color: var(--brand-blue-deep);
+  }
+  .stamp-drop h2 { margin: 0; font-size: 18px; color: var(--brand-navy); }
+  .stamp-drop-sub { margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
+  .stamp-drop-btn { padding: 10px 26px; font-size: 14px; }
+  .stamp-steps {
+    list-style: none; margin: 26px 0 0; padding: 0;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+    width: 100%; max-width: 820px; text-align: left;
+  }
+  .stamp-steps li { display: flex; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--page-bg); font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
+  .stamp-steps b {
+    flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--brand-blue); color: #fff; font-size: 12px;
+  }
+  .stamp-steps strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 2px; }
+
+  .stamp-preview-card { padding: 0; margin-bottom: 0; overflow: hidden; flex-direction: column; min-height: 420px; }
+  .stamp-preview-card:not([hidden]) { display: flex; }
+  .stamp-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  /* Files and Quick apply stay put; only the page thumbnails scroll (the whole
+     side scrolls only on a screen too short for that). */
+  .stamp-side {
+    min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+    border-right: 1px solid var(--panel-border); background: var(--panel-bg);
+  }
+  .stamp-side > .stamp-side-block { flex: none; }
+  .stamp-side > #stampRailBlock { flex: 1 1 0; min-height: 180px; }
+  #stampRailBlock .stamp-rail { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 2px; margin: -2px; }
+  .stamp-file-list { max-height: 220px; overflow-y: auto; }
+  .stamp-side-block { padding: 14px 16px; border-bottom: 1px solid var(--panel-border); display: flex; flex-direction: column; gap: 8px; }
+  .stamp-side-block[hidden] { display: none; }
+  .stamp-side-block h3 { margin: 0; font-size: 13px; font-weight: 700; color: var(--brand-navy); }
+  .stamp-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .stamp-side-hint { margin: -2px 0 2px; font-size: 12px; color: var(--ink-faint); line-height: 1.4; }
+  .stamp-summary { font-size: 12px; color: var(--ink-soft); }
+  .stamp-summary b { color: var(--ink); }
+  .stamp-field { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--ink-faint); }
+  .stamp-bulk-actions { display: flex; gap: 8px; margin-top: 4px; }
+  .stamp-bulk-actions .cl-btn { flex: 1; justify-content: center; text-align: center; }
+
+  .stamp-file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .stamp-file {
+    display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 10px;
+    border: 1px solid var(--panel-border); border-radius: 10px; background: #fff; cursor: pointer;
+  }
+  .stamp-file:hover { border-color: var(--brand-blue); }
+  .stamp-file-icon {
+    flex: none; display: grid; place-items: center; width: 32px; height: 38px; border-radius: 6px;
+    font-size: 9px; font-weight: 800; letter-spacing: 0.03em; color: #fff; background: #c92a2a;
+  }
+  .stamp-file-icon.img { background: #2b8a3e; }
+  .stamp-file-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .stamp-file-name { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stamp-file-meta { font-size: 11.5px; color: var(--ink-faint); }
+  .stamp-file-meta .ok { color: #2f9e44; font-weight: 600; }
+  .stamp-file-download {
+    flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: none; border-radius: 50%;
+    background: #2f9e44; color: #fff; cursor: pointer;
+  }
+  .stamp-file-download:hover:not(:disabled) { filter: brightness(1.1); }
+  .stamp-file-download:disabled { opacity: 0.45; cursor: default; }
+  .stamp-file-download.busy { background: var(--brand-blue); opacity: 1; }
+  .stamp-file-download.busy svg { animation: stamp-spin 1s linear infinite; }
+  @keyframes stamp-spin { to { transform: rotate(360deg); } }
+  .stamp-download-all:not([hidden]) { display: block; width: 100%; text-align: center; padding: 8px 12px; }
+  .stamp-file-progress { font-size: 11.5px; font-weight: 600; color: var(--brand-blue-deep); }
+  .stamp-file-error { font-size: 11.5px; color: var(--high); }
+  .stamp-file-remove {
+    flex: none; width: 28px; height: 28px; border: none; border-radius: 50%;
+    background: none; color: var(--ink-faint); font-size: 18px; line-height: 1; cursor: pointer;
+  }
+  .stamp-file-remove:hover:not(:disabled) { background: #fdecea; color: var(--high); }
+  .stamp-file-remove:disabled { opacity: 0.4; cursor: default; }
+
+  .stamp-rail { display: flex; flex-direction: column; gap: 8px; }
+  .stamp-rail-file { font-size: 11px; font-weight: 700; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; }
+  .stamp-rail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .stamp-thumb {
+    position: relative; display: block; padding: 0; border: 2px solid transparent; border-radius: 6px;
+    background: #fff; box-shadow: 0 0 0 1px var(--panel-border); cursor: pointer; overflow: hidden;
+  }
+  .stamp-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  .stamp-thumb:hover { box-shadow: 0 0 0 1px var(--brand-blue); }
+  .stamp-thumb.current { border-color: var(--brand-blue); }
+  .stamp-thumb-no {
+    position: absolute; left: 3px; bottom: 3px; min-width: 18px; padding: 1px 4px; border-radius: 4px;
+    background: rgba(23, 43, 58, 0.78); color: #fff; font-size: 10px; font-weight: 700; text-align: center;
+  }
+  .stamp-thumb.marked::after {
+    content: "\2713"; position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%;
+    background: #2f9e44; color: #fff; font-size: 10px; line-height: 16px; text-align: center; font-weight: 700;
+  }
+
+  .stamp-main { min-height: 0; overflow-y: auto; padding: 18px 22px 28px; background: var(--page-bg); }
+  .stamp-preview-status { font-size: 13px; color: var(--ink-soft); }
+  .stamp-preview-status:empty { display: none; }
+  .stamp-preview-status:not(:empty) { padding: 10px 14px; margin: 0 auto 14px; max-width: 780px; border-radius: 10px; background: var(--panel-bg); border: 1px solid var(--panel-border); }
+  .stamp-pages { display: flex; flex-direction: column; align-items: center; gap: 26px; }
+  .stamp-file-divider {
+    width: 100%; max-width: 780px; display: flex; align-items: center; gap: 10px;
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .stamp-file-divider:not(:first-child) { padding-top: 22px; border-top: 1px dashed var(--panel-border); }
+  .stamp-file-divider strong { color: var(--brand-navy); font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stamp-file-divider span:last-child { flex: none; }
+  .stamp-file-divider .stamp-file-icon { width: 28px; height: 34px; font-size: 8.5px; }
+  .stamp-page-wrap { width: 100%; max-width: 780px; scroll-margin-top: 12px; }
   /* Each page's own marks, right above it. */
   .stamp-page-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 8px 12px;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 14px; margin-bottom: 10px;
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px;
   }
-  .stamp-page-no { flex: 1 0 100%; display: flex; align-items: baseline; gap: 12px; font-size: 13px; font-weight: 700; color: var(--brand-navy); }
-  .stamp-page-state { font-size: 12px; font-weight: 500; color: var(--ink-faint); }
-  .stamp-page-state.marked { color: #2f9e44; }
-  .stamp-page-head label, .stamp-all-pages label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--ink-faint); }
-  .stamp-page-head label { flex: 1 1 150px; min-width: 0; }
+  .stamp-page-wrap.is-marked .stamp-page-head { box-shadow: inset 4px 0 0 #2f9e44; }
+  .stamp-page-title { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+  .stamp-page-no { font-size: 14px; font-weight: 700; color: var(--brand-navy); }
+  .stamp-page-of { font-size: 12px; color: var(--ink-faint); }
+  .stamp-page-state { margin-left: auto; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--page-bg); color: var(--ink-faint); }
+  .stamp-page-state.marked { background: #e6f6ea; color: #2f9e44; }
+  .stamp-page-marks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .stamp-page-marks label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11.5px; color: var(--ink-faint); }
+  .stamp-page-tools { display: flex; justify-content: flex-end; gap: 16px; }
+  .stamp-page-tools:empty { display: none; }
   .stamp-select {
     width: 100%;
     font: inherit;
@@ -574,17 +727,14 @@
   }
   .stamp-select.chosen { border-color: var(--brand-blue); box-shadow: 0 0 0 1px var(--brand-blue); }
   .stamp-select:disabled { color: var(--ink-faint); background: var(--page-bg); }
-  .stamp-all-pages:not([hidden]) { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
-  .stamp-all-pages label { flex: 1 1 180px; }
-  .stamp-copy { margin-left: auto; white-space: nowrap; align-self: center; }
   .stamp-link { background: none; border: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--brand-blue-deep); cursor: pointer; text-decoration: underline; }
+  .stamp-link:disabled { opacity: 0.5; cursor: default; }
   .stamp-page {
     position: relative;
     width: 100%;
     background: #fff;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
     overflow: hidden;
-    touch-action: none;
     user-select: none;
   }
   .stamp-page > .stamp-content, .stamp-page > .stamp-letterhead {
@@ -598,7 +748,8 @@
   /* Laid over the page like app.reports.bid_generator's multiplied letterhead:
      the page shows through its white areas. */
   .stamp-page > .stamp-letterhead { mix-blend-mode: multiply; }
-  .stamp-mark-box { position: absolute; cursor: move; outline: 1px dashed transparent; }
+  /* Only the marks take over a drag - elsewhere a finger still scrolls the page. */
+  .stamp-mark-box { position: absolute; cursor: move; outline: 1px dashed transparent; touch-action: none; }
   .stamp-mark-box:hover, .stamp-mark-box.dragging { outline-color: var(--brand-blue); }
   .stamp-mark-box img { display: block; width: 100%; height: 100%; pointer-events: none; }
   .stamp-resize {
@@ -956,7 +1107,6 @@
     background: #fff;
     color: var(--brand-blue-deep);
   }
-  .stamp-header-actions #stampDownloadBtn { border-color: #2f9e44; background: #2f9e44; color: #fff; }
   .stamp-header-actions button:hover:not(:disabled) { filter: brightness(1.08); }
   .stamp-header-actions button:disabled { opacity: 0.55; cursor: default; }
   .stamp-header-actions #stampViewDocsBtn,
@@ -1175,53 +1325,170 @@
   .row-action-btn.delete-criterion-btn { color: var(--high); }
   .row-action-btn:hover { text-decoration: underline; }
 
+  /* Desktop: the menu toggle doesn't exist, the menu is the sidebar. */
+  .nav-toggle { display: none; }
+
+  /* --- Tablets and phones: top bar + menu, page scrolls, tables as cards --- */
   @media (max-width: 860px) {
-    .shell { flex-direction: column; padding: 12px; gap: 12px; }
-    .sidebar-account { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding: 10px 4px 0; }
-    .sidebar-account .account-email { margin-bottom: 0; }
+    .shell { flex-direction: column; align-items: stretch; padding: 0 0 20px; gap: 12px; }
+    .main { padding: 0 12px; }
     .sidebar {
-      width: 100%;
-      height: auto;
-      position: static;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      padding: 12px;
+      width: 100%; height: auto; position: sticky; top: 0; z-index: 50;
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 12px; border-radius: 0 0 14px 14px; overflow: visible;
     }
-    .sidebar .brand { display: none; }
-    .nav-item { width: auto; flex: 1 1 auto; justify-content: center; margin-bottom: 0; }
-    header { padding: 14px 16px; flex-wrap: wrap; }
+    .sidebar .brand { padding: 0; margin: 0; border: 0; }
+    .sidebar .brand img { width: 118px; }
+    .nav-toggle {
+      display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px;
+      border: 1px solid var(--rule-on-dark); border-radius: 10px; background: rgba(255, 255, 255, 0.08);
+      color: var(--ink-on-dark); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+    }
+    .nav-toggle[aria-expanded="true"] { background: rgba(255, 255, 255, 0.18); }
+    .nav-menu { display: none; flex: 1 1 100%; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--rule-on-dark); }
+    .sidebar.nav-open .nav-menu { display: flex; }
+    .nav-item { min-height: 44px; margin-bottom: 0; }
+    .sidebar-account { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 12px 4px 4px; }
+    .sidebar-account .account-email { margin-bottom: 0; }
+    .sidebar-account button { min-height: 36px; }
+
+    header { position: static; padding: 14px 16px; flex-wrap: wrap; margin-bottom: 12px; }
     header .app-icon { width: 32px; height: 32px; }
     h1 { font-size: 17px; }
-    header p { font-size: 12px; }
+    header p { font-size: 12.5px; }
     .stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
     .stat-card { padding: 12px 14px; }
     .stat-card .num { font-size: 20px; }
     .controls { padding: 10px; }
+    #filterSearch { margin-left: 0 !important; flex: 1 1 180px; max-width: none; }
     .drill-heading { font-size: 14px; }
     .drill-header { flex-wrap: wrap; }
-    .title-cell { max-width: 220px; }
+    .page-intro { white-space: normal; font-weight: 600; line-height: 1.5; }
+    .pagination { flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+    .pagination button { min-height: 40px; }
+    /* iOS zooms into any field under 16px when it's tapped. */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea, #filterSearch { font-size: 16px; }
     .detail-row td { padding: 14px 16px; }
     .detail-row dl { grid-template-columns: 1fr; gap: 3px 0; }
     .detail-row dt { margin-top: 10px; font-weight: 600; }
     .detail-row dt:first-child { margin-top: 0; }
-    .pagination { flex-wrap: wrap; gap: 10px; }
+    .detail-row dd { overflow-wrap: anywhere; }
+    .tech-criteria-table { display: block; overflow-x: auto; }
+
+    /* Pop-ups rise from the bottom and scroll inside themselves. */
+    .modal-overlay { align-items: flex-end; padding: 0; }
+    .modal-card, .modal-card.stamp-docs-card {
+      max-width: none; max-height: 92vh; overflow-y: auto; border-radius: 18px 18px 0 0;
+      padding: 20px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    }
+    .modal-actions { flex-wrap: wrap; }
+    .modal-actions button { flex: 1 1 auto; min-height: 44px; }
+    .stamp-docs-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+    .toast:not([hidden]) { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+
+    /* Checklist: toolbar sticks under the top bar; every row a card. */
+    .cl-card { padding: 14px; }
+    .cl-toolbar { top: 66px; }
+    .cl-toolbar { gap: 6px 10px; padding: 8px 10px; }
+    /* One row of buttons that swipes sideways, so the bar stays short. */
+    .cl-toolbar-actions { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .cl-toolbar-actions::-webkit-scrollbar { display: none; }
+    .cl-toolbar-actions .cl-btn { flex: none; white-space: nowrap; min-height: 36px; }
+    .cl-section-head { flex-wrap: wrap; }
+    .cl-header-grid { grid-template-columns: 1fr; }
+    .cl-detail { grid-template-columns: 1fr; }
+    .cl-table, .cl-submission { min-width: 0; display: block; border: 0; }
+    .cl-table thead { display: none; }
+    .cl-table tbody { display: block; }
+    .cl-table tr {
+      display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px 10px;
+      padding: 12px; margin-bottom: 10px; border: 1px solid var(--panel-border); border-radius: 12px; background: #fff;
+    }
+    .cl-table td { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0; border: 0; width: auto !important; text-align: left !important; }
+    .cl-table td::before { content: attr(data-label); font-size: 11px; font-weight: 600; color: var(--ink-faint); }
+    .cl-table td:not([data-label])::before { content: none; }
+    .cl-table textarea, .cl-table input[type="text"], .cl-table select { border-color: var(--panel-border); background: var(--page-bg); }
+    .cl-table td.cl-sno { flex-direction: row; align-items: baseline; gap: 6px; }
+    .cl-submission td:nth-child(5), .cl-submission td:nth-child(6) { grid-column: span 3; }
+    .cl-table td.cl-mark { grid-column: span 2; flex-direction: row-reverse; justify-content: flex-end; align-items: center; gap: 8px; }
+    .cl-table td.cl-mark input { width: 22px; height: 22px; }
+    .cl-table td.cl-actions, .cl-table td.cl-del { flex-direction: row; justify-content: flex-end; gap: 6px; }
+    .cl-actions button, .cl-del button { min-width: 40px; min-height: 36px; border: 1px solid var(--panel-border); }
+    .cl-table td.cl-done { flex-direction: row-reverse; justify-content: flex-end; align-items: center; gap: 8px; }
+    .cl-table td.cl-done input { width: 22px; height: 22px; }
+    .cl-table tr.cl-detail-row { background: var(--page-bg); }
+    .cl-table tr.cl-detail-row td:first-child:empty { display: none; }
+
+  }
+  /* Touch screens have no hover: the resize dot is always there, and big. */
+  @media (hover: none) {
+    .stamp-mark-box { outline-color: rgba(17, 153, 204, 0.6); }
+    .stamp-resize { opacity: 1; width: 22px; height: 22px; right: -11px; bottom: -11px; }
   }
 
-  @media (max-width: 480px) {
-    thead th, tbody td { padding: 9px 10px; font-size: 12.5px; }
-    #tendersRefreshBtn, #automationRefreshBtn, #addCriterionOpenBtn, #documentsUploadBtn { margin-left: 0; width: 100%; text-align: center; }
+  /* The tenders list as cards: below 900px its 10 columns no longer fit. */
+  @media (max-width: 900px) {
+    table.tenders-table, table.tenders-table > tbody { display: block; }
+    table.tenders-table > colgroup, table.tenders-table > thead { display: none; }
+    #tenderBody tr.tender-row {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px 16px;
+      padding: 16px; border-bottom: 1px solid var(--rule);
+    }
+    #tenderBody tr.tender-row td {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; padding: 0; border: 0;
+      font-size: 13px; white-space: normal; overflow: visible; text-overflow: clip;
+    }
+    #tenderBody tr.tender-row td::before {
+      content: attr(data-label); font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint);
+    }
+    #tenderBody tr.tender-row td:first-child { display: none; }
+    #tenderBody tr.tender-row td.title-cell, #tenderBody tr.tender-row td:last-child { grid-column: 1 / -1; max-width: none; }
+    #tenderBody tr.tender-row td.title-cell::before, #tenderBody tr.tender-row td:last-child::before { content: none; }
+    #tenderBody tr.tender-row td.title-cell .t { font-size: 14px; line-height: 1.4; }
+    #tenderBody .decision-actions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+    #tenderBody .decision-actions .generate-btn, #tenderBody .decision-actions .checklist-btn, #tenderBody .decision-actions .download-btn { padding: 8px 16px; font-size: 12.5px; }
+    #tenderBody tr:not(.tender-row), #tenderBody tr:not(.tender-row) > td { display: block; }
+    #tenderBody tr.detail-row > td { border-bottom: 1px solid var(--rule); }
+  }
+
+  /* Phones: the other tables as cards too - one row, one card. */
+  @media (max-width: 640px) {
+    .table-wrap > table:not(.tenders-table) { min-width: 0; display: block; }
+    .table-wrap > table:not(.tenders-table) > thead { display: none; }
+    .table-wrap > table:not(.tenders-table) > tbody { display: block; }
+    .table-wrap > table:not(.tenders-table) > tbody > tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
+    .table-wrap > table:not(.tenders-table) > tbody > tr:last-child { border-bottom: 0; }
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 0; border: 0; overflow-wrap: anywhere; }
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td::before { content: attr(data-label); font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-faint); }
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td:not([data-label])::before { content: none; }
+    /* The first cell is the card's heading - it needs no label. */
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td:first-child::before { content: none; }
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td:first-child { grid-column: 1 / -1; font-weight: 600; font-size: 14px; color: var(--brand-navy); }
+    .table-wrap > table:not(.tenders-table) > tbody > tr > td[colspan] { grid-column: 1 / -1; display: block; }
+    #eligibilityBody > tr > td { grid-column: 1 / -1; }
+    .view-btn { padding: 8px 18px; }
+    .row-actions { gap: 20px; }
+    .row-action-btn { min-height: 32px; }
+    .actions-menu-btn { min-width: 40px; min-height: 36px; }
+
+    #tendersRefreshBtn, #automationRefreshBtn, #addCriterionOpenBtn, #documentsUploadBtn { margin-left: 0; width: 100%; min-height: 42px; text-align: center; }
     .stamp-header-actions:not([hidden]) { margin-left: 0; width: 100%; flex-wrap: wrap; }
-    .stamp-header-actions button { flex: 1; }
-    #filterSearch { max-width: none; }
+    .stamp-header-actions button { flex: 1 1 40%; min-height: 42px; }
+    .stamp-steps { grid-template-columns: 1fr; }
+    .stamp-layout { display: block; }
+    .stamp-side { border-right: none; border-bottom: 1px solid var(--panel-border); }
+    #stampRailBlock { display: none !important; }
+    .stamp-file-list { max-height: none; }
+    .stamp-main { padding: 14px 10px 22px; }
+    .stamp-page-marks { grid-template-columns: 1fr; }
+    .stamp-preview-card { min-height: 0; }
   }
 </style>
 </head>
 <body class="auth-pending">
 
-<!-- Shown when there's no session (or a sign-in failed). The button goes to
-     Cognito's hosted login page; nothing is typed on this page. The logos
+<!-- Shown when there's no session: the whole sign-in, one step per form
+     (data-si-step), driven by the sign-in steps in the script. The logos
      are copied in from the sidebar's and the favicon's at runtime
      (showSignIn), so their data isn't embedded twice. -->
 <div class="si" id="signinScreen" hidden>
@@ -1276,15 +1543,103 @@
         </div>
       </div>
       <p class="si-error" id="siError" role="alert" hidden></p>
-      <button class="si-primary" id="authRetryBtn">Sign in with your OAKS account</button>
-      <ol class="si-steps">
-        <li>Your work email and password</li>
-        <li>The 6-digit code from your authenticator app</li>
-      </ol>
-      <div class="si-secure">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
-        <span>First time? You'll set your own password and link an authenticator app, once.</span>
-      </div>
+
+      <form class="si-form" data-si-step="signin" novalidate>
+        <div class="si-field">
+          <label for="siEmail">Work email</label>
+          <input class="si-input" id="siEmail" type="email" autocomplete="username" placeholder="you@oaks.guru" required>
+        </div>
+        <div class="si-field">
+          <div class="si-row-label"><label for="siPassword">Password</label><button type="button" class="si-link" data-si-goto="forgot">Forgot password?</button></div>
+          <div class="si-pw">
+            <input class="si-input" id="siPassword" type="password" autocomplete="current-password" required>
+            <button type="button" data-si-toggle="siPassword" aria-label="Show password">Show</button>
+          </div>
+        </div>
+        <button class="si-primary" type="submit">Continue</button>
+        <div class="si-secure">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Protected by a second step: the code from your authenticator app. First time? You'll set your own password and link the app, once.</span>
+        </div>
+      </form>
+
+      <form class="si-form" data-si-step="code" novalidate hidden>
+        <div class="si-digits" role="group" aria-label="6-digit code">
+          <input inputmode="numeric" autocomplete="one-time-code" aria-label="Digit 1"><input inputmode="numeric" aria-label="Digit 2"><input inputmode="numeric" aria-label="Digit 3"><input inputmode="numeric" aria-label="Digit 4"><input inputmode="numeric" aria-label="Digit 5"><input inputmode="numeric" aria-label="Digit 6">
+        </div>
+        <p class="si-hint">Codes change every 30 seconds.</p>
+        <button class="si-primary" type="submit">Sign in</button>
+        <button type="button" class="si-link" data-si-goto="signin">Use a different account</button>
+      </form>
+
+      <form class="si-form" data-si-step="newpass" novalidate hidden>
+        <div class="si-field">
+          <label for="siNewPass">New password</label>
+          <div class="si-pw">
+            <input class="si-input" id="siNewPass" type="password" autocomplete="new-password" data-si-new>
+            <button type="button" data-si-toggle="siNewPass" aria-label="Show password">Show</button>
+          </div>
+          <ul class="si-rules">
+            <li data-rule="len">12+ characters</li><li data-rule="upper">Upper case</li><li data-rule="lower">Lower case</li><li data-rule="num">A number</li><li data-rule="sym">A symbol</li>
+          </ul>
+        </div>
+        <div class="si-field">
+          <label for="siNewPass2">Confirm password</label>
+          <input class="si-input" id="siNewPass2" type="password" autocomplete="new-password" data-si-confirm>
+        </div>
+        <p class="si-mismatch"></p>
+        <button class="si-primary" type="submit" disabled>Save password</button>
+      </form>
+
+      <form class="si-form" data-si-step="setup" novalidate hidden>
+        <div class="si-setup">
+          <div class="si-qr" id="siQr"></div>
+          <ol class="si-steps-mini">
+            <li>Open Google or Microsoft Authenticator.</li>
+            <li>Scan this code, or type the key below.</li>
+            <li>Enter the 6-digit code it shows.</li>
+          </ol>
+        </div>
+        <div class="si-key" id="siSetupKey" aria-label="Setup key"></div>
+        <div class="si-field">
+          <label for="siSetupCode">6-digit code</label>
+          <input class="si-input si-code-input" id="siSetupCode" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+        </div>
+        <button class="si-primary" type="submit">Verify and continue</button>
+      </form>
+
+      <form class="si-form" data-si-step="forgot" novalidate hidden>
+        <div class="si-field">
+          <label for="siForgotEmail">Work email</label>
+          <input class="si-input" id="siForgotEmail" type="email" autocomplete="username" placeholder="you@oaks.guru">
+        </div>
+        <button class="si-primary" type="submit">Email me a code</button>
+        <button type="button" class="si-link" data-si-goto="signin">Back to sign in</button>
+      </form>
+
+      <form class="si-form" data-si-step="reset" novalidate hidden>
+        <div class="si-field">
+          <div class="si-row-label"><label for="siResetCode">Code from the email</label><button type="button" class="si-link" id="siResendBtn">Send a new code</button></div>
+          <input class="si-input si-code-input" id="siResetCode" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+        </div>
+        <div class="si-field">
+          <label for="siResetPass">New password</label>
+          <div class="si-pw">
+            <input class="si-input" id="siResetPass" type="password" autocomplete="new-password" data-si-new>
+            <button type="button" data-si-toggle="siResetPass" aria-label="Show password">Show</button>
+          </div>
+          <ul class="si-rules">
+            <li data-rule="len">12+ characters</li><li data-rule="upper">Upper case</li><li data-rule="lower">Lower case</li><li data-rule="num">A number</li><li data-rule="sym">A symbol</li>
+          </ul>
+        </div>
+        <div class="si-field">
+          <label for="siResetPass2">Confirm password</label>
+          <input class="si-input" id="siResetPass2" type="password" autocomplete="new-password" data-si-confirm>
+        </div>
+        <p class="si-mismatch"></p>
+        <button class="si-primary" type="submit" disabled>Set new password</button>
+        <button type="button" class="si-link" data-si-goto="signin">Back to sign in</button>
+      </form>
     </section>
     <p class="si-foot">Accounts are created by your OAKS administrator. Need access or a new phone? Ask them.
       <small>© OAKS Solutions Private Limited</small></p>
@@ -1294,6 +1649,12 @@
 <div class="shell">
 <nav class="sidebar">
   <div class="brand"><img src="data:image/png;base64,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" alt="OAKS Solutions"></div>
+  <!-- Phones/tablets: the sidebar is a top bar, and this opens the menu. -->
+  <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="navMenu">
+    <span id="navToggleLabel">Tenders</span>
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="nav-menu" id="navMenu">
   <button class="nav-item active" id="navTenders" data-page="tenders">Tenders</button>
   <button class="nav-item" id="navEligibility" data-page="eligibility">Eligibility Criteria</button>
   <button class="nav-item" id="navDocuments" data-page="documents">Documents</button>
@@ -1303,6 +1664,7 @@
     <span class="account-email" id="accountEmail"></span>
     <button id="signOutBtn">Sign out</button>
   </div>
+  </div><!-- /.nav-menu -->
 </nav>
 
 <div class="main">
@@ -1317,9 +1679,8 @@
   <button id="documentsUploadBtn" hidden>+ Upload Document</button>
   <div class="stamp-header-actions" id="stampHeaderActions" hidden>
     <button id="stampViewDocsBtn">View documents</button>
-    <button id="stampCloseBtn" title="Clear this file so you can start on a new one" hidden>Close file</button>
-    <button id="stampChooseBtn">Choose file</button>
-    <button id="stampDownloadBtn" disabled>Download</button>
+    <button id="stampCloseBtn" title="Remove every file so you can start again" hidden>Clear all</button>
+    <button id="stampChooseBtn" title="One or more PDFs, JPEGs or PNGs - any size">Choose files</button>
   </div>
 </header>
 
@@ -1459,21 +1820,72 @@
   </div>
 </div><!-- /eligibilityPage -->
 
-<!-- Sign & Stamp tab: POST /stamp-document - nothing is stored -->
+<!-- Sign & Stamp tab: POST /stamp-document/jobs - nothing is kept -->
 <div id="stampPage" hidden>
-  <!-- Choose file / Download live in the page header (#stampHeaderActions). -->
-  <input type="file" id="stampFile" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg" hidden>
-  <!-- Fills the rest of the screen and scrolls on its own (height set by syncScrollTableHeights). -->
-  <div class="cl-card stamp-preview-card scroll-table-wrap" id="stampPreviewCard">
-    <div class="stamp-error" id="stampError"></div>
-    <!-- Only when the preview couldn't load: the same marks on every page. -->
-    <div class="stamp-all-pages" id="stampAllPages" hidden>
-      <label>Letterhead <select class="stamp-select stamp-all-select" data-kind="letterhead"></select></label>
-      <label>Signature <select class="stamp-select stamp-all-select" data-kind="signature"></select></label>
-      <label>Stamp <select class="stamp-select stamp-all-select" data-kind="stamp"></select></label>
+  <!-- Add files / Download also live in the page header (#stampHeaderActions). -->
+  <input type="file" id="stampFile" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg" multiple hidden>
+  <div class="stamp-error" id="stampError"></div>
+
+  <!-- Before any file is chosen: a drop zone and what happens next. -->
+  <div class="stamp-drop" id="stampDrop">
+    <div class="stamp-drop-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 17v-6"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5"/></svg>
     </div>
-    <div class="stamp-preview-status" id="stampPreviewStatus">Choose a PDF or image to preview it here.</div>
-    <div class="stamp-pages" id="stampPages"></div>
+    <h2>Drop PDFs or images here</h2>
+    <p class="stamp-drop-sub">PDF, JPEG or PNG &middot; any size &middot; as many files as you need</p>
+    <button class="cl-btn primary stamp-drop-btn" id="stampDropChooseBtn">Choose files</button>
+    <ol class="stamp-steps">
+      <li><b>1</b><span><strong>Add your files</strong>Every page shows up, in order, grouped by file.</span></li>
+      <li><b>2</b><span><strong>Pick the marks</strong>Letterhead, signature and stamp &ndash; for all pages at once, or page by page. Drag a signature or stamp to move it.</span></li>
+      <li><b>3</b><span><strong>Download</strong>Each marked file gets a download button in the Files list - it comes back as the same kind of file.</span></li>
+    </ol>
+  </div>
+
+  <!-- With files: files, quick apply and page thumbnails on the left, the pages on the right.
+       Fills the rest of the screen (height set by syncScrollTableHeights); each side scrolls on its own. -->
+  <div class="cl-card stamp-preview-card scroll-table-wrap" id="stampPreviewCard" hidden>
+    <div class="stamp-layout">
+      <aside class="stamp-side">
+        <section class="stamp-side-block">
+          <div class="stamp-side-head">
+            <h3>Files</h3>
+            <button class="stamp-link" id="stampAddBtn">+ Add files</button>
+          </div>
+          <div class="stamp-summary" id="stampSummary"></div>
+          <ul class="stamp-file-list" id="stampFileList"></ul>
+          <button class="cl-btn success stamp-download-all" id="stampDownloadAllBtn" hidden
+              title="Download every marked file - each as its own PDF, images included">Download all marked as PDFs</button>
+        </section>
+        <section class="stamp-side-block" id="stampBulk" hidden>
+          <h3>Quick apply</h3>
+          <p class="stamp-side-hint">Set marks on many pages in one go, then fine-tune any single page in its own box.</p>
+          <label class="stamp-field">Pages <select class="stamp-select" id="stampBulkScope"></select></label>
+          <label class="stamp-field">Letterhead <select class="stamp-select stamp-bulk-select" data-bulk="1" data-kind="letterhead"></select></label>
+          <label class="stamp-field">Signature <select class="stamp-select stamp-bulk-select" data-bulk="1" data-kind="signature"></select></label>
+          <label class="stamp-field">Stamp <select class="stamp-select stamp-bulk-select" data-bulk="1" data-kind="stamp"></select></label>
+          <div class="stamp-bulk-actions">
+            <button class="cl-btn primary" id="stampBulkApplyBtn">Apply</button>
+            <button class="cl-btn" id="stampBulkClearBtn" title="Take every mark off these pages">Clear marks</button>
+          </div>
+        </section>
+        <!-- Only when the preview couldn't load: the same marks on every page. -->
+        <section class="stamp-side-block stamp-all-pages" id="stampAllPages" hidden>
+          <h3>Marks for every page</h3>
+          <p class="stamp-side-hint">No preview, so these go on every page of every file, at the usual bottom-right spot.</p>
+          <label class="stamp-field">Letterhead <select class="stamp-select stamp-all-select" data-kind="letterhead"></select></label>
+          <label class="stamp-field">Signature <select class="stamp-select stamp-all-select" data-kind="signature"></select></label>
+          <label class="stamp-field">Stamp <select class="stamp-select stamp-all-select" data-kind="stamp"></select></label>
+        </section>
+        <section class="stamp-side-block" id="stampRailBlock" hidden>
+          <h3>Pages</h3>
+          <div class="stamp-rail" id="stampRail"></div>
+        </section>
+      </aside>
+      <div class="stamp-main" id="stampMain">
+        <div class="stamp-preview-status" id="stampPreviewStatus"></div>
+        <div class="stamp-pages" id="stampPages"></div>
+      </div>
+    </div>
   </div>
 </div><!-- /stampPage -->
 
@@ -1663,20 +2075,28 @@
   const IS_LOCAL = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const API_BASE_URL = IS_LOCAL ? "http://127.0.0.1:8001" : "REPLACE_WITH_API_URL";
 
-  // Login - Cognito's hosted page, OAuth2 authorization code + PKCE (no
-  // client secret: anything in this page is public). The deploy script
-  // bakes these two in. The API rejects any call without a valid access
-  // token; locally there's no login at all (uvicorn has none), so all of
-  // this is skipped when IS_LOCAL.
-  const COGNITO_DOMAIN = "REPLACE_WITH_COGNITO_DOMAIN";
+  // Login - the sign-in screens below talk to Cognito's user pool API
+  // directly (USER_PASSWORD_AUTH, over HTTPS; no client secret: anything in
+  // this page is public) and walk whatever it asks for next: a new password,
+  // the authenticator setup, the 6-digit code. The deploy script bakes these
+  // two in. The API rejects any call without a valid access token; locally
+  // there's no login at all (uvicorn has none), so all of this is skipped
+  // when IS_LOCAL.
+  const COGNITO_REGION = "REPLACE_WITH_COGNITO_REGION";
   const COGNITO_CLIENT_ID = "REPLACE_WITH_COGNITO_CLIENT_ID";
-  // Must match the app client's CallbackURLs/LogoutURLs exactly.
-  const AUTH_REDIRECT_URI = `${window.location.origin}/`;
+  const COGNITO_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com/`;
+  // The name the authenticator app shows next to the code.
+  const TOTP_ISSUER = "OAKS Tender Desk";
+  // Draws the authenticator setup QR code. Pinned by hash: this page holds
+  // the setup secret, so a changed file must not run.
+  const QR_LIB = {
+    src: "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js",
+    integrity: "sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1",
+  };
   // Access/id tokens are kept in memory only. The refresh token goes in
   // sessionStorage - this tab only, gone when it closes - so a reload
   // doesn't mean logging in again. Never localStorage.
   const AUTH_REFRESH_KEY = "tender.auth.refresh";
-  const AUTH_PKCE_KEY = "tender.auth.pkce";
   const auth = { accessToken: null, expiresAt: 0, email: "", refreshing: null };
 
   function sessionGet(key) {
@@ -1689,58 +2109,58 @@
     } catch {}
   }
 
-  function base64Url(bytes) {
-    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-
   // Only for display (the signed-in email) - the API verifies the tokens.
   function jwtClaims(token) {
     const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
   }
 
-  // Off to the hosted login page. Never resolves - the page is navigating away.
-  async function login() {
-    const verifier = base64Url(crypto.getRandomValues(new Uint8Array(64)));
-    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
-    const challenge = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
-    // The redirect back lands on the bare origin, so remember the page (#route) to return to.
-    sessionSet(AUTH_PKCE_KEY, JSON.stringify({ verifier, state, returnTo: window.location.hash }));
-    const params = new URLSearchParams({
-      response_type: "code",
-      client_id: COGNITO_CLIENT_ID,
-      redirect_uri: AUTH_REDIRECT_URI,
-      scope: "openid email",
-      state,
-      code_challenge_method: "S256",
-      code_challenge: base64Url(challenge),
-    });
-    window.location.assign(`${COGNITO_DOMAIN}/oauth2/authorize?${params}`);
-    return new Promise(() => {});
+  // One call to Cognito's user pool API. A failure keeps Cognito's
+  // exception name in err.code (e.g. "CodeMismatchException").
+  async function cognito(action, body) {
+    if (IS_LOCAL) throw new Error("There's no login when running locally - open the dashboard without #/signin.");
+    let res;
+    try {
+      res = await fetch(COGNITO_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-amz-json-1.1",
+          "X-Amz-Target": `AWSCognitoIdentityProviderService.${action}`,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error("Couldn't reach the sign-in service - check your connection and try again.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.message || `the sign-in service returned HTTP ${res.status}`);
+      err.code = String(data.__type || "").split("#").pop();
+      throw err;
+    }
+    return data;
   }
 
-  async function tokenRequest(body) {
-    const res = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: COGNITO_CLIENT_ID, ...body }),
-    });
-    if (!res.ok) throw new Error(`the login service returned HTTP ${res.status}`);
-    const tokens = await res.json();
-    auth.accessToken = tokens.access_token;
-    auth.expiresAt = Date.now() + tokens.expires_in * 1000;
-    if (tokens.id_token) auth.email = jwtClaims(tokens.id_token).email || "";
-    if (tokens.refresh_token) sessionSet(AUTH_REFRESH_KEY, tokens.refresh_token);
+  function storeTokens(result) {
+    auth.accessToken = result.AccessToken;
+    auth.expiresAt = Date.now() + result.ExpiresIn * 1000;
+    if (result.IdToken) auth.email = jwtClaims(result.IdToken).email || "";
+    if (result.RefreshToken) sessionSet(AUTH_REFRESH_KEY, result.RefreshToken);
   }
 
   // One refresh at a time, however many API calls notice the expiry at once.
-  // No refresh token, or it's expired/revoked -> the sign-in screen. Only a
-  // session that existed and ran out gets a note saying so.
+  // No refresh token, or it's expired/revoked -> the sign-in screen, and this
+  // resolves once the user has signed in again. Only a session that existed
+  // and ran out gets a note saying so.
   function refreshTokens() {
     if (!auth.refreshing) {
       const refreshToken = sessionGet(AUTH_REFRESH_KEY);
       auth.refreshing = (refreshToken
-        ? tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken })
+        ? cognito("InitiateAuth", {
+            ClientId: COGNITO_CLIENT_ID,
+            AuthFlow: "REFRESH_TOKEN_AUTH",
+            AuthParameters: { REFRESH_TOKEN: refreshToken },
+          }).then((r) => storeTokens(r.AuthenticationResult))
         : Promise.reject(new Error("not signed in")))
         .catch(() => {
           sessionSet(AUTH_REFRESH_KEY, null);
@@ -1751,10 +2171,70 @@
     return auth.refreshing;
   }
 
-  // The signed-out "Tender Desk" screen (#signinScreen): replaces the
-  // dashboard until its button sends the user to Cognito's login page.
-  // `error`: why the last sign-in failed; `notice`: a neutral note. Never
-  // resolves - the page stays here until the user signs in.
+  // The sign-in in progress: who, and Cognito's session for the next step
+  // (each answer comes back with a new one; they last 15 minutes).
+  // `waiting` is what showSignIn's callers are waiting on.
+  const signIn = { email: "", username: "", session: "", waiting: null };
+
+  // Each step of the card (a data-si-step form): its heading and subtitle.
+  const SI_STEPS = {
+    signin: ["Sign in", "Welcome back to the OAKS Tender Desk."],
+    code: ["Enter your code", "Open your authenticator app and type the 6-digit code for OAKS."],
+    newpass: ["Set your password", "First sign-in: replace the temporary password from your invite email."],
+    setup: ["Set up your authenticator", "One-time step. You'll use this app every time you sign in."],
+    forgot: ["Reset your password", "We'll email you a code to choose a new one."],
+    reset: ["Choose a new password", "Enter the code we emailed you, then your new password."],
+  };
+  const siForm = (step) => document.querySelector(`#signinScreen [data-si-step="${step}"]`);
+
+  // The pool's password policy (template.yaml), ticked off as it's typed.
+  const PASSWORD_RULES = {
+    len: (v) => v.length >= 12,
+    upper: (v) => /[A-Z]/.test(v),
+    lower: (v) => /[a-z]/.test(v),
+    num: (v) => /\d/.test(v),
+    sym: (v) => /[^A-Za-z0-9]/.test(v),
+  };
+
+  // The card's message box: `error` (red) or `notice` (blue), or neither.
+  function setSignInMessage({ error = "", notice = "" } = {}) {
+    const box = el("siError");
+    box.textContent = error || notice;
+    box.classList.toggle("si-note", !error && !!notice);
+    box.hidden = !(error || notice);
+  }
+
+  function showSignInStep(step, message = {}) {
+    const [heading, sub] = SI_STEPS[step];
+    el("siHeading").textContent = heading;
+    el("siSub").textContent = sub;
+    setSignInMessage(message);
+    document.querySelectorAll("#signinScreen [data-si-step]").forEach((f) => { f.hidden = f.dataset.siStep !== step; });
+    // The first empty field (on a phone, focusing would pop the keyboard over the card).
+    const inputs = [...siForm(step).querySelectorAll("input")];
+    const first = inputs.find((i) => !i.value) || inputs[0];
+    if (first && matchMedia("(min-width: 861px)").matches) first.focus({ preventScroll: true });
+  }
+
+  // Forgets everything typed or issued for the sign-in in progress, except
+  // the email.
+  function clearSignIn() {
+    signIn.session = "";
+    document.querySelectorAll('#signinScreen input:not([type="email"])').forEach((i) => { i.value = ""; });
+    document.querySelectorAll("#signinScreen [data-si-toggle]").forEach((t) => {
+      el(t.dataset.siToggle).type = "password";
+      t.textContent = "Show";
+      t.setAttribute("aria-label", "Show password");
+    });
+    el("siSetupKey").textContent = "";
+    el("siQr").textContent = "";
+    ["newpass", "reset"].forEach((step) => checkNewPassword(siForm(step)));
+  }
+
+  // The signed-out "Tender Desk" screen (#signinScreen) in place of the
+  // dashboard. `error`: why the last sign-in failed; `notice`: a neutral
+  // note. Resolves once the user has signed in - every caller waiting on it
+  // carries on then, with the dashboard back.
   function showSignIn({ error = "", notice = "" } = {}) {
     // Logos come from the sidebar and the favicon, already in this page.
     el("siWordmark").src = document.querySelector(".sidebar .brand img").src;
@@ -1762,19 +2242,317 @@
     el("siBadge").src = badge;
     el("siSealBadge").setAttribute("href", badge);
 
-    el("siHeading").textContent = error ? "Couldn't sign you in" : "Sign in";
-    el("siSub").textContent = error
-      ? "Nothing was changed. Try again - if it keeps happening, ask your OAKS administrator."
-      : "Welcome back to the OAKS Tender Desk.";
-    el("siError").textContent = error || notice;
-    el("siError").hidden = !(error || notice);
-    el("authRetryBtn").textContent = error ? "Sign in again" : "Sign in with your OAKS account";
-
     document.body.classList.remove("auth-pending");
     document.body.classList.add("signed-out");
     el("signinScreen").hidden = false;
     fitSigninDesk();
-    return new Promise(() => {});
+    if (!signIn.waiting) {
+      clearSignIn();
+      if (!el("siEmail").value) el("siEmail").value = auth.email;
+      showSignInStep("signin", { error, notice });
+      let resolve;
+      const promise = new Promise((r) => { resolve = r; });
+      signIn.waiting = { promise, resolve };
+    }
+    return signIn.waiting.promise;
+  }
+
+  function finishSignIn(result) {
+    const previous = auth.email;
+    storeTokens(result);
+    // Someone else signed in over the last person's dashboard: start afresh.
+    if (previous && auth.email !== previous) {
+      window.location.reload();
+      return;
+    }
+    clearSignIn();
+    el("signinScreen").hidden = true;
+    document.body.classList.remove("signed-out");
+    const { resolve } = signIn.waiting || {};
+    signIn.waiting = null;
+    resolve?.();
+  }
+
+  // Cognito's answer to a sign-in step: tokens (done), or the next step.
+  async function nextSignInStep(r) {
+    if (r.AuthenticationResult) return finishSignIn(r.AuthenticationResult);
+    signIn.session = r.Session;
+    signIn.username = r.ChallengeParameters?.USER_ID_FOR_SRP || signIn.username;
+    if (r.ChallengeName === "SOFTWARE_TOKEN_MFA") return showSignInStep("code");
+    if (r.ChallengeName === "NEW_PASSWORD_REQUIRED") return showSignInStep("newpass");
+    if (r.ChallengeName === "MFA_SETUP") return startAuthenticatorSetup();
+    throw new Error(`The sign-in service asked for a step this page doesn't handle (${r.ChallengeName}) - ask your OAKS administrator.`);
+  }
+
+  function answerChallenge(name, responses) {
+    return cognito("RespondToAuthChallenge", {
+      ClientId: COGNITO_CLIENT_ID,
+      ChallengeName: name,
+      Session: signIn.session,
+      ChallengeResponses: { USERNAME: signIn.username, ...responses },
+    });
+  }
+
+  // First sign-in: link an authenticator app to this account (MFA is
+  // mandatory). Cognito issues the secret; the app gets it from the QR code
+  // or the key typed in.
+  async function startAuthenticatorSetup() {
+    const { SecretCode, Session } = await cognito("AssociateSoftwareToken", { Session: signIn.session });
+    signIn.session = Session;
+    el("siSetupKey").textContent = SecretCode.match(/.{1,4}/g).join(" ");
+    showSignInStep("setup");
+    const label = `${encodeURIComponent(TOTP_ISSUER)}:${encodeURIComponent(signIn.email)}`;
+    drawQr(`otpauth://totp/${label}?secret=${SecretCode}&issuer=${encodeURIComponent(TOTP_ISSUER)}`);
+  }
+
+  let qrLibPromise = null;
+  function loadQrLib() {
+    qrLibPromise ||= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = QR_LIB.src;
+      script.integrity = QR_LIB.integrity;
+      script.crossOrigin = "anonymous";
+      script.onload = () => resolve(window.qrcode);
+      script.onerror = () => { qrLibPromise = null; reject(new Error("couldn't load the QR code")); };
+      document.head.appendChild(script);
+    });
+    return qrLibPromise;
+  }
+
+  async function drawQr(text) {
+    const box = el("siQr");
+    box.textContent = "";
+    let qrcode;
+    try {
+      qrcode = await loadQrLib();
+    } catch {
+      box.innerHTML = "<span>Type the key below into your app</span>";
+      return;
+    }
+    if (!signIn.session) return; // the sign-in was abandoned meanwhile
+    const qr = qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = n;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "QR code for your authenticator app");
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#0b1822";
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (qr.isDark(y, x)) ctx.fillRect(x, y, 1, 1);
+    box.textContent = "";
+    box.appendChild(canvas);
+  }
+
+  async function sendResetCode(email) {
+    const r = await cognito("ForgotPassword", { ClientId: COGNITO_CLIENT_ID, Username: email });
+    signIn.email = email;
+    const to = r.CodeDeliveryDetails?.Destination;
+    showSignInStep("reset", { notice: `If ${email} has an account here, a code is on its way${to ? ` to ${to}` : ""}.` });
+  }
+
+  // The new-password forms' button waits for the whole policy and a
+  // matching confirmation.
+  function checkNewPassword(form) {
+    const value = form.querySelector("[data-si-new]").value;
+    const confirm = form.querySelector("[data-si-confirm]").value;
+    let all = true;
+    form.querySelectorAll(".si-rules li").forEach((li) => {
+      const ok = PASSWORD_RULES[li.dataset.rule](value);
+      li.classList.toggle("met", ok);
+      all &&= ok;
+    });
+    const match = confirm.length > 0 && confirm === value;
+    form.querySelector(".si-mismatch").textContent = confirm && !match ? "The two passwords don't match yet." : "";
+    form.querySelector('[type="submit"]').disabled = !(all && match);
+  }
+
+  function signInErrorText(err, step) {
+    switch (err.code) {
+      case "NotAuthorizedException":
+        if (/incorrect username or password/i.test(err.message)) return "That email and password don't match an account here.";
+        if (/disabled/i.test(err.message)) return "This account is switched off - ask your OAKS administrator.";
+        if (/temporary password has expired/i.test(err.message)) return "Your temporary password has expired - ask your OAKS administrator to send a new one.";
+        if (/current state/i.test(err.message)) return "This account isn't set up yet - sign in with the temporary password from your invite email, or ask your OAKS administrator for a new one.";
+        return err.message;
+      case "CodeMismatchException":
+      case "EnableSoftwareTokenMFAException":
+        return step === "reset"
+          ? "That code doesn't match the one we emailed - check it and try again."
+          : "That code didn't match - check your authenticator app (codes change every 30 seconds) and try again.";
+      case "ExpiredCodeException":
+        return "That code has expired - use \"Send a new code\" to get another.";
+      case "LimitExceededException":
+      case "TooManyRequestsException":
+      case "TooManyFailedAttemptsException":
+        return "Too many attempts - wait a few minutes, then try again.";
+      default:
+        return err.message;
+    }
+  }
+
+  // Runs a step's submit: its button shows it's working, and a failure lands
+  // in the card's message box - or restarts a sign-in that timed out.
+  async function runSignInStep(form, work) {
+    const button = form.querySelector('[type="submit"]');
+    if (button.getAttribute("aria-busy") === "true") return;
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    setSignInMessage();
+    try {
+      await work();
+    } catch (err) {
+      if (err.code === "NotAuthorizedException" && /session/i.test(err.message)) {
+        clearSignIn();
+        showSignInStep("signin", { error: "That sign-in timed out - enter your password again." });
+      } else if (err.code === "PasswordResetRequiredException") {
+        // An administrator reset it (manage-users.sh reset): Cognito has
+        // already emailed a code.
+        clearSignIn();
+        showSignInStep("reset", { notice: "Your password was reset by your OAKS administrator - we've emailed you a code to choose a new one." });
+      } else {
+        setSignInMessage({ error: signInErrorText(err, form.dataset.siStep) });
+      }
+    } finally {
+      button.removeAttribute("aria-busy");
+      button.disabled = false;
+      if (form.querySelector("[data-si-new]")) checkNewPassword(form);
+    }
+  }
+
+  // Wires up the sign-in card's forms, links and code boxes (once, at load).
+  function wireSignIn() {
+    const onSubmit = (step, work) => siForm(step).addEventListener("submit", (e) => {
+      e.preventDefault();
+      runSignInStep(e.currentTarget, work);
+    });
+
+    onSubmit("signin", async () => {
+      const email = el("siEmail").value.trim();
+      const password = el("siPassword").value;
+      if (!email || !password) throw new Error("Enter your work email and password.");
+      signIn.email = signIn.username = email;
+      const r = await cognito("InitiateAuth", {
+        ClientId: COGNITO_CLIENT_ID,
+        AuthFlow: "USER_PASSWORD_AUTH",
+        AuthParameters: { USERNAME: email, PASSWORD: password },
+      });
+      el("siPassword").value = "";
+      await nextSignInStep(r);
+    });
+
+    const digits = [...siForm("code").querySelectorAll(".si-digits input")];
+    onSubmit("code", async () => {
+      const code = digits.map((d) => d.value).join("");
+      if (!/^\d{6}$/.test(code)) throw new Error("Enter all 6 digits of the code.");
+      try {
+        await nextSignInStep(await answerChallenge("SOFTWARE_TOKEN_MFA", { SOFTWARE_TOKEN_MFA_CODE: code }));
+      } catch (err) {
+        digits.forEach((d) => { d.value = ""; });
+        digits[0].focus();
+        throw err;
+      }
+    });
+    // Type, backspace, paste - or a phone filling the whole code into one
+    // box. The sixth digit submits.
+    const fillDigits = (from, text) => {
+      const typed = text.replace(/\D/g, "").slice(0, 6 - from);
+      typed.split("").forEach((d, j) => { digits[from + j].value = d; });
+      (digits[from + typed.length] || digits[5]).focus();
+      if (digits.every((d) => d.value)) siForm("code").requestSubmit();
+    };
+    digits.forEach((box, i) => {
+      box.addEventListener("input", () => {
+        const value = box.value;
+        box.value = "";
+        fillDigits(i, value);
+      });
+      box.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace" && !box.value && digits[i - 1]) digits[i - 1].focus();
+      });
+      box.addEventListener("paste", (e) => {
+        e.preventDefault();
+        fillDigits(0, e.clipboardData.getData("text") || "");
+      });
+    });
+
+    onSubmit("newpass", async () => {
+      await nextSignInStep(await answerChallenge("NEW_PASSWORD_REQUIRED", { NEW_PASSWORD: el("siNewPass").value }));
+    });
+
+    onSubmit("setup", async () => {
+      const code = el("siSetupCode").value.replace(/\D/g, "");
+      if (code.length !== 6) throw new Error("Enter the 6-digit code your authenticator app shows.");
+      const verified = await cognito("VerifySoftwareToken", {
+        Session: signIn.session,
+        UserCode: code,
+        FriendlyDeviceName: "Authenticator app",
+      });
+      if (verified.Status !== "SUCCESS") throw new Error("That code didn't match - check your authenticator app and try again.");
+      el("siSetupCode").value = "";
+      signIn.session = verified.Session;
+      await nextSignInStep(await answerChallenge("MFA_SETUP", {}));
+    });
+
+    onSubmit("forgot", async () => {
+      const email = el("siForgotEmail").value.trim();
+      if (!email) throw new Error("Enter your work email.");
+      await sendResetCode(email);
+    });
+
+    onSubmit("reset", async () => {
+      const code = el("siResetCode").value.replace(/\D/g, "");
+      if (!code) throw new Error("Enter the code from the email.");
+      await cognito("ConfirmForgotPassword", {
+        ClientId: COGNITO_CLIENT_ID,
+        Username: signIn.email,
+        ConfirmationCode: code,
+        Password: el("siResetPass").value,
+      });
+      clearSignIn();
+      el("siEmail").value = signIn.email;
+      showSignInStep("signin", { notice: "Password changed - sign in with your new password." });
+    });
+
+    el("siResendBtn").addEventListener("click", async () => {
+      try {
+        await sendResetCode(signIn.email);
+      } catch (err) {
+        setSignInMessage({ error: signInErrorText(err, "reset") });
+      }
+    });
+
+    ["newpass", "reset"].forEach((step) => {
+      const form = siForm(step);
+      form.querySelectorAll("[data-si-new], [data-si-confirm]").forEach((i) => i.addEventListener("input", () => checkNewPassword(form)));
+    });
+
+    document.querySelectorAll("#signinScreen [data-si-goto]").forEach((link) => link.addEventListener("click", () => {
+      const step = link.dataset.siGoto;
+      if (step === "forgot") el("siForgotEmail").value = el("siEmail").value.trim();
+      else clearSignIn();
+      showSignInStep(step);
+    }));
+
+    document.querySelectorAll("#signinScreen [data-si-toggle]").forEach((toggle) => toggle.addEventListener("click", () => {
+      const input = el(toggle.dataset.siToggle);
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      toggle.textContent = showing ? "Show" : "Hide";
+      toggle.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    }));
+  }
+
+  // Locally (no login), #/signin/<step> shows that step's design.
+  function previewSignInStep(step) {
+    if (!SI_STEPS[step]) return;
+    showSignInStep(step);
+    if (step === "setup") {
+      signIn.session = "local-preview";
+      el("siSetupKey").textContent = "EXAM PLEK EYNO TREA L000";
+      drawQr(`otpauth://totp/${encodeURIComponent(TOTP_ISSUER)}:preview?secret=EXAMPLEKEYNOTREAL&issuer=${encodeURIComponent(TOTP_ISSUER)}`);
+    }
   }
 
   // The tender-desk illustration is drawn 520px wide; scale it to its panel.
@@ -1784,35 +2562,9 @@
   }
   window.addEventListener("resize", () => { if (!el("signinScreen").hidden) fitSigninDesk(); });
 
-  // On page load: finish a login redirect (?code=&state=), or resume this
-  // tab's session from its refresh token, or go to the login page.
-  async function startAuth() {
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("code") || url.searchParams.has("error")) {
-      const pending = JSON.parse(sessionGet(AUTH_PKCE_KEY) || "null");
-      sessionSet(AUTH_PKCE_KEY, null);
-      history.replaceState(null, "", `${url.pathname}${pending?.returnTo || ""}`);
-      const error = url.searchParams.get("error_description") || url.searchParams.get("error");
-      if (error) throw new Error(error);
-      // A state that doesn't match the one this tab sent means this redirect
-      // wasn't started here - never exchange its code.
-      if (!pending || url.searchParams.get("state") !== pending.state) {
-        throw new Error("the login response didn't match this browser tab");
-      }
-      await tokenRequest({
-        grant_type: "authorization_code",
-        code: url.searchParams.get("code"),
-        redirect_uri: AUTH_REDIRECT_URI,
-        code_verifier: pending.verifier,
-      });
-      return;
-    }
-    await refreshTokens();
-  }
-
   // fetch() for every API call: adds the access token, refreshing it first
   // when it's within 2 minutes of expiring. A 401 comes from API Gateway's
-  // authorizer (before the API runs anything), so retrying once with a fresh
+  // authorizer (before the API runs anything), so retrying with a fresh
   // token is safe even for a POST.
   async function apiFetch(url, options = {}) {
     if (IS_LOCAL) return fetch(url, options);
@@ -1824,7 +2576,10 @@
     if (res.status === 401) {
       auth.accessToken = null;
       res = await send();
-      if (res.status === 401) await showSignIn({ notice: "Your session has ended - sign in again to carry on." });
+      if (res.status === 401) {
+        await showSignIn({ notice: "Your session has ended - sign in again to carry on." });
+        res = await send();
+      }
     }
     return res;
   }
@@ -1835,15 +2590,11 @@
     auth.accessToken = null;
     if (refreshToken) {
       try {
-        await fetch(`${COGNITO_DOMAIN}/oauth2/revoke`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ token: refreshToken, client_id: COGNITO_CLIENT_ID }),
-        });
+        await cognito("RevokeToken", { ClientId: COGNITO_CLIENT_ID, Token: refreshToken });
       } catch {} // still signed out of this tab; the token expires on its own
     }
-    const params = new URLSearchParams({ client_id: COGNITO_CLIENT_ID, logout_uri: AUTH_REDIRECT_URI });
-    window.location.assign(`${COGNITO_DOMAIN}/logout?${params}`);
+    // A fresh page, so nothing of this session stays on screen.
+    window.location.reload();
   }
 
   const PAGE_SIZE = 25;
@@ -1863,6 +2614,32 @@
   let tendersLoaded = false;
 
   const el = (id) => document.getElementById(id);
+  // Matches the CSS breakpoint where the sidebar becomes a top bar.
+  const NARROW_SCREEN = window.matchMedia("(max-width: 860px)");
+
+  // The top bar's menu (narrow screens only - on wider ones it's always shown).
+  function setNavMenuOpen(open) {
+    el("navMenu").closest(".sidebar").classList.toggle("nav-open", open);
+    el("navToggle").setAttribute("aria-expanded", String(open));
+  }
+
+  // On narrow screens each table row shows as a card (see the max-width
+  // CSS), so every cell carries its column's heading as data-label. Kept up
+  // to date as the tables re-render, whatever renders them.
+  function labelTableCells() {
+    document.querySelectorAll(".shell table").forEach((table) => {
+      const heads = [...table.querySelectorAll(":scope > thead > tr > th")].map((th) => th.textContent.trim());
+      table.querySelectorAll(":scope > tbody > tr").forEach((tr) => {
+        [...tr.children].forEach((td, i) => {
+          if (!td.hasAttribute("colspan") && heads[i] && td.dataset.label !== heads[i]) td.dataset.label = heads[i];
+        });
+      });
+    });
+  }
+  let labelFrame = 0;
+  new MutationObserver(() => {
+    if (!labelFrame) labelFrame = requestAnimationFrame(() => { labelFrame = 0; labelTableCells(); });
+  }).observe(document.querySelector(".shell"), { childList: true, subtree: true });
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -2062,6 +2839,30 @@
     el("generateModal").hidden = true;
   }
 
+  const BID_PACK_POLL_MS = 5000;
+  const BID_PACK_WAIT_MS = 7 * 60 * 1000;
+  async function waitForBidPack(id, status) {
+    const started = Date.now();
+    el("generateConfirmBtn").textContent = "Generating… (can take a few minutes)";
+    for (;;) {
+      if (status.status === "done") return;
+      if (status.status !== "running") {
+        const err = new Error(status.message || "The bid pack wasn't generated - try again.");
+        err.fromServer = true;
+        throw err;
+      }
+      if (Date.now() - started > BID_PACK_WAIT_MS) {
+        const err = new Error("The bid pack is taking unusually long - check back on this tender in a few minutes.");
+        err.fromServer = true;
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BID_PACK_POLL_MS));
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/generate-bid`);
+      if (!res.ok) throw await checklistError(res);
+      status = await res.json();
+    }
+  }
+
   async function confirmGenerate() {
     const id = generateTenderId;
     el("generateConfirmBtn").disabled = true;
@@ -2070,6 +2871,9 @@
     try {
       const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/generate-bid`, { method: "POST" });
       if (!res.ok) throw await checklistError(res);
+      // Deployed, the build runs in the background (it outlasts the API's
+      // 30s limit) - 202, then poll until it's done or failed.
+      if (res.status === 202) await waitForBidPack(id, await res.json());
       closeGenerateModal();
       if (!el("checklistPage").hidden) loadChecklist(id);
       else loadTenders();
@@ -2362,6 +3166,8 @@
     el("addCriterionOpenBtn").hidden = page !== "eligibility";
     el("documentsUploadBtn").hidden = page !== "documents";
     el("stampHeaderActions").hidden = page !== "stamp";
+    el("navToggleLabel").textContent = document.querySelector(".nav-item.active")?.textContent || "Menu";
+    setNavMenuOpen(false);
 
     if (page === "tenders") {
       el("pageTitle").textContent = "Tender Dashboard";
@@ -2392,7 +3198,7 @@
       }
     } else if (page === "stamp") {
       el("pageTitle").textContent = "Sign & Stamp";
-      el("pageSubtitle").textContent = "Add a letterhead, signature and/or stamp to the pages of a PDF or image - you choose for each page.";
+      el("pageSubtitle").textContent = "Add a letterhead, signature and/or stamp to the pages of PDFs or images - you choose for each page, then download each marked file.";
       setDrilldownChromeVisible(true);
       loadStampMarks(); // every visit - the Documents tab may have changed them
     } else {
@@ -2416,7 +3222,11 @@
   // (page header, stats cards, filters) differs per page and can change
   // when drilling in/out of a query.
   function syncScrollTableHeights() {
+    // Phones/tablets: the page itself scrolls - a screen-high box scrolling
+    // inside it is too small to use there.
+    const pageScrolls = NARROW_SCREEN.matches;
     document.querySelectorAll(".scroll-table-wrap").forEach((wrap) => {
+      if (pageScrolls) { wrap.style.maxHeight = ""; return; }
       if (wrap.closest("[hidden]")) return;
       const wrapRect = wrap.getBoundingClientRect();
       // A .pagination bar usually follows the table below the fold of this
@@ -3234,26 +4044,65 @@ ${err.message}`);
   const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
   const TRANSFER_PART_BYTES = 3 * 1024 * 1024; // app.api.main's TRANSFER_PART_SIZE
   const tooBigMessage = () => `This file is over ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB - choose a smaller one.`;
+  // Sign & Stamp alone has no size limit (only how many files at once).
+  const STAMP_MAX_FILES = 50; // app.api.main's STAMP_MAX_FILES
 
   async function apiError(res) {
     const detail = await res.json().catch(() => null);
     return new Error(detail?.detail || `Server returned ${res.status}`);
   }
 
-  // Sends `file` in parts; returns { uploadId, parts } for the finish call.
-  // `onPart(i, parts)` reports progress.
+  // At most this many parts are in flight at once, across every upload on
+  // the page - parallel parts are what makes a 100 MB upload quick, while
+  // staying well inside the API's rate limit (template.yaml's throttling).
+  const UPLOAD_CONCURRENCY = 6;
+  let uploadSlotsFree = UPLOAD_CONCURRENCY;
+  const uploadSlotWaiters = [];
+  async function withUploadSlot(task) {
+    if (uploadSlotsFree > 0) uploadSlotsFree--;
+    else await new Promise((resolve) => uploadSlotWaiters.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = uploadSlotWaiters.shift();
+      if (next) next(); else uploadSlotsFree++;
+    }
+  }
+
+  // One part - tried up to 3 times on a network blip, throttling or a
+  // server error (anything else won't get better on a retry).
+  async function sendPart(uploadId, i, body) {
+    for (let attempt = 0; ; attempt++) {
+      let res = null;
+      try {
+        res = await apiFetch(`${API_BASE_URL}/uploads/${uploadId}/parts/${i}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body,
+        });
+      } catch (err) {
+        if (attempt >= 2) throw err;
+      }
+      if (res) {
+        if (res.ok) return;
+        if ((res.status < 500 && res.status !== 429) || attempt >= 2) throw await apiError(res);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+    }
+  }
+
+  // Sends `file` in parts, several at a time; returns { uploadId, parts }
+  // for the finish call. `onPart(i, parts)` reports progress - i parts done.
   async function uploadInParts(file, onPart = () => {}) {
     const uploadId = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const parts = Math.max(1, Math.ceil(file.size / TRANSFER_PART_BYTES));
-    for (let i = 0; i < parts; i++) {
-      onPart(i, parts);
-      const res = await apiFetch(`${API_BASE_URL}/uploads/${uploadId}/parts/${i}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: file.slice(i * TRANSFER_PART_BYTES, (i + 1) * TRANSFER_PART_BYTES),
-      });
-      if (!res.ok) throw await apiError(res);
-    }
+    let done = 0;
+    onPart(0, parts);
+    await Promise.all(Array.from({ length: parts }, (_, i) => withUploadSlot(async () => {
+      await sendPart(uploadId, i, file.slice(i * TRANSFER_PART_BYTES, (i + 1) * TRANSFER_PART_BYTES));
+      done++;
+      onPart(Math.min(done, parts - 1), parts);
+    })));
     return { uploadId, parts };
   }
 
@@ -3485,11 +4334,12 @@ ${err.message}`);
   el("navStamp").addEventListener("click", () => showPage("stamp"));
 
   // --- Sign & Stamp tab ----------------------------------------------------
-  // Previews one uploaded PDF/image; each page gets its own letterhead/
-  // signature/stamp (chosen in the dropdowns above it - pages left on
-  // "None" are left untouched), the signature and stamp can be dragged/
-  // resized per page, and all of that goes to POST /stamp-document, which
-  // returns the marked file (a PDF for a PDF, an image for an image).
+  // Previews one or more uploaded PDFs/images as one run of pages; each
+  // page gets its own letterhead/signature/stamp (chosen in the dropdowns
+  // above it - pages left on "None" are left untouched), the signature and
+  // stamp can be dragged/resized per page, and all of that goes to POST
+  // /stamp-document/jobs, which marks the files in the background (a PDF
+  // for a PDF, an image for an image - several files as one combined PDF).
   //
   // Geometry mirrors app.reports.bid_generator.mark_document: every page
   // keeps its own size (an image treated as an A4-scaled page, in points),
@@ -3513,7 +4363,7 @@ ${err.message}`);
 
   const stampState = {
     token: 0,        // bumped per file, so a slow render of an old file is dropped
-    pages: [],       // { w, h (points), node (canvas/img of the page content), ink (its content box, fractions) }
+    pages: [],       // { w, h (points), node (img of the page content), ink (its content box, fractions), file, filePage, filePages }
     // Each page's marks: the chosen library document id per kind (from GET
     // /stamp-document/marks), or null. A page with none is left untouched.
     pageMarks: [],
@@ -3523,8 +4373,27 @@ ${err.message}`);
     options: { letterhead: [], signature: [], stamp: [] },  // kind -> [{ id, label }] from the Documents library
     assetCache: {},  // "kind:id" -> HTMLImageElement
     placements: [],  // per page: { signature?: {x,y,w,h}, stamp?: {...} } fractions
-    objectUrl: null,
+    files: [],       // the chosen File objects, in page order
+    loading: false,  // a file's pages are still being rendered
+    previewFailed: false, // no preview - the same marks go on every page (allPagesMarks)
+    downloading: new Map(),    // file -> progress text, for each file being marked for download
+    downloadErrors: new Map(), // file -> why its last download failed
+    // file -> { uploadId, parts, usedAt } - the server keeps an upload for an
+    // hour after its last use, so marking the same file again skips the upload.
+    uploads: new Map(),
   };
+  const stampFiles = () => stampState.files;
+  const isStampPdf = (file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  const isStampImage = (file) => /^image\/(png|jpeg)$/.test(file.type) || /\.(png|jpe?g)$/i.test(file.name);
+  // Why the chosen files can't be marked, or "" when they can.
+  function stampFilesProblem() {
+    return stampFiles().length > STAMP_MAX_FILES ? `Choose at most ${STAMP_MAX_FILES} files at a time.` : "";
+  }
+  const filePages = (file) => stampState.pages.map((p, i) => (p.file === file ? i : -1)).filter((i) => i >= 0);
+  // Whether `file` has anything to download - a marked page, or (no preview) marks for every page.
+  const fileIsMarked = (file) => (stampState.previewFailed
+    ? MARK_KINDS.some((kind) => stampState.allPagesMarks[kind])
+    : filePages(file).some(pageHasMarks));
 
   const hasPreview = () => stampState.pages.length > 0;
   const pageMark = (i, kind) => stampState.pageMarks[i]?.[kind] || null;
@@ -3547,15 +4416,68 @@ ${err.message}`);
   }
 
   function syncStampForm() {
-    const hasFile = !!el("stampFile").files[0];
-    const anyMarks = hasPreview()
-      ? stampState.pageMarks.some((_, i) => pageHasMarks(i))
-      : MARK_KINDS.some((kind) => stampState.allPagesMarks[kind]);
-    el("stampDownloadBtn").disabled = !(hasFile && anyMarks);
+    const files = stampFiles();
+    const hasFile = files.length > 0;
     el("stampCloseBtn").hidden = !hasFile;
+    el("stampChooseBtn").textContent = hasFile ? "Add files" : "Choose files";
+    for (const id of ["stampChooseBtn", "stampAddBtn"]) el(id).disabled = stampState.loading;
+    el("stampCloseBtn").disabled = stampState.loading || stampState.downloading.size > 0;
+    const wasHidden = el("stampPreviewCard").hidden;
+    el("stampDrop").hidden = hasFile;
+    el("stampPreviewCard").hidden = !hasFile;
     // Without a preview there are no per-page choices - one set for every page.
-    const fallback = hasFile && !hasPreview() && !el("stampPreviewStatus").textContent.startsWith("Loading");
-    el("stampAllPages").hidden = !fallback;
+    el("stampAllPages").hidden = !(hasFile && stampState.previewFailed);
+    el("stampBulk").hidden = !(hasPreview() && !stampState.previewFailed);
+    el("stampRailBlock").hidden = !hasPreview();
+    renderStampFiles();
+    if (wasHidden && hasFile) syncScrollTableHeights();
+  }
+
+  // The Files list: type, name, size, pages and how many will be marked.
+  function renderStampFiles() {
+    const files = stampFiles();
+    const pages = stampState.pages.length;
+    const marked = stampState.pageMarks.filter((_, i) => pageHasMarks(i)).length;
+    el("stampSummary").innerHTML = !files.length ? ""
+      : `<b>${files.length}</b> file${files.length === 1 ? "" : "s"}`
+        + (pages ? ` &middot; <b>${pages}</b> page${pages === 1 ? "" : "s"} &middot; <b>${marked}</b> to be marked` : "");
+    const markedFiles = files.filter(fileIsMarked);
+    const idle = markedFiles.filter((file) => !stampState.downloading.has(file));
+    el("stampDownloadAllBtn").hidden = markedFiles.length < 2;
+    el("stampDownloadAllBtn").disabled = !idle.length || stampState.loading;
+    el("stampDownloadAllBtn").textContent = stampState.downloading.size && !idle.length
+      ? `Downloading ${stampState.downloading.size} file${stampState.downloading.size === 1 ? "" : "s"}…`
+      : `Download all marked as PDFs (${markedFiles.length})`;
+    el("stampFileList").innerHTML = files.map((file, f) => {
+      const own = filePages(file);
+      const ownMarked = own.filter(pageHasMarks).length;
+      const pageText = own.length ? ` &middot; ${own.length} page${own.length === 1 ? "" : "s"}` : "";
+      const marked = fileIsMarked(file);
+      const isBusy = stampState.downloading.has(file);
+      const status = isBusy ? `<span class="stamp-file-progress">${escapeHtml(stampState.downloading.get(file))}</span>`
+        : stampState.downloadErrors.get(file) ? `<span class="stamp-file-error">${escapeHtml(stampState.downloadErrors.get(file))}</span>`
+        : marked ? `<span class="stamp-file-meta"><span class="ok">&#10003; ${stampState.previewFailed ? "every page" : `${ownMarked} page${ownMarked === 1 ? "" : "s"}`} marked</span></span>`
+        : `<span class="stamp-file-meta">No marks yet</span>`;
+      const download = marked || isBusy
+        ? `<button class="stamp-file-download${isBusy ? " busy" : ""}" data-download="${f}"
+              title="${isBusy ? "Preparing…" : `Download ${escapeHtml(file.name)} with its marks`}"${isBusy || stampState.loading ? " disabled" : ""}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${isBusy
+              ? '<path d="M21 12a9 9 0 1 1-6.2-8.6"/>'
+              : '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>'}</svg>
+          </button>`
+        : "";
+      return `<li class="stamp-file" data-file="${f}" title="Go to ${escapeHtml(file.name)}">
+          <span class="stamp-file-icon${isStampPdf(file) ? "" : " img"}">${isStampPdf(file) ? "PDF" : "IMG"}</span>
+          <span class="stamp-file-text">
+            <span class="stamp-file-name">${escapeHtml(file.name)}</span>
+            <span class="stamp-file-meta">${fmtFileSize(file.size)}${pageText}</span>
+            ${status}
+          </span>
+          ${download}
+          <button class="stamp-file-remove" data-remove="${f}" title="Remove this file"${stampState.loading || isBusy ? " disabled" : ""}>&times;</button>
+        </li>`;
+    }).join("");
+    renderBulkScope();
   }
 
   function renderAllPagesSelects() {
@@ -3694,25 +4616,42 @@ ${err.message}`);
 
   function pageHeadHtml(i) {
     const total = stampState.pages.length;
+    const p = stampState.pages[i];
     const marked = pageHasMarks(i);
     const selects = MARK_KINDS.map((kind) => `<label>${MARK_NAMES[kind]}
         ${markSelectHtml(kind, pageMark(i, kind), `data-page="${i}" data-kind="${kind}"`)}</label>`).join("");
-    const copy = total > 1 && marked
+    const where = stampFiles().length > 1 && p.filePages > 1 ? `page ${p.filePage} of ${p.filePages} in this file` : "";
+    const tools = total > 1 && marked
       ? `<button class="stamp-link stamp-copy" data-page="${i}" title="Give every page this page's letterhead, signature and stamp">Use on all pages</button>`
       : "";
     return `<div class="stamp-page-head">
-        <div class="stamp-page-no">${total > 1 ? `Page ${i + 1} of ${total}` : "Your page"}
-          <span class="stamp-page-state${marked ? " marked" : ""}">${marked ? "Will be marked" : "Left as it is"}</span></div>
-        ${selects}${copy}
+        <div class="stamp-page-title">
+          <span class="stamp-page-no">${total > 1 ? `Page ${i + 1}` : "Your page"}</span>
+          <span class="stamp-page-of">${total > 1 ? `of ${total}` : ""}${where ? ` &middot; ${where}` : ""}</span>
+          <span class="stamp-page-state${marked ? " marked" : ""}">${marked ? "&#10003; Will be marked" : "Left as it is"}</span>
+        </div>
+        <div class="stamp-page-marks">${selects}</div>
+        <div class="stamp-page-tools">${tools}</div>
       </div>`;
   }
 
   function renderStampPages() {
     const container = el("stampPages");
     container.innerHTML = "";
+    const several = stampFiles().length > 1;
     stampState.pages.forEach((page, i) => {
+      if (several && page.filePage === 1) {
+        // Each file's pages under its own heading.
+        const pdf = isStampPdf(page.file);
+        container.insertAdjacentHTML("beforeend", `<div class="stamp-file-divider">
+            <span class="stamp-file-icon${pdf ? "" : " img"}">${pdf ? "PDF" : "IMG"}</span>
+            <strong>${escapeHtml(page.file.name)}</strong>
+            <span>&middot; ${page.filePages} page${page.filePages === 1 ? "" : "s"}</span>
+          </div>`);
+      }
       const wrap = document.createElement("div");
-      wrap.className = "stamp-page-wrap";
+      wrap.className = `stamp-page-wrap${pageHasMarks(i) ? " is-marked" : ""}`;
+      wrap.id = `stamp-page-${i}`;
       wrap.dataset.page = i;
       wrap.innerHTML = pageHeadHtml(i);
       const sheet = document.createElement("div");
@@ -3747,8 +4686,62 @@ ${err.message}`);
       container.appendChild(wrap);
       positionMarks(i);
     });
+    renderStampRail();
     syncStampForm();
   }
+
+  // The thumbnails on the left - a tick on pages that will be marked; a
+  // click jumps to the page, and the page in view is outlined.
+  function renderStampRail() {
+    const several = stampFiles().length > 1;
+    let html = "", open = false;
+    stampState.pages.forEach((page, i) => {
+      if (page.filePage === 1) {
+        if (open) html += "</div>";
+        if (several) html += `<div class="stamp-rail-file" title="${escapeHtml(page.file.name)}">${escapeHtml(page.file.name)}</div>`;
+        html += '<div class="stamp-rail-grid">';
+        open = true;
+      }
+      html += `<button class="stamp-thumb${pageHasMarks(i) ? " marked" : ""}" data-page="${i}"
+          style="aspect-ratio: ${page.w} / ${page.h}" title="Page ${i + 1}${pageHasMarks(i) ? " - will be marked" : ""}">
+          <img src="${page.node.src}" alt="" loading="lazy"><span class="stamp-thumb-no">${i + 1}</span></button>`;
+    });
+    if (open) html += "</div>";
+    el("stampRail").innerHTML = html;
+    watchCurrentPage();
+  }
+
+  let pageObserver = null;
+  function watchCurrentPage() {
+    if (pageObserver) pageObserver.disconnect();
+    if (!("IntersectionObserver" in window)) return;
+    pageObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const i = entry.target.dataset.page;
+        el("stampRail").querySelectorAll(".stamp-thumb.current").forEach((t) => t.classList.remove("current"));
+        const thumb = el("stampRail").querySelector(`.stamp-thumb[data-page="${i}"]`);
+        if (thumb) {
+          thumb.classList.add("current");
+          // Only the thumbnail strip follows along - never the Files/Quick apply above it.
+          const rail = el("stampRail"), r = rail.getBoundingClientRect(), t = thumb.getBoundingClientRect();
+          if (t.top < r.top) rail.scrollTop -= r.top - t.top + 4;
+          else if (t.bottom > r.bottom) rail.scrollTop += t.bottom - r.bottom + 4;
+        }
+      }
+    }, { rootMargin: "-35% 0px -60% 0px" });
+    el("stampPages").querySelectorAll(".stamp-page-wrap").forEach((w) => pageObserver.observe(w));
+  }
+
+  function scrollToStampPage(i) {
+    const wrap = el(`stamp-page-${i}`);
+    if (wrap) wrap.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  el("stampRail").addEventListener("click", (e) => {
+    const thumb = e.target.closest(".stamp-thumb");
+    if (thumb) scrollToStampPage(Number(thumb.dataset.page));
+  });
 
   function positionMarks(pageIndex) {
     const sheet = el("stampPages").querySelector(`.stamp-page[data-page="${pageIndex}"]`);
@@ -3825,7 +4818,7 @@ ${err.message}`);
   // A page's dropdowns - or, without a preview, the every-page ones.
   el("stampPage").addEventListener("change", async (e) => {
     const select = e.target.closest(".stamp-select");
-    if (!select) return;
+    if (!select || select.dataset.bulk || select.id === "stampBulkScope") return;
     const kind = select.dataset.kind;
     const id = select.value || null;
     el("stampError").textContent = "";
@@ -3864,64 +4857,230 @@ ${err.message}`);
     relayoutMarks();
   });
 
-  async function loadStampPreview(file) {
-    const token = ++stampState.token;
-    stampState.pages = [];
-    stampState.pageMarks = [];
-    stampState.placements = [];
-    if (stampState.objectUrl) URL.revokeObjectURL(stampState.objectUrl);
-    stampState.objectUrl = null;
-    el("stampPages").innerHTML = "";
-    el("stampPreviewCard").scrollTop = 0;
-    if (!file || file.size > MAX_UPLOAD_BYTES) {
-      el("stampPreviewStatus").textContent = file
-        ? "This file is too large to preview or mark." : "Choose a PDF or image to preview it here.";
-      syncStampForm();
-      return;
-    }
-    el("stampPreviewStatus").textContent = "Loading preview…";
-    syncStampForm();
-    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-    try {
-      const pages = [];
-      if (isPdf) {
-        const pdfjsLib = await loadPdfjs();
-        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  // A rendered PDF page kept as a JPEG image, not its canvas - a long PDF
+  // would otherwise hold every page's full-size pixels in memory. Its URL
+  // is revoked when the file is removed (revokePageUrls).
+  async function canvasAsImage(canvas) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error("couldn't render a page");
+    return loadImage(URL.createObjectURL(blob));
+  }
+
+  function revokePageUrls(pages) {
+    for (const p of pages) if (p.node?.src?.startsWith("blob:")) URL.revokeObjectURL(p.node.src);
+  }
+
+  // `file`'s pages for the preview: { w, h (points), node, ink, file, filePage, filePages }.
+  async function renderFilePages(file, token, label) {
+    const pages = [];
+    if (isStampPdf(file)) {
+      const pdfjsLib = await loadPdfjs();
+      const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      const canvas = document.createElement("canvas");
+      try {
         for (let n = 1; n <= pdf.numPages; n++) {
-          if (token !== stampState.token) return;
-          el("stampPreviewStatus").textContent = `Loading preview… page ${n} of ${pdf.numPages}`;
+          if (token !== stampState.token) { revokePageUrls(pages); return null; }
+          el("stampPreviewStatus").textContent = `Loading ${label}… page ${n} of ${pdf.numPages}`;
           const page = await pdf.getPage(n);
           const base = page.getViewport({ scale: 1 });
           const scale = Math.min((900 * (window.devicePixelRatio || 1)) / base.width, 3);
           const viewport = page.getViewport({ scale });
-          const canvas = document.createElement("canvas");
           canvas.width = Math.round(viewport.width);
           canvas.height = Math.round(viewport.height);
           await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-          pages.push({ w: base.width, h: base.height, node: canvas, ink: inkBox(canvas, canvas.width, canvas.height) });
+          const ink = inkBox(canvas, canvas.width, canvas.height);
+          pages.push({ w: base.width, h: base.height, node: await canvasAsImage(canvas), ink,
+                       file, filePage: n, filePages: pdf.numPages });
+          page.cleanup();
         }
-      } else {
-        stampState.objectUrl = URL.createObjectURL(file);
-        const img = await loadImage(stampState.objectUrl);
-        const pxPerPt = Math.min(img.naturalWidth / A4_PT.w, img.naturalHeight / A4_PT.h);
-        pages.push({ w: img.naturalWidth / pxPerPt, h: img.naturalHeight / pxPerPt, node: img,
-                     ink: inkBox(img, img.naturalWidth, img.naturalHeight) });
+      } finally {
+        pdf.destroy();
       }
-      if (token !== stampState.token) return;
-      stampState.pages = pages;
-      stampState.pageMarks = pages.map(noMarks); // every page starts on "None"
-      resetPlacements();
+    } else {
+      el("stampPreviewStatus").textContent = `Loading ${label}…`;
+      const img = await loadImage(URL.createObjectURL(file));
+      const pxPerPt = Math.min(img.naturalWidth / A4_PT.w, img.naturalHeight / A4_PT.h);
+      pages.push({ w: img.naturalWidth / pxPerPt, h: img.naturalHeight / pxPerPt, node: img,
+                   ink: inkBox(img, img.naturalWidth, img.naturalHeight), file, filePage: 1, filePages: 1 });
+    }
+    return pages;
+  }
+
+  // Adds `files` (PDFs/images) after the ones already chosen - their pages
+  // previewed and appended, each starting on "None".
+  async function addStampFiles(incoming) {
+    const known = new Set(stampFiles().map((f) => `${f.name}|${f.size}|${f.lastModified}`));
+    const skipped = [];
+    const added = [];
+    for (const file of incoming) {
+      if (!isStampPdf(file) && !isStampImage(file)) { skipped.push(file.name); continue; }
+      const key = `${file.name}|${file.size}|${file.lastModified}`;
+      if (known.has(key)) continue; // the same file chosen twice
+      known.add(key);
+      added.push(file);
+    }
+    el("stampError").textContent = skipped.length
+      ? `Skipped ${skipped.map((n) => `"${n}"`).join(", ")} - only PDF, JPEG and PNG files can be marked.` : "";
+    if (!added.length) { syncStampForm(); return; }
+    stampState.files.push(...added);
+    const problem = stampFilesProblem();
+    if (problem) el("stampError").textContent = problem;
+    if (stampState.previewFailed) { syncStampForm(); return; } // nothing to preview them in
+
+    const token = stampState.token;
+    stampState.loading = true;
+    syncStampForm();
+    try {
+      for (const [n, file] of added.entries()) {
+        const label = added.length > 1 ? `${file.name} (${n + 1} of ${added.length})` : file.name;
+        const pages = await renderFilePages(file, token, label);
+        if (!pages || token !== stampState.token) return;
+        if (!stampState.files.includes(file)) { revokePageUrls(pages); continue; }
+        const first = stampState.pages.length;
+        stampState.pages.push(...pages);
+        stampState.pageMarks.push(...pages.map(noMarks)); // every page starts on "None"
+        stampState.placements.push(...pages.map((_, k) => defaultPlacements(first + k)));
+        renderStampPages(); // each file shows as soon as it's ready
+      }
       el("stampPreviewStatus").textContent = "";
-      renderStampPages();
     } catch (err) {
       if (token !== stampState.token) return;
       console.error("Failed to preview document:", err);
+      // No per-page preview at all from here on: one set of marks for every page.
+      revokePageUrls(stampState.pages);
+      stampState.previewFailed = true;
+      stampState.pages = [];
+      stampState.pageMarks = [];
+      stampState.placements = [];
+      el("stampPages").innerHTML = "";
+      el("stampRail").innerHTML = "";
       el("stampPreviewStatus").textContent =
-        `Couldn't show a preview (${err.message}) - pick the marks above; they'll go on every page at the bottom right.`;
+        `Couldn't show a preview (${err.message}) - pick the marks on the left; they'll go on every page at the bottom right.`;
       renderAllPagesSelects();
-      syncStampForm();
+    } finally {
+      if (token === stampState.token) {
+        stampState.loading = false;
+        syncStampForm();
+      }
     }
   }
+
+  function removeStampFile(f) {
+    const file = stampFiles()[f];
+    if (!file || stampState.loading || stampState.downloading.has(file)) return;
+    stampState.downloadErrors.delete(file);
+    stampState.uploads.delete(file);
+    const keep = stampState.pages.map((p, i) => (p.file === file ? -1 : i)).filter((i) => i >= 0);
+    revokePageUrls(stampState.pages.filter((p) => p.file === file));
+    stampState.pages = keep.map((i) => stampState.pages[i]);
+    stampState.pageMarks = keep.map((i) => stampState.pageMarks[i]);
+    stampState.placements = keep.map((i) => stampState.placements[i]);
+    stampState.files.splice(f, 1);
+    if (!stampState.files.length) { clearStampFiles(); return; }
+    el("stampError").textContent = stampFilesProblem();
+    renderStampPages();
+  }
+
+  function clearStampFiles() {
+    if (stampState.downloading.size) return;
+    stampState.token++; // drops any preview still rendering
+    stampState.downloadErrors.clear();
+    stampState.uploads.clear();
+    revokePageUrls(stampState.pages);
+    stampState.files = [];
+    stampState.pages = [];
+    stampState.pageMarks = [];
+    stampState.placements = [];
+    stampState.loading = false;
+    stampState.previewFailed = false;
+    stampState.allPagesMarks = noMarks();
+    el("stampPages").innerHTML = "";
+    el("stampRail").innerHTML = "";
+    el("stampPreviewStatus").textContent = "";
+    el("stampError").textContent = "";
+    renderAllPagesSelects();
+    syncStampForm();
+  }
+
+  // --- Quick apply ---------------------------------------------------------
+  // Which pages: all of them, or one file's.
+  function renderBulkScope() {
+    const scope = el("stampBulkScope");
+    const current = scope.value;
+    const files = stampFiles().filter((f) => filePages(f).length);
+    const total = stampState.pages.length;
+    scope.innerHTML = `<option value="all">All ${total} page${total === 1 ? "" : "s"}</option>`
+      + (files.length > 1 ? files.map((f) => {
+        const n = filePages(f).length;
+        return `<option value="${stampFiles().indexOf(f)}">${escapeHtml(f.name)} (${n} page${n === 1 ? "" : "s"})</option>`;
+      }).join("") : "");
+    if ([...scope.options].some((o) => o.value === current)) scope.value = current;
+  }
+
+  // "No change" first, then None, then the library's documents.
+  function renderBulkSelects() {
+    document.querySelectorAll(".stamp-bulk-select").forEach((select) => {
+      const kind = select.dataset.kind;
+      const options = stampState.options[kind];
+      select.innerHTML = `<option value="keep">No change</option><option value="">None</option>`
+        + options.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.label)}</option>`).join("");
+      select.disabled = !options.length;
+      select.title = options.length ? "" : NO_MARK_HINT[kind];
+    });
+  }
+
+  function bulkScopePages() {
+    const value = el("stampBulkScope").value;
+    return value === "all" ? stampState.pages.map((_, i) => i) : filePages(stampFiles()[Number(value)]);
+  }
+
+  el("stampBulkApplyBtn").addEventListener("click", async () => {
+    const choices = [...document.querySelectorAll(".stamp-bulk-select")]
+      .filter((select) => !select.disabled && select.value !== "keep")
+      .map((select) => [select.dataset.kind, select.value || null]);
+    if (!choices.length) {
+      el("stampError").textContent = "Pick a letterhead, signature or stamp to apply first.";
+      return;
+    }
+    const btn = el("stampBulkApplyBtn");
+    btn.disabled = true;
+    el("stampError").textContent = "";
+    try {
+      const pages = bulkScopePages();
+      for (const [kind, id] of choices) {
+        if (id) await stampAsset(kind, id);
+        for (const i of pages) await setPageMark(i, kind, id);
+      }
+      relayoutMarks();
+      document.querySelectorAll(".stamp-bulk-select").forEach((select) => { select.value = "keep"; });
+      showToast(`Applied to ${pages.length} page${pages.length === 1 ? "" : "s"}.`);
+    } catch (err) {
+      el("stampError").textContent = `Couldn't apply that - ${err.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  el("stampBulkClearBtn").addEventListener("click", () => {
+    const pages = bulkScopePages();
+    for (const i of pages) {
+      stampState.pageMarks[i] = noMarks();
+      stampState.placements[i] = {};
+    }
+    relayoutMarks();
+    showToast(`Marks cleared from ${pages.length} page${pages.length === 1 ? "" : "s"}.`);
+  });
+
+  el("stampFileList").addEventListener("click", (e) => {
+    const remove = e.target.closest(".stamp-file-remove");
+    if (remove) { removeStampFile(Number(remove.dataset.remove)); return; }
+    const download = e.target.closest(".stamp-file-download");
+    if (download) { downloadStampedFile(stampFiles()[Number(download.dataset.download)]); return; }
+    const item = e.target.closest(".stamp-file");
+    if (!item) return;
+    const first = filePages(stampFiles()[Number(item.dataset.file)])[0];
+    if (first !== undefined) scrollToStampPage(first);
+  });
 
   // The dropdowns list the Documents-library entries that can be used as
   // each mark (see GET /stamp-document/marks), by their Documents-tab names.
@@ -3945,6 +5104,7 @@ ${err.message}`);
         }
       }
       renderAllPagesSelects();
+      renderBulkSelects();
       relayoutMarks();
       syncStampForm();
     } catch (err) {
@@ -3953,20 +5113,44 @@ ${err.message}`);
     }
   }
 
-  el("stampChooseBtn").addEventListener("click", () => el("stampFile").click());
+  const chooseStampFiles = () => { if (!stampState.loading) el("stampFile").click(); };
+  el("stampChooseBtn").addEventListener("click", chooseStampFiles);
+  el("stampDropChooseBtn").addEventListener("click", chooseStampFiles);
+  el("stampAddBtn").addEventListener("click", chooseStampFiles);
   el("stampFile").addEventListener("change", () => {
-    const file = el("stampFile").files[0];
-    // A new file starts with no marks selected.
-    stampState.allPagesMarks = noMarks();
-    renderAllPagesSelects();
-    el("stampError").textContent = file && file.size > MAX_UPLOAD_BYTES
-      ? tooBigMessage() : "";
-    loadStampPreview(file);
+    const files = Array.from(el("stampFile").files);
+    el("stampFile").value = ""; // so the same file can be chosen again after removing it
+    if (files.length) addStampFiles(files);
   });
-  // "Close file": back to an empty page, ready for the next document.
-  el("stampCloseBtn").addEventListener("click", () => {
-    el("stampFile").value = "";
-    el("stampFile").dispatchEvent(new Event("change"));
+  // "Clear all": back to the empty drop zone, ready for the next documents.
+  el("stampCloseBtn").addEventListener("click", clearStampFiles);
+
+  // Files dropped anywhere on the tab are added too.
+  let dragDepth = 0;
+  const dropTarget = () => (stampFiles().length ? el("stampPreviewCard") : el("stampDrop"));
+  el("stampPage").addEventListener("dragenter", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    dragDepth++;
+    dropTarget().classList.add("dragover");
+  });
+  el("stampPage").addEventListener("dragover", (e) => {
+    if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+  });
+  el("stampPage").addEventListener("dragleave", () => {
+    if (--dragDepth <= 0) {
+      dragDepth = 0;
+      el("stampDrop").classList.remove("dragover");
+      el("stampPreviewCard").classList.remove("dragover");
+    }
+  });
+  el("stampPage").addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    dragDepth = 0;
+    el("stampDrop").classList.remove("dragover");
+    el("stampPreviewCard").classList.remove("dragover");
+    if (!stampState.loading) addStampFiles(Array.from(e.dataTransfer.files));
   });
 
   // --- "View documents" popup --------------------------------------------
@@ -4228,69 +5412,125 @@ ${err.message}`);
     }
   });
 
-  async function downloadStamped() {
-    const file = el("stampFile").files[0];
-    if (!file) return;
-    if (file.size > MAX_UPLOAD_BYTES) {
-      el("stampError").textContent = tooBigMessage();
-      return;
+  // Waits out a background POST /stamp-document/jobs job - its final status.
+  async function waitForStampJob(job, onWait) {
+    for (let polls = 0; job.status === "queued" || job.status === "running"; polls++) {
+      onWait(polls);
+      await new Promise((resolve) => setTimeout(resolve, polls < 10 ? 1000 : 2000));
+      const res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}`);
+      if (!res.ok) throw await apiError(res);
+      job = await res.json();
     }
-    const btn = el("stampDownloadBtn");
-    const label = btn.innerHTML;
-    btn.disabled = true;
-    btn.textContent = "Preparing…";
-    el("stampError").textContent = "";
-    // Sent in parts (uploadInParts), marked, then fetched back in parts.
-    try {
-      const { uploadId, parts } = await uploadInParts(file, (i, n) => {
-        btn.textContent = n > 1 ? `Uploading ${i + 1}/${n}…` : "Uploading…";
+    if (job.status !== "done") throw new Error(job.message || "marking the files failed");
+    return job;
+  }
+
+  // An upload of `file` the server still has (it keeps one for an hour
+  // after its last use), or a fresh one - { uploadId, parts }.
+  const UPLOAD_REUSE_MS = 45 * 60 * 1000;
+  async function stampUpload(file, progress, fresh = false) {
+    const known = stampState.uploads.get(file);
+    if (!fresh && known && Date.now() - known.usedAt < UPLOAD_REUSE_MS) return known;
+    stampState.uploads.delete(file);
+    const upload = await uploadInParts(file, (i, n) => progress(n > 1 ? `Uploading ${i + 1}/${n}…` : "Uploading…"));
+    return { ...upload, usedAt: Date.now() };
+  }
+
+  // The job's form for `file`: its own pages with their marks, where they
+  // were dragged, numbered from 0 within the file - pages without any are
+  // left as they are. Without a preview: the same marks on every page.
+  function stampJobForm(file, upload, asPdf) {
+    const formData = new FormData();
+    if (asPdf) formData.append("as_pdf", "true");
+    formData.append("files", JSON.stringify([{ upload_id: upload.uploadId, parts: upload.parts, filename: file.name, content_type: file.type }]));
+    if (hasPreview()) {
+      const own = filePages(file);
+      const first = own[0];
+      const marked = own.filter(pageHasMarks);
+      formData.append("pages", JSON.stringify(marked.map((i) => ({ page: i - first, ...stampState.pageMarks[i] }))));
+      const placements = marked.flatMap((i) =>
+        Object.entries(stampState.placements[i]).map(([mark, p]) => ({ page: i - first, mark, x: p.x, y: p.y, w: p.w, h: p.h })));
+      formData.append("placements", JSON.stringify(placements));
+      const layouts = marked.flatMap((i) => {
+        const layout = contentLayout(i);
+        return layout ? [{ page: i - first, ...layout }] : [];
       });
+      if (layouts.length) formData.append("layouts", JSON.stringify(layouts));
+    } else {
+      MARK_KINDS.forEach((kind) => {
+        if (stampState.allPagesMarks[kind]) formData.append(kind, stampState.allPagesMarks[kind]);
+      });
+    }
+    return formData;
+  }
 
-      btn.textContent = "Preparing…";
-      const formData = new FormData();
-      formData.append("parts", parts);
-      formData.append("filename", file.name);
-      formData.append("content_type", file.type);
-      if (hasPreview()) {
-        // Each page's own marks, where they were dragged - pages without
-        // any are left as they are.
-        const marked = stampState.pages.map((_, i) => i).filter(pageHasMarks);
-        formData.append("pages", JSON.stringify(marked.map((page) => ({ page, ...stampState.pageMarks[page] }))));
-        const placements = marked.flatMap((page) =>
-          Object.entries(stampState.placements[page]).map(([mark, p]) => ({ page, mark, x: p.x, y: p.y, w: p.w, h: p.h })));
-        formData.append("placements", JSON.stringify(placements));
-        const layouts = marked.flatMap((page) => {
-          const layout = contentLayout(page);
-          return layout ? [{ page, ...layout }] : [];
-        });
-        if (layouts.length) formData.append("layouts", JSON.stringify(layouts));
+  async function runStampJob(file, upload, progress, asPdf) {
+    const start = await apiFetch(`${API_BASE_URL}/stamp-document/jobs`, { method: "POST", body: stampJobForm(file, upload, asPdf) });
+    if (!start.ok) throw await apiError(start);
+    return waitForStampJob(await start.json(), (polls) => {
+      progress(polls < 4 ? "Marking…" : "Marking… large files take a minute");
+    });
+  }
+
+  // Marks `file` on its own and downloads it - a PDF for a PDF, an image for
+  // an image. Several files can be on their way at once, each with its own
+  // progress in the Files list. Sent in parts (uploadInParts, reused when
+  // the server still has it), marked in the background, then downloaded
+  // straight from file storage.
+  // `asPdf`: an image comes back as a one-page PDF too ("Download all marked").
+  async function downloadStampedFile(file, { asPdf = false } = {}) {
+    if (!file || stampState.downloading.has(file) || stampState.loading || !fileIsMarked(file)) return;
+    const progress = (text) => {
+      if (!stampFiles().includes(file)) return;
+      stampState.downloading.set(file, text);
+      renderStampFiles();
+    };
+    stampState.downloadErrors.delete(file);
+    el("stampError").textContent = "";
+    progress("Preparing…");
+    try {
+      let upload = await stampUpload(file, progress);
+      let job;
+      try {
+        job = await runStampJob(file, upload, progress, asPdf);
+      } catch (err) {
+        // The kept upload had expired after all - send it again, once.
+        if (!/upload the file again/.test(err.message)) throw err;
+        upload = await stampUpload(file, progress, true);
+        job = await runStampJob(file, upload, progress, asPdf);
+      }
+      stampState.uploads.set(file, { ...upload, usedAt: Date.now() });
+
+      progress("Downloading…");
+      if (job.url) {
+        // A navigation, not a fetch - the signed link needs no token, and
+        // its Content-Disposition makes it a download.
+        const a = document.createElement("a");
+        a.href = job.url;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       } else {
-        // No preview: the same marks on every page, at the usual spots.
-        MARK_KINDS.forEach((kind) => {
-          if (stampState.allPagesMarks[kind]) formData.append(kind, stampState.allPagesMarks[kind]);
-        });
-      }
-      const finish = await apiFetch(`${API_BASE_URL}/stamp-document/uploads/${uploadId}/finish`, { method: "POST", body: formData });
-      if (!finish.ok) throw await apiError(finish);
-      const result = await finish.json();
-
-      const chunks = [];
-      for (let i = 0; i < result.parts; i++) {
-        btn.textContent = result.parts > 1 ? `Downloading ${i + 1}/${result.parts}…` : "Downloading…";
-        const res = await apiFetch(`${API_BASE_URL}/stamp-document/results/${result.result_id}/parts/${i}`);
+        // Running locally - no bucket to link to.
+        const res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}/result`);
         if (!res.ok) throw await apiError(res);
-        chunks.push(await res.blob());
+        saveBlob(await res.blob(), job.filename);
       }
-      saveBlob(new Blob(chunks, { type: result.media_type }), result.filename);
+      showToast(`"${job.filename}" downloaded.`);
     } catch (err) {
       console.error("Failed to sign/stamp document:", err);
-      el("stampError").textContent = `Couldn't prepare this - ${err.message}`;
+      stampState.downloadErrors.set(file, `Couldn't prepare this - ${err.message}`);
     } finally {
-      btn.innerHTML = label;
+      stampState.downloading.delete(file);
       syncStampForm();
     }
   }
-  el("stampDownloadBtn").addEventListener("click", downloadStamped);
+
+  // Every marked file, each downloaded as its own PDF (images too) - all at once.
+  el("stampDownloadAllBtn").addEventListener("click", () => {
+    stampFiles().filter(fileIsMarked).forEach((file) => downloadStampedFile(file, { asPdf: true }));
+  });
+
   el("tendersRefreshBtn").addEventListener("click", refreshTenders);
   el("automationRefreshBtn").addEventListener("click", loadAutomationRuns);
   el("automationPrevBtn").addEventListener("click", () => {
@@ -4419,21 +5659,26 @@ ${err.message}`);
   window.addEventListener("resize", syncScrollTableHeights);
 
   el("signOutBtn").addEventListener("click", logout);
-  el("authRetryBtn").addEventListener("click", () => {
-    if (IS_LOCAL) {
-      el("siError").textContent = "There's no login when running locally - open the dashboard without #/signin.";
-      el("siError").hidden = false;
-      return;
-    }
-    login();
+  el("navToggle").addEventListener("click", () => setNavMenuOpen(el("navToggle").getAttribute("aria-expanded") !== "true"));
+  document.addEventListener("click", (e) => { if (!e.target.closest(".sidebar")) setNavMenuOpen(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNavMenuOpen(false); });
+  NARROW_SCREEN.addEventListener("change", () => {
+    setNavMenuOpen(false);
+    syncScrollTableHeights();
+    // The checklist's boxes change width between table and cards.
+    document.querySelectorAll("#checklistContent textarea").forEach(autoGrow);
   });
+  wireSignIn();
 
-  // Nothing talks to the API until the login check is done. Locally there's
-  // no login; #/signin shows the sign-in screen there to review its design.
-  if (IS_LOCAL && window.location.hash === "#/signin") {
+  // Nothing talks to the API until the login check is done (a signed-out
+  // tab signs in first). Locally there's no login; #/signin, or
+  // #/signin/<step> (code, newpass, setup, forgot, reset), shows the sign-in
+  // screens there to review their design.
+  if (IS_LOCAL && window.location.hash.startsWith("#/signin")) {
     showSignIn();
+    previewSignInStep(window.location.hash.split("/")[2]);
   } else {
-    (IS_LOCAL ? Promise.resolve() : startAuth()).then(() => {
+    (IS_LOCAL ? Promise.resolve() : refreshTokens()).then(() => {
       if (!IS_LOCAL) {
         el("accountEmail").textContent = auth.email;
         el("sidebarAccount").hidden = false;

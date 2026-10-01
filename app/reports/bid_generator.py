@@ -1834,11 +1834,50 @@ def _image_as_pdf(data: bytes) -> bytes:
     return buf.getvalue()
 
 
+_STARTXREF_RE = re.compile(rb"startxref\s+(\d+)\s*")
+
+
+def _pdf_reader(data: bytes) -> PdfReader:
+    """A PdfReader for `data`, repairing what PDF viewers shrug off but
+    pypdf doesn't: a file padded after its startxref (pypdf only looks for it
+    near the end - e.g. a test file filled out to 100 MB), or a damaged
+    cross-reference table (rewritten by pdfium, which rebuilds it)."""
+    if b"startxref" not in data[-2048:]:
+        # pypdf would take seconds to give up on a padded file - trim it first.
+        matches = list(_STARTXREF_RE.finditer(data))
+        if matches and matches[-1].end() < len(data) - 2048:
+            data = data[:matches[-1].end()] + b"\n%%EOF\n"
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        len(reader.pages)
+        return reader
+    except Exception as first_error:
+        matches = list(_STARTXREF_RE.finditer(data))
+        if matches:
+            trimmed = data[:matches[-1].end()] + b"\n%%EOF\n"
+            try:
+                reader = PdfReader(io.BytesIO(trimmed))
+                len(reader.pages)
+                return reader
+            except Exception:  # noqa: BLE001 - try pdfium next
+                pass
+        try:
+            import pypdfium2
+
+            out = io.BytesIO()
+            pypdfium2.PdfDocument(data).save(out)
+            reader = PdfReader(io.BytesIO(out.getvalue()))
+            len(reader.pages)
+            return reader
+        except Exception:  # noqa: BLE001 - the original error says more
+            raise first_error
+
+
 def _attached_source_pages(doc: CompanyDocumentRef) -> list[PageObject]:
     """A library document's own pages (an image upload as one A4 page)."""
     data = doc.open_bytes()
     try:
-        return list(PdfReader(io.BytesIO(data if _is_pdf(doc) else _image_as_pdf(data))).pages)
+        return list(_pdf_reader(data if _is_pdf(doc) else _image_as_pdf(data)).pages)
     except Exception as exc:
         raise BidGenerationError(f"Could not read '{doc.name}': {exc}") from exc
 
@@ -2152,6 +2191,44 @@ def mark_document(
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), "application/pdf"
+
+
+def _is_pdf_upload(data: bytes, filename: str, content_type: str) -> bool:
+    return content_type == "application/pdf" or filename.lower().endswith(".pdf") or data.startswith(b"%PDF")
+
+
+def document_page_count(data: bytes, filename: str, content_type: str) -> int:
+    """How many pages mark_document sees in an upload - an image is one."""
+    if not _is_pdf_upload(data, filename, content_type):
+        return 1
+    try:
+        return len(_pdf_reader(data).pages)
+    except Exception as exc:
+        raise BidGenerationError(f"Could not read '{filename}': {exc}") from exc
+
+
+def combine_marked(marked: list[tuple[bytes, str]]) -> bytes:
+    """Several mark_document results (bytes, media type) as one PDF, in
+    order. A marked image becomes one page of its own size, scaled as if it
+    were an A4 page (as _mark_image and the Sign & Stamp preview treat it)."""
+    writer = PdfWriter()
+    for data, media_type in marked:
+        if media_type != "application/pdf":
+            image = ImageReader(io.BytesIO(data))
+            img_w, img_h = image.getSize()
+            pt = min(img_w / A4[0], img_h / A4[1])  # pixels per PDF point
+            page_w, page_h = img_w / pt, img_h / pt
+            buf = io.BytesIO()
+            c = pdf_canvas.Canvas(buf, pagesize=(page_w, page_h))
+            c.drawImage(image, 0, 0, width=page_w, height=page_h)
+            c.showPage()
+            c.save()
+            data = buf.getvalue()
+        writer.append(PdfReader(io.BytesIO(data)))
+    writer.compress_identical_objects()
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 # --- Internal review notes (plain pages, removed before submission) --------------
