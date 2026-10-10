@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Tender Intelligence Agent - BACKEND stack: the pipeline Lambda (scheduled
-  2x/day), the API Lambda + HTTP API behind a Cognito login, secrets from
+  3x/day), the API Lambda + HTTP API behind a Cognito login, secrets from
   SSM Parameter Store, and a CloudWatch alarm on failure. The frontend (S3 + CloudFront)
   is a deliberately separate stack - see frontend/template.yaml - so the
   two can be deployed and reasoned about independently. The report email
@@ -45,7 +45,16 @@ Resources:
       # maximum so a batch of DOCUMENTS_BATCH_LIMIT tenders has room to
       # finish instead of being killed mid-run.
       Timeout: 900
-      MemorySize: 1536
+      # Lambda's CPU share scales with memory - 3584 MB is 2 vCPUs, which
+      # app.intelligence.document_summarizer uses to OCR two scanned pages
+      # at once (1536 MB was under one vCPU).
+      MemorySize: 3584
+      # /tmp holds the Chromium profile, the raw/processed exports and a
+      # batch of tender documents (archives unpacked for OCR on top), and it
+      # survives between invocations on a warm instance. The 512 MB default
+      # ran out mid-download on 2026-10-03 ("No space left on device").
+      EphemeralStorage:
+        Size: 4096
       Architectures:
         - x86_64
       # Not primarily about cost - this makes it structurally impossible for
@@ -82,8 +91,9 @@ Resources:
           # Tender document text is written here (see app.storage).
           FILES_BUCKET: !Ref FilesBucket
       # Only what the pipeline does with FilesBucket: the summarizer writes
-      # tender-text/, cleanup deletes it. No access to company documents or
-      # bid packs, and none to the bucket's own settings.
+      # tender-text/, and reads the tender documents uploaded by hand
+      # (tender-documents/, app.processing.manual_documents). No access to
+      # company documents or bid packs, and none to the bucket's own settings.
       Policies:
         - Statement:
             - Sid: WriteTenderText
@@ -92,6 +102,10 @@ Resources:
                 - s3:PutObject
                 - s3:DeleteObject
               Resource: !Sub "${FilesBucket.Arn}/tender-text/*"
+            - Sid: ReadUploadedTenderDocuments
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "${FilesBucket.Arn}/tender-documents/*"
       Events:
         MorningRun:
           Type: Schedule
@@ -99,6 +113,13 @@ Resources:
             Name: tender-agent-morning
             Description: 08:00 IST daily run
             Schedule: cron(30 2 * * ? *)
+            Input: '{"include_report": false}'
+        MiddayRun:
+          Type: Schedule
+          Properties:
+            Name: tender-agent-midday
+            Description: 13:00 IST daily run
+            Schedule: cron(30 7 * * ? *)
             Input: '{"include_report": false}'
         EveningRun:
           Type: Schedule
@@ -253,9 +274,14 @@ Resources:
           # CORSMiddleware too (see app.api.main) - same values
           # TenderHttpApi's CORS allows.
           FRONTEND_URL: !Sub "${FrontendUrl},${FrontendCustomUrl}"
+          # Sign & Stamp's Word -> PDF step (see app.api.main's
+          # start_word_conversion).
+          DOCX_CONVERT_FUNCTION_NAME: !Ref DocxConvertFunction
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref PipelineFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref DocxConvertFunction
         # Invoking itself for the bid-pack build (see Timeout above). By
         # name pattern - !GetAtt ApiFunction.Arn here would be circular.
         - Statement:
@@ -276,6 +302,8 @@ Resources:
               Resource:
                 - !Sub "${FilesBucket.Arn}/company-documents/*"
                 - !Sub "${FilesBucket.Arn}/bid-packs/*"
+                # Tender documents uploaded by hand (Other Tenders).
+                - !Sub "${FilesBucket.Arn}/tender-documents/*"
             - Sid: ReadTenderText
               Effect: Allow
               Action: s3:GetObject
@@ -328,6 +356,34 @@ Resources:
       DockerContext: .
       Dockerfile: app/api/Dockerfile
 
+  # Word -> PDF for the Sign & Stamp tab (app.convert), with LibreOffice -
+  # its own image so ApiFunction's stays small. ApiFunction invokes it
+  # asynchronously; it reads the upload from and writes the PDF and a status
+  # file to bid-packs/converted/ (expired with the rest of bid-packs/).
+  DocxConvertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 180
+      # LibreOffice's layout pass is CPU-bound - more memory, more CPU.
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
+      Architectures:
+        - x86_64
+      Policies:
+        - Statement:
+            - Sid: ConvertedWordFiles
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "${FilesBucket.Arn}/bid-packs/converted/*"
+    Metadata:
+      DockerTag: convert-latest
+      DockerContext: .
+      Dockerfile: app/convert/Dockerfile
+
   # File storage for both functions (app.storage): the Documents library
   # (PAN, ITRs, financials, signatures - hence private, encrypted, TLS-only
   # and versioned), each tender's document text, and bid packs, which are
@@ -364,8 +420,8 @@ Resources:
             ExpirationInDays: 1
             NoncurrentVersionExpiration:
               NoncurrentDays: 1
-          # A closed tender's text is deleted with the tender (see
-          # app.processing.cleanup) - its old version isn't kept around.
+          # A tender's text is kept for good (tenders are never deleted);
+          # only a replaced text's old version is dropped.
           - Id: ExpireDeletedTenderText
             Status: Enabled
             Prefix: tender-text/

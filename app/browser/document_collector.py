@@ -152,6 +152,11 @@ def _pending_tenders(
         pending = list(collection.find({**has_url, "_id": {"$in": tender_ids}}, projection))
         return pending[:limit] if limit else pending
 
+    # Tenders added by hand (Other Tenders) are only fetched when asked for
+    # by id - their link may be any portal, not a TenderDetail page, and
+    # their documents are usually added by hand (app.processing.manual_documents).
+    # Deleted from the dashboard (hidden) - never needed again.
+    has_url = {**has_url, "manually_added": {"$ne": True}, "hidden": {"$ne": True}}
     # Any requested tender still without text - summarized or not: one whose
     # download was never summarized (its files lost with the run's /tmp)
     # would otherwise never be due again, and the checklist would wait forever.
@@ -333,7 +338,12 @@ def run_document_collection(
                 break
             outcome = _download_one_tender(page, tender, documents_dir, collection)
             summary.outcomes.append(outcome)
-            if after_each is not None and outcome.status in ("success", "partial"):
+            # Documents also added by hand on the dashboard are read with these.
+            if tender.get("manual_documents"):
+                from app.processing.manual_documents import collect_manual_documents
+
+                collect_manual_documents([tender["_id"]], settings, collection, merge=True)
+            if after_each is not None and (outcome.status in ("success", "partial") or tender.get("manual_documents")):
                 try:
                     after_each(tender["_id"])
                 except Exception:  # noqa: BLE001 - the tender is picked up again by the summarize step

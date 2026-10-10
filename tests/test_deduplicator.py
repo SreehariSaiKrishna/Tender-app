@@ -260,3 +260,56 @@ def test_similar_titles_with_different_dedup_keys_are_never_merged(collection):
 
     assert summary.new == 2
     assert collection.count_documents({}) == 2
+
+
+# --- closed tenders are kept, and tagged when they reopen ----------------
+
+
+def test_closed_tender_is_kept_and_tagged_reopened_when_it_returns(collection):
+    ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+    closed = ingest_batch({"Q1": []}, collection)
+    assert closed.disappeared == 1
+    doc = collection.find_one({"dedup_key": "ref:1"})
+    assert doc["disappeared"] is True and doc["status"] == TenderStatus.CLOSED.value
+    assert [e["event"] for e in doc["status_history"]] == ["closed"]
+
+    back = ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+
+    assert back.reopened == 1
+    doc = collection.find_one({"dedup_key": "ref:1"})
+    assert doc["disappeared"] is False
+    assert doc["reopened"] is True and doc["reopen_count"] == 1 and doc["reopened_at"] is not None
+    assert doc["status"] == TenderStatus.REOPENED.value
+    assert [e["event"] for e in doc["status_history"]] == ["closed", "reopened"]
+
+    # Seen again on the next pass: still tagged, but not counted as a new reopen.
+    again = ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+    assert again.reopened == 0
+    doc = collection.find_one({"dedup_key": "ref:1"})
+    assert doc["reopened"] is True and doc["reopen_count"] == 1
+
+
+def test_a_past_closing_date_extended_into_the_future_is_a_reopen(collection):
+    past = dt.date.today() - dt.timedelta(days=5)
+    ingest_batch({"Q1": [make_tender("ref:1", closing_date=past)]}, collection)
+
+    summary = ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+
+    assert summary.reopened == 1
+    assert collection.find_one({"dedup_key": "ref:1"})["reopened"] is True
+
+
+def test_a_live_tender_seen_again_is_not_a_reopen(collection):
+    ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+    summary = ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+    assert summary.reopened == 0
+    assert collection.find_one({"dedup_key": "ref:1"})["reopened"] is False
+
+
+def test_a_closed_tender_that_never_returns_stays_in_the_database(collection):
+    ingest_batch({"Q1": [make_tender("ref:1", closing_date=FAR_FUTURE)]}, collection)
+    for _ in range(3):
+        ingest_batch({"Q1": []}, collection)
+    doc = collection.find_one({"dedup_key": "ref:1"})
+    assert doc is not None and doc["disappeared"] is True
+    assert [e["event"] for e in doc["status_history"]] == ["closed"]

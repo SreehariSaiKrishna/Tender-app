@@ -70,6 +70,15 @@ def get_company_documents_collection() -> Collection:
     return get_client()[settings.mongodb_db_name]["company_documents"]
 
 
+def get_text_sections_collection() -> Collection:
+    """The Documents tab's Text sections (app.text_sections, served by
+    app.api.main) - one document per section: {_id, header, text, as_on,
+    valid_until, use_in, position, updated_at}, plus one {_id: "seeded",
+    meta: true} marker once the default sections have been added."""
+    settings = get_settings()
+    return get_client()[settings.mongodb_db_name]["text_sections"]
+
+
 _stamp_transfers_indexed = False
 
 # How long an unfinished Sign & Stamp upload or an undownloaded result is kept.
@@ -118,7 +127,8 @@ def ensure_indexes() -> None:
             ("closing_date", ASCENDING),
         ]
     )
-    # Supports app.processing.cleanup's stale-closed-tender query.
+    collection.create_index("reopened")
+    # Supports the dashboard's live/closed split.
     collection.create_index([("disappeared", ASCENDING), ("closing_date", ASCENDING)])
 
     get_automation_runs_collection().create_index([("started_at", DESCENDING)])

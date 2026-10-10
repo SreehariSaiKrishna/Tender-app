@@ -99,8 +99,44 @@ def test_finished_fetch_without_text_says_documents_unreadable(collection, invok
     assert invokes == []
 
 
-def test_without_a_pipeline_function_falls_back_to_the_queue(collection, monkeypatch):
+def test_running_locally_fetches_in_process(collection, monkeypatch):
     monkeypatch.setattr(api, "get_settings", lambda: Settings(pipeline_function_name=""))
+    monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+    fetched = []
+
+    class InlineThread:
+        def __init__(self, target, args, daemon):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(api.threading, "Thread", InlineThread)
+    monkeypatch.setattr(lambda_handler, "fetch_tender_documents", lambda ids: fetched.append(ids))
+    tender = make_tender(collection)
+
+    exc = refused(tender)
+
+    assert exc.detail["fetching"] is True
+    assert fetched == [[str(tender["_id"])]]
+    assert collection.find_one({"_id": tender["_id"]})["document_text_requested_at"]
+
+
+def test_a_failed_local_fetch_is_marked_finished(collection, monkeypatch):
+    def boom(ids):
+        raise RuntimeError("browser crashed")
+
+    monkeypatch.setattr(lambda_handler, "fetch_tender_documents", boom)
+    tender = make_tender(collection)
+
+    api._fetch_documents_locally(tender["_id"])
+
+    assert collection.find_one({"_id": tender["_id"]})["document_fetch_finished_at"]
+
+
+def test_inside_lambda_without_a_pipeline_function_falls_back_to_the_queue(collection, monkeypatch):
+    monkeypatch.setattr(api, "get_settings", lambda: Settings(pipeline_function_name=""))
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "api-fn")
     tender = make_tender(collection)
 
     exc = refused(tender)

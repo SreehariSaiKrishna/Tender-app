@@ -12,7 +12,6 @@ import datetime as dt
 import json
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +21,6 @@ from app.config import Settings, load_saved_queries
 from app.database import get_automation_runs_collection
 from app.intelligence.document_summarizer import SummarizeSummary, summarize_pending_documents
 from app.intelligence.scorer import ScreenSummary, ScreeningError, get_provider, screen_tenders
-from app.processing.cleanup import CleanupSummary, cleanup_stale_closed_tenders
 from app.processing.deduplicator import IngestSummary, ingest_batch
 from app.processing.excel_reader import ExcelReadError, read_raw_rows
 from app.processing.normalizer import NormalizedTender, normalize_rows
@@ -130,7 +128,7 @@ class ScreenOutcome:
 
 
 def run_screen(
-    settings: Settings, limit: int | None = None, only_unscreened: bool = True
+    settings: Settings, limit: int | None = None, only_unscreened: bool = True, deadline: float | None = None
 ) -> ScreenOutcome:
     """Run AI screening against configured business capabilities."""
     try:
@@ -138,27 +136,8 @@ def run_screen(
     except ScreeningError as exc:
         return ScreenOutcome(error=str(exc))
 
-    summary = screen_tenders(provider=provider, limit=limit, only_unscreened=only_unscreened)
+    summary = screen_tenders(provider=provider, limit=limit, only_unscreened=only_unscreened, deadline=deadline)
     return ScreenOutcome(summary=summary)
-
-
-@dataclass
-class CleanupOutcome:
-    summary: CleanupSummary | None = None
-    error: str | None = None
-
-
-def run_cleanup(settings: Settings) -> CleanupOutcome:
-    """Delete tenders that are confirmed closed, past their closing_date by
-    the grace period, and never marked applied (see
-    app.processing.cleanup). Errors are caught here (like run_screen) so a
-    cleanup failure never fails the whole pipeline run.
-    """
-    try:
-        return CleanupOutcome(summary=cleanup_stale_closed_tenders())
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Cleanup step failed")
-        return CleanupOutcome(error=str(exc))
 
 
 @dataclass
@@ -167,10 +146,13 @@ class DocumentDownloadOutcome:
     error: str | None = None
 
 
-# Past this many seconds into a run, no new tender's documents are started -
-# leaving the rest of the Lambda's 900s for the tender in progress, the
-# summarize step and screening.
-DOCUMENT_DOWNLOAD_BUDGET_SECONDS = 600
+# No new tender's documents are started with less than this many seconds
+# left before the run's deadline - room for the one in progress (detail page,
+# file downloads, its AI summary) to finish. A fixed 600s budget from the
+# start of the run used to stand in for this, and from 2026-10-01 every
+# scheduled run overran the Lambda's 900s with it: killed before screening
+# or recording the run, retried twice by Lambda, alarm email each time.
+DOCUMENT_TENDER_HEADROOM_SECONDS = 240
 
 
 def run_document_download(
@@ -182,7 +164,7 @@ def run_document_download(
     eligible tender that doesn't have them yet, summarising each one right
     after its download (counted into `summarized`) while its files are still
     on this invocation's disk. Errors are caught here (like
-    run_screen/run_cleanup) so a failure never fails the whole pipeline run.
+    run_screen) so a failure never fails the whole pipeline run.
     """
     after_each = None
     if summarized is not None:
@@ -212,7 +194,7 @@ class DocumentSummarizeOutcome:
 
 
 def run_document_summarize(
-    settings: Settings, already: SummarizeSummary | None = None
+    settings: Settings, already: SummarizeSummary | None = None, deadline: float | None = None
 ) -> DocumentSummarizeOutcome:
     """Summarize every tender that has downloaded documents but no
     up-to-date AI summary yet - whatever wasn't already summarised right
@@ -221,7 +203,7 @@ def run_document_summarize(
     """
     already = already or SummarizeSummary()
     try:
-        summary = summarize_pending_documents(settings)
+        summary = summarize_pending_documents(settings, deadline=deadline)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Document summarize step failed")
         return DocumentSummarizeOutcome(summary=already, error=str(exc))
@@ -235,40 +217,48 @@ class PipelineSummary:
     collect_outcomes: list[DownloadOutcome] = field(default_factory=list)
     process_result: ProcessResult | None = None
     screen_outcome: ScreenOutcome | None = None
-    cleanup_outcome: CleanupOutcome | None = None
     document_download_outcome: DocumentDownloadOutcome | None = None
     document_summarize_outcome: DocumentSummarizeOutcome | None = None
     reported: bool = False
 
 
 def run_pipeline(
-    settings: Settings, include_report: bool = False, trigger: str = "manual"
+    settings: Settings, include_report: bool = False, trigger: str = "manual", deadline: float | None = None
 ) -> PipelineSummary:
-    """Run the full pipeline: collect -> process -> cleanup ->
-    download_documents -> summarize_documents -> screen -> (report).
+    """Run the full pipeline: collect -> process -> screen ->
+    download_documents -> summarize_documents -> (report).
+
+    Tenders are never deleted - a closed one stays in the database (marked
+    `disappeared`/closed) for good.
 
     This is the single function both `python main.py run` and the Lambda
     handler call, so neither duplicates the orchestration. `trigger`
     ("manual" | "scheduled") is recorded alongside the run so the dashboard's
     automation history can tell a CLI run from an EventBridge-triggered one.
+
+    `deadline` (a time.monotonic() value, the Lambda handler's from its
+    remaining time): screening and the document steps start no new tender
+    past it, so the run finishes and is recorded instead of being killed -
+    whatever is left over is picked up by the next run. None: no limit.
     """
     summary = PipelineSummary()
     started_at = dt.datetime.now(dt.timezone.utc)
-    download_deadline = time.monotonic() + DOCUMENT_DOWNLOAD_BUDGET_SECONDS
+    download_deadline = None if deadline is None else deadline - DOCUMENT_TENDER_HEADROOM_SECONDS
 
     summary.collect_outcomes = run_collection(settings)
     summary.process_result = run_process(settings, collect_outcomes=summary.collect_outcomes)
-    # Runs right after ingestion so a tender newly marked `disappeared` this
-    # same pass is already eligible for cleanup.
-    summary.cleanup_outcome = run_cleanup(settings)
-    # Runs after cleanup so this pass's eligibility_match (set during
-    # ingestion above) is already in place before deciding what to download.
+    # Before the documents: screening reads only the listing, and it's what
+    # the dashboard ranks tenders by - it mustn't wait behind (or be cut off
+    # by) a batch of slow document downloads.
+    summary.screen_outcome = run_screen(settings, deadline=deadline)
+    # Runs after ingestion so this pass's eligibility_match (set there) is already in place before deciding what to download.
     summarized_on_download = SummarizeSummary()
     summary.document_download_outcome = run_document_download(
         settings, summarized=summarized_on_download, deadline=download_deadline
     )
-    summary.document_summarize_outcome = run_document_summarize(settings, already=summarized_on_download)
-    summary.screen_outcome = run_screen(settings)
+    summary.document_summarize_outcome = run_document_summarize(
+        settings, already=summarized_on_download, deadline=deadline
+    )
 
     if include_report:
         # Phase 6 - app/reports/ is still empty; nothing to call yet.
@@ -307,7 +297,6 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
     """
     finished_at = dt.datetime.now(dt.timezone.utc)
     any_screen_error = bool(summary.screen_outcome and summary.screen_outcome.error)
-    any_cleanup_error = bool(summary.cleanup_outcome and summary.cleanup_outcome.error)
     any_document_download_error = bool(
         summary.document_download_outcome and summary.document_download_outcome.error
     )
@@ -319,7 +308,6 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
         if collection_failed(summary.collect_outcomes)
         or (summary.process_result and summary.process_result.any_failed)
         or any_screen_error
-        or any_cleanup_error
         or any_document_download_error
         or any_document_summarize_error
         else "ok"
@@ -333,7 +321,6 @@ def _persist_run(summary: PipelineSummary, started_at: dt.datetime, trigger: str
         "status": status,
         "collect_outcomes": [dataclasses.asdict(o) for o in summary.collect_outcomes],
         "process_result": dataclasses.asdict(summary.process_result) if summary.process_result else None,
-        "cleanup_outcome": dataclasses.asdict(summary.cleanup_outcome) if summary.cleanup_outcome else None,
         "document_download_outcome": (
             dataclasses.asdict(summary.document_download_outcome)
             if summary.document_download_outcome

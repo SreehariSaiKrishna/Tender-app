@@ -442,6 +442,7 @@
     color: #ffffff;
     background: var(--brand-blue);
   }
+  .new-tag.reopened-tag { background: #e8590c; }
   .title-cell .o-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
   .title-cell .o { color: var(--ink-soft); font-size: 12.5px; }
   .title-cell .loc-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; color: var(--brand-blue-deep); font-size: 12.5px; }
@@ -523,6 +524,90 @@
     color: var(--brand-blue-deep);
   }
   .checklist-btn:hover { background: var(--brand-blue-deep); color: #fff; }
+
+  /* --- Tender rows: easier to scan, and each row's actions as a card --- */
+  #tenderBody tr.tender-row:nth-child(even) { background: #f8fbfd; }
+  #tenderBody tr.tender-row td { padding-top: 16px; padding-bottom: 16px; }
+  #tenderBody tr.tender-row td:first-child { box-shadow: inset 3px 0 0 transparent; transition: box-shadow 0.12s ease; }
+  #tenderBody tr.tender-row:hover td:first-child { box-shadow: inset 3px 0 0 var(--brand-blue); }
+  #tenderBody td.title-cell .t { font-size: 13.5px; line-height: 1.4; }
+  #tenderBody td:last-child { overflow: visible; }
+  .action-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 210px;
+    padding: 8px;
+    border: 1px solid rgba(23, 43, 58, 0.09);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(23, 43, 58, 0.05);
+    cursor: default;
+  }
+  .action-card .act-main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 10px;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: filter 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+  .action-card .act-main svg { flex: none; width: 14px; height: 14px; }
+  .action-card .act-main.checklist-btn { border: 1px solid rgba(12, 124, 163, 0.35); background: rgba(17, 153, 204, 0.08); color: var(--brand-blue-deep); }
+  .action-card .act-main.checklist-btn:hover { background: var(--brand-blue-deep); color: #fff; }
+  .action-card .act-main.generate-btn { border: 1px solid transparent; background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-deep)); color: #fff; }
+  .action-card .act-main.download-btn { border: 1px solid transparent; background: linear-gradient(135deg, #34b36b, #238a4f); color: #fff; }
+  .action-card .act-main.download-btn.secondary { border: 1px solid rgba(35, 138, 79, 0.4); background: rgba(46, 173, 104, 0.08); color: #1f7a49; }
+  .action-card .act-main:hover:not(:disabled) { filter: brightness(1.06); }
+  .action-card .act-main:disabled { opacity: 0.6; cursor: default; }
+  .act-pack { display: flex; gap: 4px; }
+  .act-pack .act-main { flex: 1; min-width: 0; }
+  .act-icon {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid rgba(23, 43, 58, 0.12);
+    border-radius: 9px;
+    background: #fff;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .act-icon svg { width: 15px; height: 15px; }
+  .act-icon:hover { background: rgba(17, 153, 204, 0.1); border-color: rgba(17, 153, 204, 0.4); color: var(--brand-blue-deep); }
+  .act-icon.danger:hover { background: var(--high-bg); border-color: rgba(179, 52, 31, 0.4); color: var(--high); }
+  .act-icon:disabled { opacity: 0.6; cursor: default; }
+  .act-icon .count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--brand-blue);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 17px;
+    text-align: center;
+  }
+  .act-tools { display: flex; justify-content: space-between; gap: 4px; padding-top: 6px; border-top: 1px dashed rgba(23, 43, 58, 0.12); }
 
   /* --- Checklist page (#/checklist/{id}) --- */
   .cl-card {
@@ -610,7 +695,7 @@
 
   .stamp-preview-card { padding: 0; margin-bottom: 0; overflow: hidden; flex-direction: column; min-height: 420px; }
   .stamp-preview-card:not([hidden]) { display: flex; }
-  .stamp-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .stamp-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 340px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   /* Files and Quick apply stay put; only the page thumbnails scroll (the whole
      side scrolls only on a screen too short for that). */
   .stamp-side {
@@ -620,7 +705,7 @@
   .stamp-side > .stamp-side-block { flex: none; }
   .stamp-side > #stampRailBlock { flex: 1 1 0; min-height: 180px; }
   #stampRailBlock .stamp-rail { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 2px; margin: -2px; }
-  .stamp-file-list { max-height: 220px; overflow-y: auto; }
+  .stamp-file-list { max-height: 320px; overflow-y: auto; }
   .stamp-side-block { padding: 14px 16px; border-bottom: 1px solid var(--panel-border); display: flex; flex-direction: column; gap: 8px; }
   .stamp-side-block[hidden] { display: none; }
   .stamp-side-block h3 { margin: 0; font-size: 13px; font-weight: 700; color: var(--brand-navy); }
@@ -632,23 +717,54 @@
   .stamp-bulk-actions { display: flex; gap: 8px; margin-top: 4px; }
   .stamp-bulk-actions .cl-btn { flex: 1; justify-content: center; text-align: center; }
 
-  .stamp-file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .stamp-file-list { list-style: none; margin: 0; padding: 0 2px 0 0; display: flex; flex-direction: column; gap: 8px; }
+  /* Two rows: icon, name and size, remove - then status and actions. */
   .stamp-file {
-    display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 10px;
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start;
+    gap: 8px 10px; padding: 10px 8px 10px 12px;
     border: 1px solid var(--panel-border); border-radius: 10px; background: #fff; cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  .stamp-file:hover { border-color: var(--brand-blue); }
+  .stamp-file:hover { border-color: var(--brand-blue); box-shadow: 0 2px 8px rgba(16, 60, 100, 0.08); }
+  /* The file whose pages are on screen. */
+  .stamp-file.current { border-color: var(--brand-blue); background: #f3f9fd; box-shadow: inset 4px 0 0 var(--brand-blue); }
+  .stamp-file-foot { grid-column: 1 / -1; display: flex; gap: 8px; }
+  .stamp-file-foot > button {
+    flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 32px; padding: 0 10px; font-size: 12.5px; white-space: nowrap;
+  }
+  .stamp-file-foot > button svg { flex: none; }
+  .stamp-file-status {
+    align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-top: 3px; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    background: #f1f3f5; color: var(--ink-faint);
+  }
+  .stamp-file-status.ok { background: #ebfbee; color: #2b8a3e; }
+  .stamp-file-status.busy { background: #e7f5ff; color: var(--brand-blue-deep); }
+  .stamp-file-status.error { background: #fdecea; color: var(--high); }
+  .stamp-file-status.done { background: #2f9e44; color: #fff; }
+  .stamp-file-download.done { background: #fff; color: #2b8a3e; box-shadow: inset 0 0 0 1px #2f9e44; }
   .stamp-file-icon {
     flex: none; display: grid; place-items: center; width: 32px; height: 38px; border-radius: 6px;
     font-size: 9px; font-weight: 800; letter-spacing: 0.03em; color: #fff; background: #c92a2a;
   }
   .stamp-file-icon.img { background: #2b8a3e; }
-  .stamp-file-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .stamp-file-name { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stamp-file-icon.doc { background: #2b579a; }
+  .stamp-file-edit {
+    flex: none; font: inherit; font-size: 11.5px; font-weight: 600; height: 28px; padding: 0 12px; border-radius: 999px;
+    border: 1px solid var(--brand-blue); background: #fff; color: var(--brand-blue); cursor: pointer;
+  }
+  .stamp-file-edit:hover:not(:disabled) { background: #f3f9fd; }
+  .stamp-file-edit:disabled { opacity: 0.45; cursor: default; }
+  .stamp-file-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; align-self: center; }
+  .stamp-file-name {
+    font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.3; word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
   .stamp-file-meta { font-size: 11.5px; color: var(--ink-faint); }
-  .stamp-file-meta .ok { color: #2f9e44; font-weight: 600; }
   .stamp-file-download {
-    flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: none; border-radius: 50%;
+    flex: none; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 12px;
+    border: none; border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 600;
     background: #2f9e44; color: #fff; cursor: pointer;
   }
   .stamp-file-download:hover:not(:disabled) { filter: brightness(1.1); }
@@ -656,11 +772,24 @@
   .stamp-file-download.busy { background: var(--brand-blue); opacity: 1; }
   .stamp-file-download.busy svg { animation: stamp-spin 1s linear infinite; }
   @keyframes stamp-spin { to { transform: rotate(360deg); } }
-  .stamp-download-all:not([hidden]) { display: block; width: 100%; text-align: center; padding: 8px 12px; }
-  .stamp-file-progress { font-size: 11.5px; font-weight: 600; color: var(--brand-blue-deep); }
-  .stamp-file-error { font-size: 11.5px; color: var(--high); }
+  /* "Download all": each file as its own PDF, or all of them in one. */
+  .stamp-download-all:not([hidden]) {
+    display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding: 10px;
+    border-radius: 10px; background: var(--panel-bg); border: 1px solid var(--panel-border);
+  }
+  .stamp-download-all-head { font-size: 12.5px; font-weight: 700; color: var(--brand-navy); }
+  .stamp-download-all-head.done { color: #2b8a3e; }
+  .stamp-download-all-btns { display: flex; flex-direction: column; gap: 6px; }
+  .stamp-download-all-btns .cl-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+    height: 38px; padding: 0 12px; border-radius: 8px; white-space: nowrap;
+  }
+  .stamp-download-all-btns .cl-btn svg { flex: none; }
+  .stamp-download-all-btns .cl-btn small { font-weight: 500; opacity: 0.85; }
+  .stamp-download-all-btns .cl-btn.done { background: #fff; color: #2b8a3e; border: 1px solid #2f9e44; box-shadow: none; }
+  .stamp-download-all-btns .cl-btn.done:hover:not(:disabled) { background: #ebfbee; }
   .stamp-file-remove {
-    flex: none; width: 28px; height: 28px; border: none; border-radius: 50%;
+    flex: none; width: 26px; height: 26px; margin-top: -2px; border: none; border-radius: 50%;
     background: none; color: var(--ink-faint); font-size: 18px; line-height: 1; cursor: pointer;
   }
   .stamp-file-remove:hover:not(:disabled) { background: #fdecea; color: var(--high); }
@@ -688,17 +817,31 @@
   .stamp-main { min-height: 0; overflow-y: auto; padding: 18px 22px 28px; background: var(--page-bg); }
   .stamp-preview-status { font-size: 13px; color: var(--ink-soft); }
   .stamp-preview-status:empty { display: none; }
-  .stamp-preview-status:not(:empty) { padding: 10px 14px; margin: 0 auto 14px; max-width: 780px; border-radius: 10px; background: var(--panel-bg); border: 1px solid var(--panel-border); }
+  .stamp-preview-status:not(:empty) { padding: 10px 14px; margin: 0 0 14px; border-radius: 10px; background: var(--panel-bg); border: 1px solid var(--panel-border); }
+  /* The loader while files upload, convert or render (stampState.loading). */
+  .stamp-preview-status.busy:not(:empty) {
+    position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+    font-weight: 600; color: var(--ink); border-color: var(--brand-blue); box-shadow: 0 6px 18px rgba(17, 153, 204, 0.15);
+  }
+  .stamp-preview-status.busy:not(:empty)::before {
+    content: ""; flex: none; width: 20px; height: 20px; border-radius: 50%;
+    border: 3px solid rgba(17, 153, 204, 0.2); border-top-color: var(--brand-blue); animation: stamp-spin 0.8s linear infinite;
+  }
+  /* Nothing previewed yet: the loader fills the page area. */
+  .stamp-preview-status.busy.first:not(:empty) {
+    flex-direction: column; justify-content: center; min-height: 260px; text-align: center; font-size: 14px;
+  }
+  .stamp-preview-status.busy.first:not(:empty)::before { width: 40px; height: 40px; border-width: 4px; }
   .stamp-pages { display: flex; flex-direction: column; align-items: center; gap: 26px; }
   .stamp-file-divider {
-    width: 100%; max-width: 780px; display: flex; align-items: center; gap: 10px;
+    width: 100%; display: flex; align-items: center; gap: 10px;
     font-size: 13px; color: var(--ink-soft);
   }
   .stamp-file-divider:not(:first-child) { padding-top: 22px; border-top: 1px dashed var(--panel-border); }
   .stamp-file-divider strong { color: var(--brand-navy); font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stamp-file-divider span:last-child { flex: none; }
   .stamp-file-divider .stamp-file-icon { width: 28px; height: 34px; font-size: 8.5px; }
-  .stamp-page-wrap { width: 100%; max-width: 780px; scroll-margin-top: 12px; }
+  .stamp-page-wrap { width: 100%; scroll-margin-top: 12px; }
   /* Each page's own marks, right above it. */
   .stamp-page-head {
     display: flex; flex-direction: column; gap: 10px;
@@ -910,6 +1053,278 @@
   .view-btn.live { background: var(--success); }
   .view-btn.live:hover { filter: brightness(1.08); }
   .view-btn:disabled { background: var(--ink-faint); filter: none; cursor: default; }
+  .query-row.manual-row td:first-child { font-weight: 600; }
+
+  #addTenderBtn {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-deep));
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(17, 153, 204, 0.28);
+  }
+  #addTenderBtn:hover { filter: brightness(1.08); }
+
+  /* --- Row actions on every tender (Documents, Edit, Delete, Other Tenders) --- */
+  .row-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; }
+  .row-action {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--brand-blue-deep);
+    cursor: pointer;
+  }
+  .row-action:hover { text-decoration: underline; }
+  .row-action.danger { color: var(--high); }
+  .tender-docs-btn { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--brand-blue); background: #fff; color: var(--brand-blue); cursor: pointer; }
+  .tender-docs-btn:hover { background: var(--brand-blue); color: #fff; }
+  .edited-tag { margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: rgba(17, 153, 204, 0.12); color: var(--brand-blue-deep); vertical-align: middle; }
+
+  /* --- Popups: softer backdrop, entrance animation, focus rings --- */
+  .modal-overlay {
+    background: rgba(14, 30, 41, 0.42);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: overlay-in 0.16s ease-out;
+  }
+  .modal-card {
+    border-radius: 20px;
+    border-color: rgba(23, 43, 58, 0.08);
+    box-shadow: 0 30px 70px rgba(14, 30, 41, 0.28), 0 2px 6px rgba(14, 30, 41, 0.08);
+    animation: card-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+  }
+  @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes card-in { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .modal-overlay, .modal-card { animation: none; } }
+  .modal-card input[type="text"]:focus,
+  .modal-card input[type="url"]:focus,
+  .modal-card input[type="number"]:focus,
+  .modal-card textarea:focus,
+  .date-field:focus-visible {
+    outline: none;
+    border-color: var(--brand-blue);
+    box-shadow: 0 0 0 3px rgba(17, 153, 204, 0.18);
+  }
+  .modal-actions button { transition: filter 0.12s ease, background 0.12s ease; }
+  .modal-actions button:hover:not(:disabled) { filter: brightness(1.06); }
+
+  .modal-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+  .modal-head-icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(17, 153, 204, 0.16), rgba(17, 153, 204, 0.06));
+    color: var(--brand-blue-deep);
+  }
+  .modal-head-icon svg { width: 22px; height: 22px; }
+  .modal-head-icon.danger { background: var(--high-bg); color: var(--high); }
+  .modal-head-text { flex: 1; min-width: 0; }
+  .modal-card .modal-head-text h2 { margin: 2px 0 4px; font-size: 17px; }
+  .modal-card .modal-head-text p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+  .modal-x {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--ink-soft);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .modal-x:hover { background: rgba(23, 43, 58, 0.07); color: var(--ink); }
+
+  /* --- Add / edit tender form --- */
+  .modal-card.add-tender-card { max-width: 660px; max-height: calc(100vh - 40px); overflow-y: auto; padding: 24px; }
+  .form-section {
+    border: 1px solid rgba(23, 43, 58, 0.08);
+    border-radius: 14px;
+    background: #f8fafc;
+    padding: 14px 16px 6px;
+    margin-bottom: 12px;
+  }
+  .form-section h3 {
+    margin: 0 0 10px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .add-tender-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .add-tender-grid.three { grid-template-columns: repeat(3, 1fr); }
+  .add-tender-grid .span-2 { grid-column: 1 / -1; }
+  .modal-card.add-tender-card input[type="number"],
+  .modal-card.add-tender-card input[type="url"] {
+    width: 100%;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 10px 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    margin-bottom: 10px;
+  }
+  .modal-card.add-tender-card textarea { min-height: 70px; }
+  .modal-card.add-tender-card textarea.links-input { min-height: 56px; }
+  .money-input { position: relative; }
+  .money-input span { position: absolute; left: 12px; top: 10px; font-size: 13.5px; color: var(--ink-faint); pointer-events: none; }
+  .modal-card.add-tender-card .money-input input { padding-left: 26px; }
+  .modal-card p.tender-docs-hint { font-size: 12px; margin: 0 0 10px; }
+  .field-note { font-weight: 400; color: var(--ink-faint); }
+  #addTenderCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
+  #addTenderSaveBtn { border: 1px solid transparent; background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-deep)); color: #fff; padding: 8px 20px; }
+  #addTenderSaveBtn:disabled { opacity: 0.6; cursor: default; }
+
+  .dropzone {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 16px 12px;
+    margin-bottom: 12px;
+    border: 1.5px dashed #b9cbd8;
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink-soft);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .dropzone:hover, .dropzone.dragover { border-color: var(--brand-blue); background: rgba(17, 153, 204, 0.05); }
+  .dropzone input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .dropzone svg { width: 26px; height: 26px; color: var(--brand-blue); }
+  .dropzone-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .dropzone-title u { color: var(--brand-blue-deep); }
+  .dropzone-note { font-size: 11.5px; color: var(--ink-faint); }
+  .dropzone-files { font-size: 12px; color: var(--brand-blue-deep); font-weight: 600; overflow-wrap: anywhere; }
+  .dropzone-files:empty { display: none; }
+
+  /* --- Documents popup --- */
+  .tender-docs-list { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid rgba(23, 43, 58, 0.1); border-radius: 12px; overflow: hidden; }
+  .tender-docs-list li { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 13px; border-top: 1px solid rgba(23, 43, 58, 0.08); }
+  .tender-docs-list li:first-child { border-top: none; }
+  .tender-docs-list li:hover { background: #f8fafc; }
+  .tender-docs-list li.empty-docs { color: var(--ink-faint); justify-content: center; padding: 18px; }
+  .tender-docs-list .doc-kind { flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; background: rgba(17, 153, 204, 0.12); color: var(--brand-blue-deep); }
+  .tender-docs-list .doc-kind.link { background: rgba(46, 173, 104, 0.13); color: #1f7a49; }
+  .tender-docs-list .doc-name { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+  .tender-docs-list .doc-name a, .tender-docs-list .doc-name button { border: none; background: none; padding: 0; font: inherit; color: var(--brand-blue-deep); text-decoration: none; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+  .tender-docs-list .doc-name a:hover, .tender-docs-list .doc-name button:hover { text-decoration: underline; }
+  .tender-docs-list .doc-size { flex: none; color: var(--ink-faint); font-size: 12px; }
+  .tender-docs-list .doc-remove { flex: none; border: none; background: none; color: var(--high); font-size: 12px; font-weight: 600; cursor: pointer; }
+  .tender-docs-list .doc-remove:hover { text-decoration: underline; }
+  .tender-docs-link-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .tender-docs-link-row input { flex: 1; min-width: 0; }
+  .modal-card.add-tender-card .tender-docs-link-row input[type="url"] { margin-bottom: 0; }
+  #tenderDocsLinkBtn { flex: none; font-size: 13px; font-weight: 600; padding: 0 16px; border-radius: 999px; border: 1px solid transparent; background: var(--brand-blue); color: #fff; cursor: pointer; }
+  #tenderDocsLinkBtn:disabled { opacity: 0.6; cursor: default; }
+  #tenderDocsCloseBtn { border: 1px solid transparent; background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-deep)); color: #fff; padding: 8px 22px; }
+
+  /* --- Date picker (replaces the browser's own for every date field) --- */
+  .date-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 41px;
+    margin-bottom: 10px;
+    padding: 0 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .date-field:hover { border-color: #c7d2da; }
+  .date-field svg { flex: none; width: 16px; height: 16px; color: var(--brand-blue); }
+  .date-field .date-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .date-field.empty .date-text { color: var(--ink-faint); }
+  .date-field .date-clear { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-faint); font-size: 15px; }
+  .date-field .date-clear:hover { background: rgba(23, 43, 58, 0.08); color: var(--ink); }
+  .date-field.empty .date-clear { display: none; }
+  .date-popover {
+    position: fixed;
+    z-index: 140;
+    width: 296px;
+    padding: 14px;
+    border-radius: 16px;
+    background: #fff;
+    border: 1px solid rgba(23, 43, 58, 0.08);
+    box-shadow: 0 22px 50px rgba(14, 30, 41, 0.25);
+    animation: card-in 0.16s ease-out;
+    user-select: none;
+  }
+  .date-popover-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .date-popover-title { display: flex; gap: 6px; }
+  .date-popover-title select {
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--ink);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    padding: 4px 4px;
+    cursor: pointer;
+  }
+  .date-popover-title select:hover { background: #f1f5f8; }
+  .date-nav {
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 50%;
+    background: #f1f5f8;
+    color: var(--ink);
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .date-nav:hover { background: rgba(17, 153, 204, 0.14); color: var(--brand-blue-deep); }
+  .date-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .date-grid .dow { font-size: 11px; font-weight: 700; color: var(--ink-faint); text-align: center; padding: 4px 0 6px; }
+  .date-grid button {
+    height: 36px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .date-grid button:hover { background: rgba(17, 153, 204, 0.1); }
+  .date-grid button.other { color: #b5c0ca; }
+  .date-grid button.today { box-shadow: inset 0 0 0 1.5px var(--brand-blue); font-weight: 700; }
+  .date-grid button.selected { background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-deep)); color: #fff; font-weight: 700; box-shadow: 0 4px 10px rgba(17, 153, 204, 0.35); }
+  .date-popover-foot { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(23, 43, 58, 0.08); }
+  .date-popover-foot button { border: none; background: none; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--brand-blue-deep); padding: 4px 8px; border-radius: 8px; cursor: pointer; }
+  .date-popover-foot button:hover { background: rgba(17, 153, 204, 0.1); }
+  .date-popover-foot .clear { color: var(--ink-soft); }
+
+  /* --- Toast: error variant --- */
+  .toast.error .toast-icon { background: var(--high); }
+
+  @media (max-width: 640px) {
+    .add-tender-grid, .add-tender-grid.three { grid-template-columns: 1fr; }
+    .modal-card.add-tender-card { padding: 18px 16px; }
+  }
 
   .fresh-badge {
     display: inline-flex;
@@ -1048,6 +1463,90 @@
   #editDocumentCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
   #editDocumentConfirmBtn { border: 1px solid transparent; background: var(--brand-blue); color: #fff; }
   #editDocumentConfirmBtn:disabled { opacity: 0.6; cursor: default; }
+  #wordEditCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
+  #wordEditSaveBtn { border: 1px solid transparent; background: var(--brand-blue); color: #fff; }
+  #wordEditSaveBtn:disabled { opacity: 0.6; cursor: default; }
+  /* Sign & Stamp "Edit" popup for a Word file: a page you type on, one toolbar. */
+  .modal-card.word-edit-card {
+    max-width: 1080px; height: calc(100vh - 40px); display: flex; flex-direction: column; padding: 18px 20px 16px;
+  }
+  .word-edit-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .word-edit-top h2 { margin: 0 0 2px; }
+  .word-edit-hint { font-size: 12px; color: var(--ink-faint); }
+  .word-edit-hint b { color: var(--ink-soft); font-weight: 600; }
+  .word-toolbar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 12px 0 0; padding: 6px 8px;
+    border: 1px solid var(--panel-border); border-radius: 10px 10px 0 0; background: #f7f9fb;
+  }
+  .word-tb-group { display: flex; gap: 2px; padding-right: 6px; margin-right: 2px; border-right: 1px solid var(--panel-border); }
+  .word-tb {
+    display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 7px; font: inherit; font-size: 14px;
+    border: 1px solid transparent; border-radius: 6px; background: none; color: var(--ink); cursor: pointer;
+  }
+  .word-tb:hover:not(:disabled) { background: #e8f4fa; }
+  .word-tb.on { background: #d3ecf7; border-color: #9fd3ea; color: #0b6f96; }
+  .word-tb.mixed { background: linear-gradient(135deg, transparent 50%, #d3ecf7 50%); }
+  .word-tb.text { font-size: 12.5px; font-weight: 600; color: #0b6f96; }
+  .word-tb.danger { color: var(--high); }
+  .word-tb:disabled, .word-tb-size:disabled { opacity: 0.35; cursor: default; }
+  .word-tb-size { height: 30px; font: inherit; font-size: 13px; padding: 0 4px; border: 1px solid var(--panel-border); border-radius: 6px; background: #fff; }
+  .modal-card input.word-tb-find { width: 170px; margin: 0 0 0 auto; padding: 5px 10px; font-size: 13px; height: 30px; }
+  .word-edit-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 22px 16px 40px; background: #e9edf1;
+    border: 1px solid var(--panel-border); border-top: none; border-radius: 0 0 10px 10px;
+  }
+  .word-page {
+    max-width: 780px; margin: 0 auto; padding: 48px 64px 56px; background: #fff;
+    box-shadow: 0 2px 10px rgba(23, 43, 58, 0.14); border-radius: 2px;
+    font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; color: #111;
+  }
+  .word-para { position: relative; margin: 0 -10px; }
+  .word-para[hidden] { display: none; }
+  .modal-card .word-para textarea {
+    display: block; width: 100%; min-height: 0; margin: 0; padding: 3px 10px; resize: none; overflow: hidden;
+    font-family: inherit; line-height: 1.4; color: inherit; background: transparent;
+    border: 1px solid transparent; border-radius: 4px;
+  }
+  .modal-card .word-para textarea:hover { border-color: #dfe6ec; }
+  .modal-card .word-para textarea:focus { outline: none; border-color: #9fd3ea; background: #f6fbfe; }
+  .modal-card .word-para textarea::placeholder { color: transparent; }
+  .modal-card .word-para textarea:hover::placeholder, .modal-card .word-para textarea:focus::placeholder { color: #b5c0ca; font-style: italic; font-weight: 400; }
+  .word-para.changed::before {
+    content: ""; position: absolute; left: -8px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--brand-blue);
+  }
+  .word-para.new::before { background: #2f9e44; }
+  .modal-card .word-para.deleted textarea { text-decoration: line-through; color: #a3adb7; }
+  .word-para.deleted::before { background: var(--high); }
+  .word-para-restore {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font: inherit; font-size: 11.5px; font-weight: 600;
+    padding: 2px 8px; border: 1px solid var(--high); border-radius: 999px; background: #fff; color: var(--high); cursor: pointer;
+  }
+  .word-para-tag {
+    position: absolute; right: calc(100% + 14px); top: 6px; white-space: nowrap; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-faint); background: #f1f4f7; padding: 1px 6px; border-radius: 4px;
+  }
+  .word-para-pic { position: absolute; left: calc(100% + 12px); top: 4px; font-size: 13px; }
+  .word-page-divider {
+    margin: 22px -64px 10px; padding: 4px 64px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--ink-faint); border-top: 1px dashed #cfd7de;
+  }
+  .word-edit-empty { color: var(--ink-soft); font-size: 13px; }
+  .word-edit-count { margin-right: auto; align-self: center; font-size: 12.5px; color: var(--ink-soft); font-weight: 600; }
+  .word-edit-count.unsaved { color: #b35c00; }
+  .modal-actions .word-edit-reset { border: 1px solid transparent; background: none; color: var(--ink-soft); text-decoration: underline; }
+  .word-edit-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px 4px; color: var(--ink-soft); font-size: 14px; }
+  .word-edit-loading::before, #wordEditModal.saving #wordEditSaveBtn::before {
+    content: ""; display: inline-block; width: 18px; height: 18px; border-radius: 50%; vertical-align: -3px;
+    border: 2.5px solid rgba(17, 153, 204, 0.25); border-top-color: var(--brand-blue); animation: stamp-spin 0.8s linear infinite;
+  }
+  #wordEditModal.saving #wordEditSaveBtn::before { width: 14px; height: 14px; border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; margin-right: 8px; }
+  #wordEditModal.saving .word-edit-body { opacity: 0.6; pointer-events: none; }
+  @media (max-width: 720px) {
+    .word-page { padding: 28px 22px; }
+    .word-para-tag { position: static; display: inline-block; margin: 0 0 2px 10px; }
+    .word-page-divider { margin: 18px -22px 8px; padding: 4px 22px; }
+    .modal-card input.word-tb-find { width: 100%; margin: 4px 0 0; }
+  }
   #deleteDocumentCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
   #deleteDocumentConfirmBtn { border: 1px solid transparent; background: var(--high); color: #fff; }
   #deleteDocumentConfirmBtn:disabled { opacity: 0.6; cursor: default; }
@@ -1082,19 +1581,158 @@
   #addCriterionOpenBtn:hover { filter: brightness(1.08); }
 
   /* --- Documents ---------------------------------------------------------- */
-  #documentsUploadBtn {
-    margin-left: auto;
+  /* Search + Upload, on the right of the page header. */
+  .documents-header-actions:not([hidden]) { display: flex; align-items: center; gap: 12px; margin-left: auto; flex: none; }
+  .documents-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .documents-search svg {
+    position: absolute;
+    left: 13px;
+    width: 16px;
+    height: 16px;
+    color: var(--ink-faint);
+    pointer-events: none;
+    transition: color 0.15s;
+  }
+  #documentsSearch {
+    width: 260px;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 9px 14px 9px 38px;
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    background: #f5f8fa;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  }
+  #documentsSearch::placeholder { color: var(--ink-faint); }
+  #documentsSearch:hover { border-color: #bfcfd9; }
+  #documentsSearch:focus {
+    background: #fff;
+    border-color: var(--brand-blue);
+    box-shadow: 0 0 0 3px rgba(17, 153, 204, 0.15);
+  }
+  .documents-search:focus-within svg { color: var(--brand-blue); }
+  #documentsUploadBtn, #textAddSectionBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     flex: none;
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 700;
-    padding: 8px 18px;
+    letter-spacing: 0.01em;
+    padding: 10px 20px 10px 16px;
     border: none;
     border-radius: 999px;
-    background: var(--brand-blue);
+    background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-deep) 100%);
     color: #fff;
     cursor: pointer;
+    box-shadow: 0 4px 12px rgba(17, 153, 204, 0.3);
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
   }
-  #documentsUploadBtn:hover { filter: brightness(1.08); }
+  #documentsUploadBtn svg, #textAddSectionBtn svg { width: 16px; height: 16px; flex: none; }
+  #documentsUploadBtn:hover, #textAddSectionBtn:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(17, 153, 204, 0.38);
+  }
+  #documentsUploadBtn:active, #textAddSectionBtn:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(17, 153, 204, 0.3); }
+  #documentsUploadBtn:focus-visible, #textAddSectionBtn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(17, 153, 204, 0.35); }
+  /* Documents / Text tab switch, above the page's content. */
+  .documents-tabs {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 14px;
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    background: #f5f8fa;
+  }
+  .documents-tab {
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    padding: 8px 22px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  }
+  .documents-tab:hover:not(.active) { color: var(--ink); background: #e9f0f4; }
+  .documents-tab.active {
+    background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-deep) 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(17, 153, 204, 0.3);
+  }
+  .documents-tab:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(17, 153, 204, 0.35); }
+  .documents-text-empty {
+    padding: 48px 16px;
+    border: 1px dashed var(--panel-border);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink-faint);
+    text-align: center;
+  }
+  /* Documents > Text: editable company text sections */
+  #textSectionsList { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  #textSectionsList > .documents-text-empty { grid-column: 1 / -1; }
+  .text-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 16px 18px;
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    background: var(--panel-bg);
+  }
+  .text-section.is-empty { border-style: dashed; }
+  .text-section-head { display: flex; align-items: flex-start; gap: 10px; }
+  .text-section-head h3 { margin: 0; flex: 1; font-size: 14.5px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+  .text-section-dates-row { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-soft); }
+  .text-section-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-left: 4px; }
+  .text-section-badge.expired { background: #fde8e8; color: #b42318; }
+  .text-section-badge.expiring { background: #fff4e0; color: #9a5b00; }
+  .text-section-body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .text-section.is-empty .text-section-body { color: var(--ink-faint); font-style: italic; }
+  .text-section-updated { margin-top: auto; font-size: 11.5px; color: var(--ink-faint); }
+  .modal-card.text-section-card { max-width: 620px; max-height: calc(100vh - 40px); overflow-y: auto; }
+  .modal-card.text-section-card textarea { min-height: 200px; }
+  .text-section-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+  .modal-card input[type="date"] {
+    width: 100%;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 8px 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .text-section-use-in { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; color: var(--ink); }
+  .text-section-use-in label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  #textSectionCancelBtn { border: 1px solid var(--panel-border); background: #fff; color: var(--ink-soft); }
+  #textSectionSaveBtn { border: 1px solid transparent; background: var(--brand-blue); color: #fff; }
+  #textSectionSaveBtn:disabled { opacity: 0.6; cursor: default; }
+  @media (max-width: 640px) {
+    #textSectionsList { grid-template-columns: 1fr; }
+    .text-section-dates, .text-section-use-in { grid-template-columns: 1fr; }
+  }
   /* Sign & Stamp's Choose file / Download, on the right of the page header. */
   .stamp-header-actions:not([hidden]) { display: flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
   .stamp-header-actions button {
@@ -1328,6 +1966,72 @@
   /* Desktop: the menu toggle doesn't exist, the menu is the sidebar. */
   .nav-toggle { display: none; }
 
+  /* Desktop: the sidebar folds down to a thin ribbon. The toggle is a round
+     knob riding the sidebar's right edge, so it follows the edge as it
+     moves (it lives outside the sidebar, whose scrolling would clip it).
+     Remembered per browser; "[" also toggles. */
+  .shell { --sb-w: 232px; --sb-ease: cubic-bezier(0.65, 0, 0.35, 1); }
+  .shell.sidebar-collapsed { --sb-w: 14px; }
+  .sidebar-collapse {
+    position: fixed; z-index: 60;
+    top: 46px; left: calc(20px + var(--sb-w) - 16px);
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; padding: 0;
+    border: 0; border-radius: 50%;
+    background: #fff; color: var(--brand-blue-deep); cursor: pointer;
+    box-shadow: 0 0 0 2px rgba(17, 153, 204, 0.55), 0 4px 14px rgba(23, 43, 58, 0.22);
+    transition: left 0.35s var(--sb-ease), transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.25s ease;
+  }
+  .sidebar-collapse:hover {
+    background: linear-gradient(135deg, #19a7dc, var(--brand-blue-deep));
+    color: #fff;
+    transform: scale(1.1);
+    box-shadow: 0 0 0 4px rgba(17, 153, 204, 0.22), 0 6px 20px rgba(17, 153, 204, 0.45);
+  }
+  .sidebar-collapse:active { transform: scale(0.94); }
+  .sidebar-collapse:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 4px; }
+  .sidebar-collapse svg { transition: transform 0.45s var(--sb-ease); }
+  .sidebar-collapse .chev-2 { transition: transform 0.25s ease, opacity 0.25s ease; opacity: 0.45; }
+  .sidebar-collapse:hover .chev-2 { transform: translateX(-3px); opacity: 1; }
+  /* Tooltip pill to the knob's right. */
+  .sidebar-collapse::after {
+    content: attr(data-tip);
+    position: absolute; left: calc(100% + 12px); top: 50%;
+    transform: translate(-6px, -50%);
+    padding: 6px 10px; border-radius: 8px;
+    background: #1d2f3b; color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(23, 43, 58, 0.25);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .sidebar-collapse:hover::after, .sidebar-collapse:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
+  /* Folded: arrow turns around, and a soft ring breathes so the knob is
+     easy to find again. */
+  .shell.sidebar-collapsed .sidebar-collapse svg { transform: rotate(180deg); }
+  .shell.sidebar-collapsed .sidebar-collapse:hover .chev-2 { transform: translateX(-3px); }
+  .shell.sidebar-collapsed .sidebar-collapse::before {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(17, 153, 204, 0.5);
+    animation: sb-breathe 2.4s ease-out infinite;
+  }
+  @keyframes sb-breathe {
+    0% { box-shadow: 0 0 0 0 rgba(17, 153, 204, 0.5); }
+    70%, 100% { box-shadow: 0 0 0 12px rgba(17, 153, 204, 0); }
+  }
+  @media (min-width: 861px) {
+    .sidebar { width: var(--sb-w); transition: width 0.35s var(--sb-ease), padding 0.35s var(--sb-ease), background 0.2s ease; }
+    /* Fixed content width, so the menu clips as it folds instead of reflowing. */
+    .sidebar .brand, .nav-menu { min-width: 204px; transition: opacity 0.2s ease; }
+    .shell.sidebar-collapsed .sidebar { padding: 22px 0; overflow: hidden; cursor: pointer; }
+    .shell.sidebar-collapsed .sidebar:hover { background: #557a8f; }
+    .shell.sidebar-collapsed .sidebar .brand,
+    .shell.sidebar-collapsed .nav-menu { opacity: 0; visibility: hidden; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar, .sidebar-collapse, .sidebar-collapse svg { transition: none; }
+    .shell.sidebar-collapsed .sidebar-collapse::before { animation: none; }
+  }
+
   /* --- Tablets and phones: top bar + menu, page scrolls, tables as cards --- */
   @media (max-width: 860px) {
     .shell { flex-direction: column; align-items: stretch; padding: 0 0 20px; gap: 12px; }
@@ -1337,6 +2041,7 @@
       display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
       padding: 10px 12px; border-radius: 0 0 14px 14px; overflow: visible;
     }
+    .sidebar-collapse { display: none; }
     .sidebar .brand { padding: 0; margin: 0; border: 0; }
     .sidebar .brand img { width: 118px; }
     .nav-toggle {
@@ -1471,7 +2176,11 @@
     .row-action-btn { min-height: 32px; }
     .actions-menu-btn { min-width: 40px; min-height: 36px; }
 
-    #tendersRefreshBtn, #automationRefreshBtn, #addCriterionOpenBtn, #documentsUploadBtn { margin-left: 0; width: 100%; min-height: 42px; text-align: center; }
+    #tendersRefreshBtn, #automationRefreshBtn, #addCriterionOpenBtn { margin-left: 0; width: 100%; min-height: 42px; text-align: center; }
+    .documents-header-actions:not([hidden]) { margin-left: 0; width: 100%; flex-wrap: wrap; }
+    .documents-search { flex: 1 1 100%; }
+    #documentsSearch { width: 100%; }
+    #documentsUploadBtn, #textAddSectionBtn { width: 100%; min-height: 42px; justify-content: center; }
     .stamp-header-actions:not([hidden]) { margin-left: 0; width: 100%; flex-wrap: wrap; }
     .stamp-header-actions button { flex: 1 1 40%; min-height: 42px; }
     .stamp-steps { grid-template-columns: 1fr; }
@@ -1529,7 +2238,7 @@
     </div>
     <div class="si-facts">
       <span><i class="si-dot"></i>Saved TenderDetail searches</span>
-      <span><i class="si-dot"></i><span>Checked at <b>08:00</b> &amp; <b>18:00</b> IST</span></span>
+      <span><i class="si-dot"></i><span>Checked at <b>08:00</b>, <b>13:00</b> &amp; <b>18:00</b> IST</span></span>
       <span><i class="si-dot"></i>Two-step sign-in</span>
     </div>
   </aside>
@@ -1666,6 +2375,12 @@
   </div>
   </div><!-- /.nav-menu -->
 </nav>
+<button class="sidebar-collapse" id="sidebarCollapse" aria-expanded="true" aria-label="Hide sidebar" data-tip="Hide sidebar">
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M13 6l-6 6 6 6"/>
+    <path class="chev-2" d="M19 6l-6 6 6 6"/>
+  </svg>
+</button>
 
 <div class="main">
 <header id="pageHeader">
@@ -1676,7 +2391,22 @@
   <button id="tendersRefreshBtn" hidden>Refresh</button>
   <button id="automationRefreshBtn" hidden>Refresh</button>
   <button id="addCriterionOpenBtn" hidden>+ Add Criteria</button>
-  <button id="documentsUploadBtn" hidden>+ Upload Document</button>
+  <div class="documents-header-actions" id="documentsHeaderActions" hidden>
+    <label class="documents-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="documentsSearch" placeholder="Search documents..." autocomplete="off" aria-label="Search documents">
+    </label>
+    <button id="documentsUploadBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+      Upload Document
+    </button>
+  </div>
+  <div class="documents-header-actions" id="textHeaderActions" hidden>
+    <button id="textAddSectionBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      Add Section
+    </button>
+  </div>
   <div class="stamp-header-actions" id="stampHeaderActions" hidden>
     <button id="stampViewDocsBtn">View documents</button>
     <button id="stampCloseBtn" title="Remove every file so you can start again" hidden>Clear all</button>
@@ -1717,11 +2447,15 @@
         Back
       </button>
       <div class="drill-heading" id="drillHeading"></div>
+      <button id="addTenderBtn" hidden>+ Add Tender</button>
     </div>
 
     <div class="controls">
       <label class="checkbox-label">
         <input type="checkbox" id="filterClosingSoon"> Closing within 7 days
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="filterReopened"> Reopened only
       </label>
       <input type="search" id="filterSearch" placeholder="Search tenders..." style="margin-left: auto;">
     </div>
@@ -1823,7 +2557,7 @@
 <!-- Sign & Stamp tab: POST /stamp-document/jobs - nothing is kept -->
 <div id="stampPage" hidden>
   <!-- Add files / Download also live in the page header (#stampHeaderActions). -->
-  <input type="file" id="stampFile" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg" multiple hidden>
+  <input type="file" id="stampFile" accept="application/pdf,.pdf,image/png,image/jpeg,.png,.jpg,.jpeg,.docx,.doc,.odt,.rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" multiple hidden>
   <div class="stamp-error" id="stampError"></div>
 
   <!-- Before any file is chosen: a drop zone and what happens next. -->
@@ -1831,13 +2565,13 @@
     <div class="stamp-drop-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 17v-6"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5"/></svg>
     </div>
-    <h2>Drop PDFs or images here</h2>
-    <p class="stamp-drop-sub">PDF, JPEG or PNG &middot; any size &middot; as many files as you need</p>
+    <h2>Drop PDFs, Word files or images here</h2>
+    <p class="stamp-drop-sub">PDF, Word, JPEG or PNG &middot; any size &middot; as many files as you need</p>
     <button class="cl-btn primary stamp-drop-btn" id="stampDropChooseBtn">Choose files</button>
     <ol class="stamp-steps">
       <li><b>1</b><span><strong>Add your files</strong>Every page shows up, in order, grouped by file.</span></li>
       <li><b>2</b><span><strong>Pick the marks</strong>Letterhead, signature and stamp &ndash; for all pages at once, or page by page. Drag a signature or stamp to move it.</span></li>
-      <li><b>3</b><span><strong>Download</strong>Each marked file gets a download button in the Files list - it comes back as the same kind of file.</span></li>
+      <li><b>3</b><span><strong>Download</strong>Each marked file gets a download button in the Files list - it comes back as the same kind of file (a Word file as a PDF, its layout unchanged).</span></li>
     </ol>
   </div>
 
@@ -1853,8 +2587,15 @@
           </div>
           <div class="stamp-summary" id="stampSummary"></div>
           <ul class="stamp-file-list" id="stampFileList"></ul>
-          <button class="cl-btn success stamp-download-all" id="stampDownloadAllBtn" hidden
-              title="Download every marked file - each as its own PDF, images included">Download all marked as PDFs</button>
+          <div class="stamp-download-all" id="stampDownloadAll" hidden>
+            <div class="stamp-download-all-head" id="stampDownloadAllHead">Download all marked files</div>
+            <div class="stamp-download-all-btns">
+              <button class="cl-btn success" id="stampDownloadAllBtn"
+                  title="Every marked file as its own PDF - one download each, images included">Separate PDFs</button>
+              <button class="cl-btn success" id="stampDownloadCombinedBtn"
+                  title="Every marked file merged into one PDF, in the order listed above">All in one PDF</button>
+            </div>
+          </div>
         </section>
         <section class="stamp-side-block" id="stampBulk" hidden>
           <h3>Quick apply</h3>
@@ -1890,6 +2631,13 @@
 </div><!-- /stampPage -->
 
 <div id="documentsPage" hidden>
+  <div class="documents-tabs" role="tablist" aria-label="Documents sections">
+    <button class="documents-tab active" id="documentsTabFiles" role="tab" aria-selected="true"
+            aria-controls="documentsFilesPanel" data-tab="files">Documents</button>
+    <button class="documents-tab" id="documentsTabText" role="tab" aria-selected="false"
+            aria-controls="documentsTextPanel" data-tab="text">Text</button>
+  </div>
+  <div id="documentsFilesPanel" role="tabpanel" aria-labelledby="documentsTabFiles">
   <div class="table-wrap scroll-table-wrap">
     <table>
       <thead>
@@ -1905,6 +2653,10 @@
         <tr><td colspan="5" class="loading">Loading...</td></tr>
       </tbody>
     </table>
+  </div>
+  </div><!-- /documentsFilesPanel -->
+  <div id="documentsTextPanel" role="tabpanel" aria-labelledby="documentsTabText" hidden>
+    <div id="textSectionsList"><div class="documents-text-empty">Loading...</div></div>
   </div>
 </div><!-- /documentsPage -->
 
@@ -1983,6 +2735,34 @@
   </div>
 </div>
 
+<!-- Text section modal: Documents > Text's "+ Add section" and each section's Edit -->
+<div class="modal-overlay" id="textSectionModal" hidden>
+  <div class="modal-card text-section-card">
+    <h2 id="textSectionTitle">Add a section</h2>
+    <label class="modal-field-label" for="textSectionHeader">Header <span class="required-mark">*</span></label>
+    <input type="text" id="textSectionHeader" placeholder="e.g. Bank Details">
+    <label class="modal-field-label" for="textSectionText">Text</label>
+    <textarea id="textSectionText" placeholder="Type the text exactly as it should appear in bid documents. Leave it empty and the AI skips this section."></textarea>
+    <div class="text-section-dates">
+      <div>
+        <label class="modal-field-label" for="textSectionAsOn">As on date</label>
+        <input type="date" id="textSectionAsOn">
+      </div>
+      <div>
+        <label class="modal-field-label" for="textSectionValidUntil">Valid until (optional)</label>
+        <input type="date" id="textSectionValidUntil">
+      </div>
+    </div>
+    <span class="modal-field-label">Use in</span>
+    <div class="text-section-use-in" id="textSectionUseIn"></div>
+    <div class="modal-error" id="textSectionError"></div>
+    <div class="modal-actions">
+      <button id="textSectionCancelBtn">Cancel</button>
+      <button id="textSectionSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Delete-document confirmation modal: shown when a document's Delete button is clicked -->
 <div class="modal-overlay" id="deleteDocumentModal" hidden>
   <div class="modal-card">
@@ -2032,6 +2812,50 @@
   </div>
 </div>
 
+<!-- Sign & Stamp "Edit text" for a Word file - openWordEditor() -->
+<div class="modal-overlay" id="wordEditModal" hidden>
+  <div class="modal-card word-edit-card" role="dialog" aria-modal="true" aria-labelledby="wordEditTitle">
+    <div class="word-edit-top">
+      <div>
+        <h2 id="wordEditTitle">Edit document</h2>
+        <div class="word-edit-hint">Click any line and type. <b>Enter</b> new paragraph &middot; <b>Shift+Enter</b> line break &middot;
+          <b>Ctrl+B/I/U</b> formatting &middot; <b>Ctrl+S</b> save</div>
+      </div>
+      <button class="stamp-docs-close" id="wordEditCloseBtn" aria-label="Close">&times;</button>
+    </div>
+    <!-- Acts on the paragraph the cursor is in (wordEditState.current). -->
+    <div class="word-toolbar" id="wordToolbar" role="toolbar" aria-label="Formatting">
+      <span class="word-tb-group">
+        <button type="button" class="word-tb" data-tb="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" class="word-tb" data-tb="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" class="word-tb" data-tb="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+      </span>
+      <span class="word-tb-group">
+        <button type="button" class="word-tb" data-tb-align="left" title="Align left"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><rect x="1" y="2" width="14" height="1.8" rx=".9"/><rect x="1" y="6" width="9" height="1.8" rx=".9"/><rect x="1" y="10" width="14" height="1.8" rx=".9"/><rect x="1" y="14" width="9" height="1.8" rx=".9"/></svg></button>
+        <button type="button" class="word-tb" data-tb-align="center" title="Centre"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><rect x="1" y="2" width="14" height="1.8" rx=".9"/><rect x="3.5" y="6" width="9" height="1.8" rx=".9"/><rect x="1" y="10" width="14" height="1.8" rx=".9"/><rect x="3.5" y="14" width="9" height="1.8" rx=".9"/></svg></button>
+        <button type="button" class="word-tb" data-tb-align="right" title="Align right"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><rect x="1" y="2" width="14" height="1.8" rx=".9"/><rect x="6" y="6" width="9" height="1.8" rx=".9"/><rect x="1" y="10" width="14" height="1.8" rx=".9"/><rect x="6" y="14" width="9" height="1.8" rx=".9"/></svg></button>
+        <button type="button" class="word-tb" data-tb-align="justify" title="Justify"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><rect x="1" y="2" width="14" height="1.8" rx=".9"/><rect x="1" y="6" width="14" height="1.8" rx=".9"/><rect x="1" y="10" width="14" height="1.8" rx=".9"/><rect x="1" y="14" width="9" height="1.8" rx=".9"/></svg></button>
+      </span>
+      <span class="word-tb-group">
+        <select class="word-tb-size" id="wordTbSize" title="Font size (pt)"></select>
+      </span>
+      <span class="word-tb-group">
+        <button type="button" class="word-tb text" data-tb="add" title="Add an empty paragraph below (Enter at the end of a line)">+ New line</button>
+        <button type="button" class="word-tb text danger" data-tb="delete" id="wordTbDelete" title="Delete this paragraph">Delete line</button>
+      </span>
+      <input type="search" class="word-tb-find" id="wordEditFilter" placeholder="Find…" autocomplete="off" title="Show only paragraphs with this text">
+    </div>
+    <div class="word-edit-body" id="wordEditBody"></div>
+    <div class="modal-error" id="wordEditError"></div>
+    <div class="modal-actions">
+      <span class="word-edit-count" id="wordEditCount"></span>
+      <button type="button" class="word-edit-reset" id="wordEditResetBtn" hidden>Undo all changes</button>
+      <button type="button" id="wordEditCancelBtn">Cancel</button>
+      <button type="button" id="wordEditSaveBtn">Save changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- Short "done" notice (showToast) - bottom centre, above every popup -->
 <div class="toast" id="toast" role="status" aria-live="polite" hidden>
   <span class="toast-icon" aria-hidden="true">&#10003;</span>
@@ -2041,11 +2865,156 @@
 <!-- In-app confirmation (askConfirm) - instead of the browser's own confirm() box; above other popups -->
 <div class="modal-overlay confirm-overlay" id="confirmModal" hidden>
   <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
-    <h2 id="confirmTitle"></h2>
-    <p id="confirmMessage"></p>
+    <div class="modal-head">
+      <span class="modal-head-icon danger" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      </span>
+      <div class="modal-head-text">
+        <h2 id="confirmTitle"></h2>
+        <p id="confirmMessage"></p>
+      </div>
+    </div>
     <div class="modal-actions">
       <button id="confirmCancelBtn">Cancel</button>
       <button id="confirmOkBtn"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Add / edit tender modal: a tender added by hand to Other Tenders, or any tender's details edited -->
+<div class="modal-overlay" id="addTenderModal" hidden>
+  <div class="modal-card add-tender-card" role="dialog" aria-modal="true" aria-labelledby="addTenderHeading">
+    <div class="modal-head">
+      <span class="modal-head-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
+      </span>
+      <div class="modal-head-text">
+        <h2 id="addTenderHeading">Add a tender</h2>
+        <p id="addTenderIntro">For a tender found outside the saved queries. Only the title is required - leave anything you don't know blank.</p>
+      </div>
+      <button type="button" class="modal-x" id="addTenderXBtn" aria-label="Close">&times;</button>
+    </div>
+    <form id="addTenderForm" novalidate>
+      <section class="form-section">
+        <h3>Basic details</h3>
+        <div class="add-tender-grid">
+          <div class="span-2">
+            <label class="modal-field-label" for="addTenderTitle">Title<span class="required-mark">*</span></label>
+            <input type="text" id="addTenderTitle" name="title" maxlength="500" autocomplete="off" placeholder="e.g. Digital marketing services for the tourism board">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderOrganisation">Organisation</label>
+            <input type="text" id="addTenderOrganisation" name="organisation" autocomplete="off" placeholder="Department / authority">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderRef">Tender reference no.</label>
+            <input type="text" id="addTenderRef" name="tender_ref" autocomplete="off" placeholder="e.g. GEM/2026/B/123456">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderLocation">Location</label>
+            <input type="text" id="addTenderLocation" name="location" autocomplete="off" placeholder="City">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderState">State</label>
+            <input type="text" id="addTenderState" name="state" autocomplete="off" placeholder="State">
+          </div>
+        </div>
+      </section>
+      <section class="form-section">
+        <h3>Key dates</h3>
+        <div class="add-tender-grid three">
+          <div>
+            <label class="modal-field-label" for="addTenderPublished">Published</label>
+            <input type="date" id="addTenderPublished" name="published_date">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderClosing">Closing</label>
+            <input type="date" id="addTenderClosing" name="closing_date">
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderOpening">Opening</label>
+            <input type="date" id="addTenderOpening" name="opening_date">
+          </div>
+        </div>
+      </section>
+      <section class="form-section">
+        <h3>Amounts</h3>
+        <div class="add-tender-grid three">
+          <div>
+            <label class="modal-field-label" for="addTenderValue">Tender value</label>
+            <div class="money-input"><span>₹</span><input type="number" id="addTenderValue" name="tender_value" min="0" step="any" placeholder="0"></div>
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderEmd">EMD</label>
+            <div class="money-input"><span>₹</span><input type="number" id="addTenderEmd" name="earnest_money" min="0" step="any" placeholder="0"></div>
+          </div>
+          <div>
+            <label class="modal-field-label" for="addTenderFee">Tender fee</label>
+            <div class="money-input"><span>₹</span><input type="number" id="addTenderFee" name="document_fees" min="0" step="any" placeholder="0"></div>
+          </div>
+        </div>
+      </section>
+      <section class="form-section">
+        <h3>Link &amp; scope</h3>
+        <label class="modal-field-label" for="addTenderUrl">Tender page link</label>
+        <input type="url" id="addTenderUrl" name="source_url" placeholder="https://" autocomplete="off">
+        <label class="modal-field-label" for="addTenderDescription">Description / scope</label>
+        <textarea id="addTenderDescription" name="description" placeholder="What the tender is for"></textarea>
+      </section>
+      <section class="form-section" id="addTenderDocsSection">
+        <h3>Tender documents</h3>
+        <p class="tender-docs-hint">The checklist and bid pack are built from these - the RFP / tender notice, BOQ, corrigenda. Add files, links, or both. You can add more later from <b>Documents</b> on the tender.</p>
+        <label class="dropzone" for="addTenderFiles">
+          <input type="file" id="addTenderFiles" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.html,.htm,.txt,.csv">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+          <span class="dropzone-title">Drop files here or <u>browse</u></span>
+          <span class="dropzone-note">PDF, Word, Excel, ZIP - as many as you like, any size</span>
+          <span class="dropzone-files" id="addTenderFilesList"></span>
+        </label>
+        <label class="modal-field-label" for="addTenderLinks">Document links <span class="field-note">(one per line)</span></label>
+        <textarea id="addTenderLinks" class="links-input" placeholder="https://portal.gov.in/tender/rfp.pdf"></textarea>
+      </section>
+      <div class="modal-error" id="addTenderError"></div>
+      <div class="modal-actions">
+        <button type="button" id="addTenderCancelBtn">Cancel</button>
+        <button type="submit" id="addTenderSaveBtn">Add Tender</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- A tender's own documents added by hand: uploaded files and links -->
+<div class="modal-overlay" id="tenderDocsModal" hidden>
+  <div class="modal-card add-tender-card" role="dialog" aria-modal="true" aria-labelledby="tenderDocsHeading">
+    <div class="modal-head">
+      <span class="modal-head-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+      </span>
+      <div class="modal-head-text">
+        <h2 id="tenderDocsHeading">Tender documents</h2>
+        <p id="tenderDocsSubtitle"></p>
+      </div>
+      <button type="button" class="modal-x" id="tenderDocsXBtn" aria-label="Close">&times;</button>
+    </div>
+    <ul class="tender-docs-list" id="tenderDocsList"></ul>
+    <section class="form-section">
+      <h3>Add documents</h3>
+      <label class="dropzone" for="tenderDocsFiles">
+        <input type="file" id="tenderDocsFiles" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.html,.htm,.txt,.csv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <span class="dropzone-title">Drop files here or <u>browse</u></span>
+        <span class="dropzone-note">Uploaded as soon as you choose them - as many as you like, any size</span>
+      </label>
+      <label class="modal-field-label" for="tenderDocsLink">Or add a link</label>
+      <div class="tender-docs-link-row">
+        <input type="url" id="tenderDocsLink" placeholder="https://portal.gov.in/tender/rfp.pdf" autocomplete="off">
+        <button type="button" id="tenderDocsLinkBtn">Add link</button>
+      </div>
+    </section>
+    <p class="tender-docs-hint">After adding or removing documents, generate the checklist again so it's built from the new set.</p>
+    <div class="modal-error" id="tenderDocsError"></div>
+    <div class="modal-actions">
+      <button type="button" id="tenderDocsCloseBtn">Done</button>
     </div>
   </div>
 </div>
@@ -2069,11 +3038,12 @@
 </div>
 
 <script>
-  // Local dev serves this file from 127.0.0.1/localhost against the local
-  // uvicorn backend on :8001; the deploy script bakes the real API Gateway
-  // URL into the placeholder below for anything else (e.g. CloudFront).
+  // Local dev (scripts/dev.ps1) serves this file from the uvicorn API
+  // itself, so the API is this page's own origin; the deploy script bakes the
+  // real API Gateway URL into the placeholder below for anything else (e.g.
+  // CloudFront).
   const IS_LOCAL = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  const API_BASE_URL = IS_LOCAL ? "http://127.0.0.1:8001" : "REPLACE_WITH_API_URL";
+  const API_BASE_URL = IS_LOCAL ? window.location.origin : "REPLACE_WITH_API_URL";
 
   // Login - the sign-in screens below talk to Cognito's user pool API
   // directly (USER_PASSWORD_AUTH, over HTTPS; no client secret: anything in
@@ -2567,7 +3537,20 @@
   // authorizer (before the API runs anything), so retrying with a fresh
   // token is safe even for a POST.
   async function apiFetch(url, options = {}) {
-    if (IS_LOCAL) return fetch(url, options);
+    if (IS_LOCAL) {
+      let res;
+      try {
+        res = await fetch(url, options);
+      } catch (err) {
+        throw new Error(`The local API isn't running - start it with .\\scripts\\dev.ps1 and refresh. (${err.message})`);
+      }
+      // A page served by anything but dev.ps1 (e.g. a bare python -m
+      // http.server) has no API behind it: it answers API paths with 404/501.
+      if ((res.status === 404 || res.status === 501) && !(res.headers.get("content-type") || "").includes("json")) {
+        throw new Error("This page isn't being served by the API - stop that server and run .\\scripts\\dev.ps1 instead.");
+      }
+      return res;
+    }
     const send = async () => {
       if (!auth.accessToken || Date.now() > auth.expiresAt - 2 * 60000) await refreshTokens();
       return fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${auth.accessToken}` } });
@@ -2611,6 +3594,7 @@
   let automationLoaded = false;
   let eligibilityLoaded = false;
   let documentsLoaded = false;
+  let documentsTab = "files"; // Documents page's open tab: "files" or "text"
   let tendersLoaded = false;
 
   const el = (id) => document.getElementById(id);
@@ -2741,17 +3725,23 @@
   }
 
   function queryRowHtml(q) {
-    const clickable = q.total > 0;
+    // Other Tenders opens even while empty - its list is where tenders are added.
+    const clickable = q.total > 0 || q.manual;
+    const lastUpdated = q.manual ? (q.total ? fmtDateTime(q.last_checked) : "—") : fmtDateTime(q.last_checked);
     return `
-      <tr class="query-row${clickable ? "" : " disabled"}" data-query="${escapeHtml(q.query_name)}" data-bucket="live">
+      <tr class="query-row${clickable ? "" : " disabled"}${q.manual ? " manual-row" : ""}" data-query="${escapeHtml(q.query_name)}" data-bucket="live" data-manual="${q.manual ? "1" : ""}">
         <td>${escapeHtml(q.query_name)}</td>
-        <td>${fmtDateTime(q.last_checked)}</td>
+        <td>${lastUpdated}</td>
         <td>${q.total}</td>
         <td>${q.eligible}</td>
         <td><span class="fresh-badge">${q.fresh}</span></td>
         <td><button class="view-btn live" ${clickable ? "" : "disabled"}>View</button></td>
       </tr>
     `;
+  }
+
+  function isManualQuery() {
+    return !!activeQuery && activeQuery.name === MANUAL_QUERY_NAME;
   }
 
   // Hides the dashboard title/subtitle while drilled into one query's
@@ -2769,9 +3759,11 @@
     skip = 0;
     statusFilter = bucket === "closed" ? "closed" : "";
     el("filterClosingSoon").checked = false;
+    el("filterReopened").checked = false;
     el("filterSearch").value = "";
     el("drillHeading").textContent =
       `${queryName} — ${bucket === "closed" ? "Closed" : "Live"} tenders`;
+    el("addTenderBtn").hidden = !isManualQuery();
     el("queryView").hidden = true;
     el("tenderView").hidden = false;
     setDrilldownChromeVisible(false);
@@ -2793,6 +3785,7 @@
     const params = new URLSearchParams({ limit: PAGE_SIZE, skip });
     if (statusFilter) params.set("status", statusFilter);
     if (el("filterClosingSoon").checked) params.set("closing_soon", "true");
+    if (el("filterReopened").checked) params.set("reopened_only", "true");
     if (activeQuery) params.set("query_name", activeQuery.name);
     const search = el("filterSearch").value.trim();
     if (search) params.set("q", search);
@@ -2818,6 +3811,574 @@
       btn.textContent = originalText;
     }
   }
+
+  // --- Other Tenders: tenders added by hand --------------------------------
+  // Must match app.api.main.MANUAL_QUERY_NAME.
+  const MANUAL_QUERY_NAME = "Other Tenders";
+
+  const TENDER_DATE_FIELDS = { addTenderPublished: "published_date", addTenderClosing: "closing_date", addTenderOpening: "opening_date" };
+  // The tender being edited, or null when adding one.
+  let editingTender = null;
+
+  function resetTenderForm() {
+    el("addTenderForm").reset();
+    // Date fields are hidden inputs behind the date picker - reset() leaves them.
+    Object.keys(TENDER_DATE_FIELDS).forEach((id) => { el(id).value = ""; });
+    el("addTenderFilesList").textContent = "";
+    el("addTenderError").textContent = "";
+    el("addTenderSaveBtn").disabled = false;
+  }
+
+  function openAddTenderModal() {
+    editingTender = null;
+    resetTenderForm();
+    el("addTenderHeading").textContent = "Add a tender";
+    el("addTenderIntro").textContent = "For a tender found outside the saved queries. Only the title is required - leave anything you don't know blank.";
+    el("addTenderDocsSection").hidden = false;
+    el("addTenderSaveBtn").textContent = "Add Tender";
+    el("addTenderModal").hidden = false;
+    el("addTenderTitle").focus();
+  }
+
+  function openEditTenderModal(t) {
+    editingTender = t;
+    resetTenderForm();
+    el("addTenderHeading").textContent = "Edit tender";
+    el("addTenderIntro").textContent = t.manually_added
+      ? "Change any of this tender's details."
+      : "Change any of this tender's details - your changes are kept when TenderDetail lists it again.";
+    el("addTenderDocsSection").hidden = true;
+    const form = el("addTenderForm");
+    for (const name of ["title", "organisation", "tender_ref", "location", "state", "source_url", "description",
+                        "tender_value", "earnest_money", "document_fees"]) {
+      form.elements[name].value = t[name] ?? "";
+    }
+    for (const [id, name] of Object.entries(TENDER_DATE_FIELDS)) {
+      el(id).value = t[name] ? isoDay(t[name]) : "";
+    }
+    el("addTenderSaveBtn").textContent = "Save changes";
+    el("addTenderModal").hidden = false;
+    el("addTenderTitle").focus();
+  }
+
+  // A stored UTC-midnight date as YYYY-MM-DD.
+  function isoDay(iso) {
+    return new Date(iso).toISOString().slice(0, 10);
+  }
+
+  function closeAddTenderModal() {
+    el("addTenderModal").hidden = true;
+    closeDatePicker();
+  }
+
+  async function submitAddTender(e) {
+    e.preventDefault();
+    if (editingTender) return submitEditTender();
+    const form = el("addTenderForm");
+    const body = {};
+    for (const [key, value] of new FormData(form).entries()) {
+      const text = String(value).trim();
+      if (!text) continue;
+      body[key] = ["tender_value", "earnest_money", "document_fees"].includes(key) ? Number(text) : text;
+    }
+    if (!body.title) {
+      el("addTenderError").textContent = "Enter the tender's title.";
+      el("addTenderTitle").focus();
+      return;
+    }
+    for (const key of ["tender_value", "earnest_money", "document_fees"]) {
+      if (key in body && !(body[key] >= 0)) {
+        el("addTenderError").textContent = "Amounts must be numbers of 0 or more.";
+        return;
+      }
+    }
+    const files = [...el("addTenderFiles").files];
+    const links = el("addTenderLinks").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+    const badLink = links.find((link) => !/^https?:\/\/\S+$/i.test(link));
+    if (badLink) {
+      el("addTenderError").textContent = `"${badLink}" isn't a full link - links must start with http:// or https://.`;
+      return;
+    }
+    el("addTenderError").textContent = "";
+    el("addTenderSaveBtn").disabled = true;
+    el("addTenderSaveBtn").textContent = "Adding…";
+    let tender = null;
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenders/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw await checklistError(res);
+      tender = await res.json();
+      const failed = await addTenderDocuments(tender.id, files, links, (text) => {
+        el("addTenderSaveBtn").textContent = text;
+      });
+      closeAddTenderModal();
+      if (failed.length) {
+        showToast(`Tender added, but ${failed.length} document(s) couldn't be added: ${failed.join("; ")}. Add them from Documents on the tender.`, "error");
+      } else {
+        showToast("Tender added to Other Tenders.");
+      }
+      if (isManualQuery()) { skip = 0; loadTenders(); }
+      else showTenders(MANUAL_QUERY_NAME, "live");
+    } catch (err) {
+      console.error("Failed to add tender:", err);
+      el("addTenderError").textContent = err.fromServer
+        ? err.message
+        : `Couldn't add the tender - the API at ${API_BASE_URL} didn't respond as expected.`;
+      el("addTenderSaveBtn").disabled = false;
+      el("addTenderSaveBtn").textContent = "Add Tender";
+    }
+  }
+
+  async function uploadTenderDocument(tenderId, file) {
+    const { uploadId, parts } = await uploadInParts(file);
+    const res = await apiFetch(`${API_BASE_URL}/tenders/${tenderId}/manual-documents/uploads/${uploadId}/finish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts, filename: file.name, content_type: file.type || null }),
+    });
+    if (!res.ok) throw await checklistError(res);
+    return res.json();
+  }
+
+  async function addTenderDocumentLink(tenderId, url) {
+    const res = await apiFetch(`${API_BASE_URL}/tenders/${tenderId}/manual-documents/links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw await checklistError(res);
+    return res.json();
+  }
+
+  // One at a time, so a failure names its document; returns what failed.
+  async function addTenderDocuments(tenderId, files, links, onStatus = () => {}) {
+    const failed = [];
+    const total = files.length + links.length;
+    let n = 0;
+    for (const file of files) {
+      onStatus(`Uploading ${++n} of ${total}…`);
+      try {
+        await uploadTenderDocument(tenderId, file);
+      } catch (err) {
+        failed.push(`${file.name} (${err.message})`);
+      }
+    }
+    for (const url of links) {
+      onStatus(`Adding link ${++n} of ${total}…`);
+      try { await addTenderDocumentLink(tenderId, url); } catch (err) { failed.push(`${url} (${err.message})`); }
+    }
+    return failed;
+  }
+
+  // --- Documents of one hand-added tender ---
+  let tenderDocsId = null;
+  let tenderDocsChanged = false;
+
+  function fmtSize(bytes) {
+    if (bytes == null) return "";
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function renderTenderDocs(data) {
+    const docs = data.documents || [];
+    el("tenderDocsList").innerHTML = docs.length
+      ? docs.map((d) => `
+          <li>
+            <span class="doc-kind${d.kind === "link" ? " link" : ""}">${d.kind === "link" ? "LINK" : "FILE"}</span>
+            <span class="doc-name">${d.kind === "link"
+              ? `<a href="${escapeAttr(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`
+              : `<button type="button" data-download="${escapeAttr(d.id)}" data-filename="${escapeAttr(d.filename)}">${escapeHtml(d.filename)}</button>`}</span>
+            <span class="doc-size">${fmtSize(d.size)}</span>
+            <button type="button" class="doc-remove" data-remove="${escapeAttr(d.id)}">Remove</button>
+          </li>`).join("")
+      : '<li class="empty-docs">No documents yet - upload files or add links below.</li>';
+    const status = !docs.length ? ""
+      : data.documents_read ? " Their text has been read - the checklist uses it."
+      : " Not read yet - they're read when you generate the checklist.";
+    el("tenderDocsSubtitle").textContent =
+      `${docs.length} document${docs.length === 1 ? "" : "s"}.${status}`;
+    if (data.download_error) el("tenderDocsError").textContent = `Last read: ${data.download_error}`;
+  }
+
+  async function openTenderDocsModal(id, t) {
+    tenderDocsId = id;
+    tenderDocsChanged = false;
+    el("tenderDocsError").textContent = "";
+    el("tenderDocsLink").value = "";
+    el("tenderDocsFiles").value = "";
+    el("tenderDocsSubtitle").textContent = t ? t.title : "";
+    el("tenderDocsList").innerHTML = '<li class="empty-docs">Loading…</li>';
+    el("tenderDocsModal").hidden = false;
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${id}/manual-documents`);
+      if (!res.ok) throw await checklistError(res);
+      renderTenderDocs(await res.json());
+    } catch (err) {
+      el("tenderDocsList").innerHTML = "";
+      el("tenderDocsError").textContent = err.fromServer ? err.message : "Couldn't load the documents - try again.";
+    }
+  }
+
+  function closeTenderDocsModal() {
+    el("tenderDocsModal").hidden = true;
+    if (tenderDocsChanged) loadTenders();
+    tenderDocsId = null;
+  }
+
+  async function refreshTenderDocs() {
+    const res = await apiFetch(`${API_BASE_URL}/tenders/${tenderDocsId}/manual-documents`);
+    if (res.ok) renderTenderDocs(await res.json());
+  }
+
+  async function onTenderDocsFiles() {
+    const files = [...el("tenderDocsFiles").files];
+    if (!files.length) return;
+    el("tenderDocsError").textContent = "";
+    el("tenderDocsFiles").disabled = true;
+    const failed = await addTenderDocuments(tenderDocsId, files, [], (text) => {
+      el("tenderDocsSubtitle").textContent = text;
+    });
+    el("tenderDocsFiles").disabled = false;
+    el("tenderDocsFiles").value = "";
+    tenderDocsChanged = true;
+    await refreshTenderDocs();
+    if (failed.length) el("tenderDocsError").textContent = `Couldn't upload: ${failed.join("; ")}`;
+  }
+
+  async function onTenderDocsLink() {
+    const url = el("tenderDocsLink").value.trim();
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      el("tenderDocsError").textContent = "Enter a full link starting with http:// or https://.";
+      return;
+    }
+    el("tenderDocsError").textContent = "";
+    el("tenderDocsLinkBtn").disabled = true;
+    try {
+      renderTenderDocs(await addTenderDocumentLink(tenderDocsId, url));
+      el("tenderDocsLink").value = "";
+      tenderDocsChanged = true;
+    } catch (err) {
+      el("tenderDocsError").textContent = err.fromServer ? err.message : "Couldn't add the link - try again.";
+    } finally {
+      el("tenderDocsLinkBtn").disabled = false;
+    }
+  }
+
+  async function onTenderDocsListClick(e) {
+    const remove = e.target.closest("[data-remove]");
+    const download = e.target.closest("[data-download]");
+    if (remove) {
+      remove.disabled = true;
+      try {
+        const res = await apiFetch(`${API_BASE_URL}/tenders/${tenderDocsId}/manual-documents/${remove.dataset.remove}`, { method: "DELETE" });
+        if (!res.ok) throw await checklistError(res);
+        renderTenderDocs(await res.json());
+        tenderDocsChanged = true;
+      } catch (err) {
+        remove.disabled = false;
+        el("tenderDocsError").textContent = err.fromServer ? err.message : "Couldn't remove the document - try again.";
+      }
+    } else if (download) {
+      try {
+        const base = `${API_BASE_URL}/tenders/${tenderDocsId}/manual-documents/${download.dataset.download}`;
+        const linkRes = await apiFetch(`${base}/link`);
+        if (!linkRes.ok) throw await checklistError(linkRes);
+        const { url } = await linkRes.json();
+        if (url) { window.open(url, "_blank", "noopener"); return; }
+        const res = await apiFetch(`${base}/file`);
+        if (!res.ok) throw await checklistError(res);
+        saveBlob(await res.blob(), download.dataset.filename);
+      } catch (err) {
+        el("tenderDocsError").textContent = err.fromServer ? err.message : "Couldn't download the file - try again.";
+      }
+    }
+  }
+
+  // Edit: the same form as Add, sent whole - a blank field clears it.
+  async function submitEditTender() {
+    const form = el("addTenderForm");
+    const body = {};
+    for (const [key, value] of new FormData(form).entries()) {
+      const text = String(value).trim();
+      body[key] = !text ? null : ["tender_value", "earnest_money", "document_fees"].includes(key) ? Number(text) : text;
+    }
+    if (!body.title) {
+      el("addTenderError").textContent = "Enter the tender's title.";
+      el("addTenderTitle").focus();
+      return;
+    }
+    if (["tender_value", "earnest_money", "document_fees"].some((key) => body[key] !== null && !(body[key] >= 0))) {
+      el("addTenderError").textContent = "Amounts must be numbers of 0 or more.";
+      return;
+    }
+    el("addTenderError").textContent = "";
+    el("addTenderSaveBtn").disabled = true;
+    el("addTenderSaveBtn").textContent = "Saving…";
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenders/${editingTender.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw await checklistError(res);
+      closeAddTenderModal();
+      showToast("Tender updated.");
+      loadTenders();
+    } catch (err) {
+      console.error("Failed to edit tender:", err);
+      el("addTenderError").textContent = err.fromServer ? err.message : "Couldn't save the changes - try again.";
+      el("addTenderSaveBtn").disabled = false;
+      el("addTenderSaveBtn").textContent = "Save changes";
+    }
+  }
+
+  function onRowAction(action, id, t) {
+    if (action === "documents") openTenderDocsModal(id, t);
+    else if (action === "edit" && t) openEditTenderModal(t);
+    else if (action === "delete") deleteTender(id, t);
+    else if (action === "add-other") addToOtherTenders(id);
+    else if (action === "remove-other") removeFromOtherTenders(id, t);
+  }
+
+  // The list again, and the action's outcome - errors as a red toast.
+  async function rowRequest(url, options, okMessage, failMessage) {
+    try {
+      const res = await apiFetch(url, options);
+      if (!res.ok) throw await checklistError(res);
+      showToast(okMessage);
+    } catch (err) {
+      console.error(failMessage, err);
+      showToast(err.fromServer ? err.message : failMessage, "error");
+    }
+    loadTenders();
+  }
+
+  async function deleteTender(id, t) {
+    const title = t ? `"${t.title}"` : "This tender";
+    const handAdded = t && t.manually_added && !(t.query_matches || []).some((m) => m.query_name !== MANUAL_QUERY_NAME);
+    const ok = await askConfirm({
+      title: "Delete this tender?",
+      message: handAdded
+        ? `${title} was added by hand - it's deleted for good, with its checklist and documents.`
+        : `${title} is removed from the dashboard and won't come back when TenderDetail lists it again.`,
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
+    await rowRequest(`${API_BASE_URL}/tenders/${id}`, { method: "DELETE" }, "Tender deleted.", "Couldn't delete the tender - try again.");
+  }
+
+  async function addToOtherTenders(id) {
+    await rowRequest(`${API_BASE_URL}/tenders/${id}/other-tenders`, { method: "POST" },
+      "Added to Other Tenders.", "Couldn't add it to Other Tenders - try again.");
+  }
+
+  async function removeFromOtherTenders(id, t) {
+    const ok = await askConfirm({
+      title: "Remove from Other Tenders?",
+      message: `"${t ? t.title : "This tender"}" stays in the saved queries that found it - it's only taken out of Other Tenders.`,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    await rowRequest(`${API_BASE_URL}/tenders/${id}/manual`, { method: "DELETE" },
+      "Removed from Other Tenders.", "Couldn't remove it - try again.");
+  }
+
+  // --- Drag-and-drop file zones ---
+  function setupDropzone(input, onFiles) {
+    const zone = input.closest(".dropzone");
+    ["dragenter", "dragover"].forEach((type) => zone.addEventListener(type, (e) => {
+      e.preventDefault();
+      zone.classList.add("dragover");
+    }));
+    ["dragleave", "drop"].forEach((type) => zone.addEventListener(type, () => zone.classList.remove("dragover")));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (!e.dataTransfer.files.length) return;
+      input.files = e.dataTransfer.files;
+      onFiles();
+    });
+    input.addEventListener("change", onFiles);
+  }
+
+  function showChosenFiles() {
+    const files = [...el("addTenderFiles").files];
+    el("addTenderFilesList").textContent = files.length
+      ? `${files.length} file${files.length === 1 ? "" : "s"}: ${files.map((f) => f.name).join(", ")}`
+      : "";
+  }
+
+  // --- Date picker: every date field gets a calendar popover in place of
+  // the browser's own. The <input type="date"> becomes a hidden input that
+  // keeps its id/name and YYYY-MM-DD value, so forms and code that set or
+  // read .value work unchanged; the button in front shows the date.
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const CALENDAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>';
+  let datePicker = null; // { input, button, popover, view: Date }
+
+  function parseDay(value) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+
+  function dayValue(d) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+
+  function enhanceDateInput(input) {
+    const valueProp = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    input.type = "hidden";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "date-field empty";
+    button.innerHTML = `${CALENDAR_SVG}<span class="date-text"></span><span class="date-clear" title="Clear" aria-label="Clear date">&times;</span>`;
+    input.after(button);
+    const label = document.querySelector(`label[for="${input.id}"]`);
+    if (label) label.addEventListener("click", (e) => { e.preventDefault(); button.focus(); openDatePicker(input, button); });
+    const render = () => {
+      const d = parseDay(valueProp.get.call(input));
+      button.classList.toggle("empty", !d);
+      button.querySelector(".date-text").textContent = d
+        ? d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", weekday: "short" })
+        : "Select date";
+    };
+    // Whoever sets .value (a form fill, a reset) updates the button too.
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get() { return valueProp.get.call(input); },
+      set(v) { valueProp.set.call(input, v); render(); },
+    });
+    render();
+    button.addEventListener("click", (e) => {
+      if (e.target.closest(".date-clear")) {
+        input.value = "";
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        closeDatePicker();
+        return;
+      }
+      if (datePicker && datePicker.input === input) closeDatePicker();
+      else openDatePicker(input, button);
+    });
+    button.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") { e.preventDefault(); openDatePicker(input, button); }
+    });
+  }
+
+  function openDatePicker(input, button) {
+    closeDatePicker();
+    const popover = document.createElement("div");
+    popover.className = "date-popover";
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "Choose a date");
+    document.body.appendChild(popover);
+    const selected = parseDay(input.value);
+    const view = selected ? new Date(selected) : new Date();
+    view.setDate(1);
+    datePicker = { input, button, popover, view };
+    renderDatePicker();
+    positionDatePicker();
+    popover.addEventListener("click", onDatePickerClick);
+    popover.addEventListener("change", onDatePickerChange);
+  }
+
+  function positionDatePicker() {
+    if (!datePicker) return;
+    const { button, popover } = datePicker;
+    const r = button.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const height = popover.offsetHeight;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    const below = r.bottom + 6;
+    const top = below + height > window.innerHeight - 8 && r.top - height - 6 > 8 ? r.top - height - 6 : below;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${Math.max(8, top)}px`;
+  }
+
+  function renderDatePicker() {
+    const { input, popover, view } = datePicker;
+    const selected = parseDay(input.value);
+    const today = new Date();
+    const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    // Weeks start on Monday.
+    const start = new Date(view.getFullYear(), view.getMonth(), 1 - ((view.getDay() + 6) % 7));
+    const days = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const cls = [d.getMonth() !== view.getMonth() ? "other" : "", sameDay(d, today) ? "today" : "", sameDay(d, selected) ? "selected" : ""].join(" ").trim();
+      days.push(`<button type="button" class="${cls}" data-day="${dayValue(d)}" aria-label="${d.toDateString()}">${d.getDate()}</button>`);
+    }
+    const year = view.getFullYear();
+    const years = [];
+    for (let y = year - 10; y <= year + 10; y++) years.push(`<option value="${y}"${y === year ? " selected" : ""}>${y}</option>`);
+    popover.innerHTML = `
+      <div class="date-popover-head">
+        <button type="button" class="date-nav" data-nav="-1" aria-label="Previous month">&#8249;</button>
+        <div class="date-popover-title">
+          <select data-pick="month" aria-label="Month">${MONTHS.map((m, i) => `<option value="${i}"${i === view.getMonth() ? " selected" : ""}>${m}</option>`).join("")}</select>
+          <select data-pick="year" aria-label="Year">${years.join("")}</select>
+        </div>
+        <button type="button" class="date-nav" data-nav="1" aria-label="Next month">&#8250;</button>
+      </div>
+      <div class="date-grid">
+        ${["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => `<span class="dow">${d}</span>`).join("")}
+        ${days.join("")}
+      </div>
+      <div class="date-popover-foot">
+        <button type="button" class="clear" data-foot="clear">Clear</button>
+        <button type="button" data-foot="today">Today</button>
+      </div>`;
+  }
+
+  function onDatePickerClick(e) {
+    e.stopPropagation();
+    const { input, view } = datePicker;
+    const nav = e.target.closest("[data-nav]");
+    const day = e.target.closest("[data-day]");
+    const foot = e.target.closest("[data-foot]");
+    if (nav) {
+      view.setMonth(view.getMonth() + Number(nav.dataset.nav));
+      renderDatePicker();
+    } else if (day || foot) {
+      input.value = day ? day.dataset.day : foot.dataset.foot === "today" ? dayValue(new Date()) : "";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      const button = datePicker.button;
+      closeDatePicker();
+      button.focus();
+    }
+  }
+
+  function onDatePickerChange(e) {
+    const { view } = datePicker;
+    if (e.target.dataset.pick === "month") view.setMonth(Number(e.target.value));
+    if (e.target.dataset.pick === "year") view.setFullYear(Number(e.target.value));
+    renderDatePicker();
+  }
+
+  function closeDatePicker() {
+    if (!datePicker) return;
+    datePicker.popover.remove();
+    datePicker = null;
+  }
+
+  document.addEventListener("mousedown", (e) => {
+    if (datePicker && !datePicker.popover.contains(e.target) && !datePicker.button.contains(e.target)) closeDatePicker();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && datePicker) {
+      e.stopPropagation();
+      const button = datePicker.button;
+      closeDatePicker();
+      button.focus();
+    }
+  }, true);
+  window.addEventListener("resize", positionDatePicker);
+  document.addEventListener("scroll", (e) => {
+    if (datePicker && !datePicker.popover.contains(e.target)) positionDatePicker();
+  }, true);
+  document.querySelectorAll('input[type="date"]').forEach(enhanceDateInput);
 
   // --- Generate-bid-pack confirmation modal -------------------------------
   let generateTenderId = null;
@@ -2893,11 +4454,19 @@
   function renderTenders(data) {
     const body = el("tenderBody");
     if (!data.tenders.length) {
-      body.innerHTML = '<tr><td colspan="10" class="empty">No tenders match these filters.</td></tr>';
+      const emptyText = isManualQuery() && skip === 0 && !el("filterSearch").value.trim()
+        && !el("filterClosingSoon").checked && !el("filterReopened").checked
+        ? "No tenders added yet - use + Add Tender to add one."
+        : "No tenders match these filters.";
+      body.innerHTML = `<tr><td colspan="10" class="empty">${emptyText}</td></tr>`;
     } else {
       body.innerHTML = data.tenders.map((t, i) => rowHtml(t, skip + i + 1)).join("");
       body.querySelectorAll("tr.tender-row").forEach((row) => {
-        row.addEventListener("click", () => toggleDetail(row.dataset.id, data.tenders));
+        row.addEventListener("click", (e) => {
+          // A click on the actions card (between its buttons) isn't "open the row".
+          if (e.target.closest(".action-card")) return;
+          toggleDetail(row.dataset.id, data.tenders);
+        });
       });
       body.querySelectorAll(".generate-btn[data-action], .regenerate-link").forEach((btn) => {
         btn.addEventListener("click", (e) => {
@@ -2920,6 +4489,12 @@
       body.querySelectorAll(".download-btn").forEach((a) => {
         a.addEventListener("click", (e) => e.stopPropagation());
       });
+      body.querySelectorAll("[data-row-action]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onRowAction(btn.dataset.rowAction, btn.dataset.id, data.tenders.find((t) => t.id === btn.dataset.id));
+        });
+      });
     }
 
     const start = data.total === 0 ? 0 : skip + 1;
@@ -2934,7 +4509,7 @@
       <tr class="tender-row" data-id="${t.id}">
         <td>${serialNo}</td>
         <td class="title-cell">
-          <div class="t">${escapeHtml(t.title)}${isFreshTender(t) ? '<span class="new-tag">NEW</span>' : ""}</div>
+          <div class="t">${escapeHtml(t.title)}${t.edited_at ? `<span class="edited-tag" title="Edited ${escapeAttr(fmtDate(t.edited_at))}">EDITED</span>` : ""}${isFreshTender(t) ? '<span class="new-tag">NEW</span>' : ""}${t.reopened ? `<span class="new-tag reopened-tag" title="Reopened ${escapeAttr(fmtDate(t.reopened_at))}${t.reopen_count > 1 ? ` (${t.reopen_count} times)` : ""}">REOPENED</span>` : ""}</div>
           <div class="o-row">
             <span class="o">${escapeHtml(t.organisation || "")}</span>
           </div>
@@ -2954,24 +4529,59 @@
 
   // Checklist first: "Generate Checklist" until one exists, then "See
   // Checklist" plus the bid pack controls (whose PDF prints that checklist).
+  const ACTION_ICONS = {
+    checklist: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+    generate: '<path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>',
+    download: '<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+    slides: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8"/>',
+    regenerate: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+    documents: '<path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    addOther: '<path d="M3 7h6l2 2h10v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M12 12v5M9.5 14.5h5"/>',
+    removeOther: '<path d="M3 7h6l2 2h10v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9.5 14.5h5"/>',
+    delete: '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
+  };
+  function actionIcon(name) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACTION_ICONS[name]}</svg>`;
+  }
+
+  // One card per tender, in the order the work goes: the checklist, then the
+  // bid pack built from it (and its presentation), then the tools.
   function decisionCellHtml(t) {
     const checklistBtn = t.checklist_generated_at
-      ? `<button class="checklist-btn" data-id="${t.id}">See Checklist</button>`
-      : `<button class="generate-btn checklist-generate-btn" data-id="${t.id}">Generate Checklist</button>`;
+      ? `<button class="act-main checklist-btn" data-id="${t.id}">${actionIcon("checklist")}See Checklist</button>`
+      : `<button class="act-main generate-btn checklist-generate-btn" data-id="${t.id}">${actionIcon("generate")}Generate Checklist</button>`;
     let bidHtml = "";
     if (t.bid_pack_available) {
-      const generatedTitle = t.bid_generated_at ? ` title="Generated ${escapeHtml(fmtDate(t.bid_generated_at))}"` : "";
+      const generated = t.bid_generated_at ? ` (generated ${escapeHtml(fmtDate(t.bid_generated_at))})` : "";
       bidHtml = `
-        <a class="download-btn bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
-        <button class="regenerate-link" data-id="${t.id}" data-action="regenerate"${generatedTitle}>Regenerate</button>
+        <div class="act-pack">
+          <a class="act-main download-btn bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">${actionIcon("download")}Bid Pack</a>
+          <button class="act-icon regenerate-link" data-id="${t.id}" data-action="regenerate" title="Regenerate the bid pack${generated}" aria-label="Regenerate the bid pack">${actionIcon("regenerate")}</button>
+        </div>
+        ${t.presentation_available ? `<a class="act-main download-btn secondary bid-pack-link" data-id="${t.id}" data-kind="presentation" href="${API_BASE_URL}/tenders/${t.id}/presentation">${actionIcon("slides")}Presentation</a>` : ""}
       `;
     } else if (t.checklist_generated_at) {
-      bidHtml = `<button class="generate-btn" data-id="${t.id}" data-action="generate">Generate Bid Pack</button>`;
+      bidHtml = `<button class="act-main generate-btn" data-id="${t.id}" data-action="generate">${actionIcon("generate")}Generate Bid Pack</button>`;
     }
+    const docCount = (t.manual_documents || []).length;
+    const inOther = (t.query_matches || []).some((m) => m.query_name === MANUAL_QUERY_NAME);
+    const scraped = (t.query_matches || []).some((m) => m.query_name !== MANUAL_QUERY_NAME);
+    const otherAction = !inOther
+      ? `<button class="act-icon" data-row-action="add-other" data-id="${t.id}" title="Add to Other Tenders" aria-label="Add to Other Tenders">${actionIcon("addOther")}</button>`
+      : isManualQuery() && scraped
+        ? `<button class="act-icon" data-row-action="remove-other" data-id="${t.id}" title="Remove from Other Tenders (stays in its saved queries)" aria-label="Remove from Other Tenders">${actionIcon("removeOther")}</button>`
+        : "";
     return `
-      <div class="decision-actions">
+      <div class="decision-actions action-card">
         ${checklistBtn}
         ${bidHtml}
+        <div class="act-tools">
+          <button class="act-icon" data-row-action="documents" data-id="${t.id}" title="Tender documents${docCount ? ` (${docCount})` : ""}" aria-label="Tender documents">${actionIcon("documents")}${docCount ? `<span class="count">${docCount}</span>` : ""}</button>
+          <button class="act-icon" data-row-action="edit" data-id="${t.id}" title="Edit tender" aria-label="Edit tender">${actionIcon("edit")}</button>
+          ${otherAction}
+          <button class="act-icon danger" data-row-action="delete" data-id="${t.id}" title="Delete tender" aria-label="Delete tender">${actionIcon("delete")}</button>
+        </div>
       </div>
     `;
   }
@@ -2996,7 +4606,13 @@
           <dt>EMD</dt><dd>${amountCellHtml(t.earnest_money, t.document_summary?.emd_amount) ?? "Not disclosed in listing or documents"}</dd>
           <dt>Tender Fee</dt><dd>${amountCellHtml(t.document_fees, t.document_summary?.tender_fee_amount) ?? "Not disclosed in listing or documents"}</dd>
           <dt>Tender Opening Date</dt><dd>${t.opening_date ? fmtDate(t.opening_date) : (t.document_summary?.tender_opening_date ? openingDateCellHtml(t) : "Not disclosed in listing")}</dd>
-          <dt>Source</dt><dd><a href="${t.source_url}" target="_blank" rel="noopener">View on TenderDetail &rarr;</a></dd>
+          ${(t.status_history || []).length ? `<dt>Status history</dt><dd>${t.status_history.map((e) =>
+            `${e.event === "reopened" ? "Reopened" : "Closed"} on ${fmtDate(e.at)}${e.closing_date ? ` (closing ${fmtDate(e.closing_date)})` : ""}`
+          ).join("<br>")}</dd>` : ""}
+          <dt>Source</dt><dd>${t.source_url
+            ? `<a href="${escapeAttr(t.source_url)}" target="_blank" rel="noopener">${t.manually_added ? "Open tender page" : "View on TenderDetail"} &rarr;</a>`
+            : (t.manually_added ? "Added by hand - no link given" : "—")}</dd>
+          ${t.manually_added && t.description ? `<dt>Description</dt><dd>${escapeHtml(t.description)}</dd>` : ""}
           ${t.declined ? `<dt>Reject reason</dt><dd>${escapeHtml(t.decline_reason || "—")}</dd>` : ""}
         </dl>
         ${documentSummaryHtml(t)}
@@ -3164,7 +4780,8 @@
     el("tendersRefreshBtn").hidden = page !== "tenders";
     el("automationRefreshBtn").hidden = page !== "automation";
     el("addCriterionOpenBtn").hidden = page !== "eligibility";
-    el("documentsUploadBtn").hidden = page !== "documents";
+    el("documentsHeaderActions").hidden = page !== "documents" || documentsTab !== "files";
+    el("textHeaderActions").hidden = page !== "documents" || documentsTab !== "text";
     el("stampHeaderActions").hidden = page !== "stamp";
     el("navToggleLabel").textContent = document.querySelector(".nav-item.active")?.textContent || "Menu";
     setNavMenuOpen(false);
@@ -3344,8 +4961,15 @@
 
   async function loadEligibility() {
     el("eligibilityBody").innerHTML = '<tr><td colspan="4" class="loading">Loading...</td></tr>';
-    const res = await apiFetch(`${API_BASE_URL}/eligibility`);
-    const data = await res.json();
+    let data;
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/eligibility`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      data = await res.json();
+    } catch (err) {
+      el("eligibilityBody").innerHTML = `<tr><td colspan="4" class="empty">Couldn't load the eligibility criteria - ${escapeHtml(err.message)}</td></tr>`;
+      return;
+    }
     eligibilityCriteria = data.criteria || [];
     renderEligibility(eligibilityCriteria);
   }
@@ -3532,6 +5156,7 @@ ${err.message}`);
 
   // From a tender row's "Generate Checklist" - builds it, then opens it.
   async function generateChecklistFromRow(btn) {
+    const label = btn.innerHTML;
     btn.disabled = true;
     btn.textContent = "Generating…";
     try {
@@ -3545,7 +5170,7 @@ ${err.message}`);
       console.error("Failed to generate checklist:", err);
       checklistErrorAlert(err);
       btn.disabled = false;
-      btn.textContent = "Generate Checklist";
+      btn.innerHTML = label;
     }
   }
 
@@ -3757,6 +5382,7 @@ ${err.message}`);
     const t = checklistState.tender;
     const bidBtns = t.bid_pack_available
       ? `<a class="cl-btn success bid-pack-link" data-id="${t.id}" href="${API_BASE_URL}/tenders/${t.id}/bid-document">Download Bid Pack &darr;</a>
+         ${t.presentation_available ? `<a class="cl-btn bid-pack-link" data-id="${t.id}" data-kind="presentation" href="${API_BASE_URL}/tenders/${t.id}/presentation">Download Presentation &darr;</a>` : ""}
          <button class="cl-btn" id="clBidBtn" data-regenerate="1">Regenerate Bid Pack</button>`
       : `<button class="cl-btn success" id="clBidBtn">Generate Bid Pack</button>`;
     return `
@@ -3867,7 +5493,7 @@ ${err.message}`);
       items.push({
         id: null, document: "", what_to_upload: "", where: "Technical Upload", status: "Missing", source: "upload",
         document_id: null, letterhead: false, signature: true, stamp: true, notary: false, section: "",
-        format_text: "", notes: "", done: false, origin: "user",
+        reference: "", format_text: "", notes: "", done: false, origin: "user",
       });
       checklistState.expanded.clear();
       renderChecklist();
@@ -3962,6 +5588,202 @@ ${err.message}`);
 
   let documentsList = [];
 
+  // Documents / Text tabs. Search and Upload in the page header only apply
+  // to the Documents tab, so they're hidden while Text is open.
+  function showDocumentsTab(tab) {
+    documentsTab = tab;
+    for (const [id, name] of [["documentsTabFiles", "files"], ["documentsTabText", "text"]]) {
+      el(id).classList.toggle("active", tab === name);
+      el(id).setAttribute("aria-selected", String(tab === name));
+    }
+    el("documentsFilesPanel").hidden = tab !== "files";
+    el("documentsTextPanel").hidden = tab !== "text";
+    el("documentsHeaderActions").hidden = el("documentsPage").hidden || tab !== "files";
+    el("textHeaderActions").hidden = el("documentsPage").hidden || tab !== "text";
+    if (tab === "text" && !textSectionsLoaded) {
+      textSectionsLoaded = true;
+      loadTextSections();
+    }
+  }
+
+  el("documentsTabFiles").addEventListener("click", () => showDocumentsTab("files"));
+  el("documentsTabText").addEventListener("click", () => showDocumentsTab("text"));
+
+  // --- Documents > Text sections -------------------------------------------
+  // Company text kept current by hand (app.text_sections, /text-sections):
+  // a header, the text, an "as on" date, an optional expiry and which kinds
+  // of drafted bid document use it. Every bid-pack build hands them to the
+  // AI drafter, so an edit here shows in the next pack generated.
+
+  let textSectionsLoaded = false;
+  let textSections = [];
+  let textUseInOptions = [];
+  let editingTextSectionId = null;
+  const TEXT_EXPIRING_DAYS = 30;
+
+  // "2026-09-16" -> "16-09-2026", the date style the bid documents use.
+  function fmtDay(iso) {
+    return iso ? iso.split("-").reverse().join("-") : "";
+  }
+
+  function daysUntil(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const now = new Date();
+    return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+  }
+
+  async function loadTextSections() {
+    el("textSectionsList").innerHTML = '<div class="documents-text-empty">Loading...</div>';
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/text-sections`);
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      textSections = data.sections || [];
+      textUseInOptions = data.use_in_options || [];
+      renderTextSections();
+    } catch (err) {
+      console.error("Failed to load text sections:", err);
+      textSectionsLoaded = false; // try again next time the tab opens
+      el("textSectionsList").innerHTML =
+        `<div class="documents-text-empty">Couldn't load the text sections - the API at ${escapeHtml(API_BASE_URL)} didn't respond as expected.</div>`;
+    }
+  }
+
+  function renderTextSections() {
+    el("textSectionsList").innerHTML = textSections.length
+      ? textSections.map(textSectionHtml).join("")
+      : '<div class="documents-text-empty">No sections yet - use "+ Add section" to write one.</div>';
+  }
+
+  function textSectionHtml(s) {
+    const labels = Object.fromEntries(textUseInOptions.map((o) => [o.key, o.label]));
+    const chips = s.use_in.map((k) => `<span class="doc-chip">${escapeHtml(labels[k] || k)}</span>`).join("");
+    let validity = "";
+    if (s.valid_until) {
+      const days = daysUntil(s.valid_until);
+      const badge = days < 0
+        ? '<span class="text-section-badge expired">Expired</span>'
+        : days <= TEXT_EXPIRING_DAYS ? `<span class="text-section-badge expiring">${days} days left</span>` : "";
+      validity = `<span>Valid until ${fmtDay(s.valid_until)}${badge}</span>`;
+    }
+    const empty = !s.text.trim();
+    return `
+      <article class="text-section${empty ? " is-empty" : ""}">
+        <div class="text-section-head">
+          <h3>${escapeHtml(s.header)}</h3>
+          <div class="row-actions">
+            <button class="row-action-btn edit-text-section-btn" data-id="${s.id}">Edit</button>
+            <button class="row-action-btn delete-text-section-btn" data-id="${s.id}">Delete</button>
+          </div>
+        </div>
+        ${s.as_on || validity ? `<div class="text-section-dates-row">${s.as_on ? `<span>As on ${fmtDay(s.as_on)}</span>` : ""}${validity}</div>` : ""}
+        <div class="doc-chip-row">${chips}</div>
+        <p class="text-section-body">${empty ? "No text yet - the AI skips this section until you write it." : escapeHtml(s.text)}</p>
+        <div class="text-section-updated">Last edited ${fmtDateTime(s.updated_at)}</div>
+      </article>
+    `;
+  }
+
+  function openTextSectionModal(id) {
+    const s = id ? textSections.find((x) => x.id === id) : null;
+    if (id && !s) return;
+    editingTextSectionId = s ? s.id : null;
+    el("textSectionTitle").textContent = s ? "Edit section" : "Add a section";
+    el("textSectionHeader").value = s ? s.header : "";
+    el("textSectionText").value = s ? s.text : "";
+    el("textSectionAsOn").value = s?.as_on || "";
+    el("textSectionValidUntil").value = s?.valid_until || "";
+    const chosen = new Set(s ? s.use_in : ["all"]);
+    el("textSectionUseIn").innerHTML = textUseInOptions.map((o) => `
+      <label><input type="checkbox" value="${escapeHtml(o.key)}"${chosen.has(o.key) ? " checked" : ""}> ${escapeHtml(o.label)}</label>
+    `).join("");
+    el("textSectionError").textContent = "";
+    el("textSectionSaveBtn").disabled = false;
+    el("textSectionSaveBtn").textContent = "Save";
+    el("textSectionModal").hidden = false;
+    (s ? el("textSectionText") : el("textSectionHeader")).focus();
+  }
+
+  function closeTextSectionModal() {
+    editingTextSectionId = null;
+    el("textSectionModal").hidden = true;
+  }
+
+  async function saveTextSection() {
+    const header = el("textSectionHeader").value.trim();
+    if (!header) {
+      el("textSectionError").textContent = "A section needs a header.";
+      return;
+    }
+    const body = {
+      header,
+      text: el("textSectionText").value,
+      as_on: el("textSectionAsOn").value || null,
+      valid_until: el("textSectionValidUntil").value || null,
+      use_in: [...el("textSectionUseIn").querySelectorAll("input:checked")].map((c) => c.value),
+    };
+    const id = editingTextSectionId;
+    el("textSectionSaveBtn").disabled = true;
+    el("textSectionSaveBtn").textContent = "Saving…";
+    el("textSectionError").textContent = "";
+    try {
+      const res = await apiFetch(id ? `${API_BASE_URL}/text-sections/${id}` : `${API_BASE_URL}/text-sections`, {
+        method: id ? "PUT" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))).detail;
+        throw new Error(typeof detail === "string" ? detail : `Server returned ${res.status}`);
+      }
+      const saved = await res.json();
+      if (id) textSections = textSections.map((x) => (x.id === id ? saved : x));
+      else textSections.push(saved);
+      renderTextSections();
+      closeTextSectionModal();
+      showToast(`"${saved.header}" saved - it's used in the next bid pack you generate.`);
+    } catch (err) {
+      console.error("Failed to save text section:", err);
+      el("textSectionError").textContent = `Couldn't save this section - ${err.message}.`;
+      el("textSectionSaveBtn").disabled = false;
+      el("textSectionSaveBtn").textContent = "Save";
+    }
+  }
+
+  async function deleteTextSection(id) {
+    const s = textSections.find((x) => x.id === id);
+    if (!s) return;
+    const ok = await askConfirm({
+      title: `Delete "${s.header}"?`,
+      message: "The AI stops using this text in bid documents. This can't be undone.",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/text-sections/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      textSections = textSections.filter((x) => x.id !== id);
+      renderTextSections();
+      showToast(`"${s.header}" deleted.`);
+    } catch (err) {
+      console.error("Failed to delete text section:", err);
+      alert(`Couldn't delete this section - the API at ${API_BASE_URL} didn't respond as expected.\n\n${err.message}`);
+    }
+  }
+
+  el("textAddSectionBtn").addEventListener("click", () => openTextSectionModal(null));
+  el("textSectionsList").addEventListener("click", (e) => {
+    const edit = e.target.closest(".edit-text-section-btn");
+    if (edit) openTextSectionModal(edit.dataset.id);
+    const del = e.target.closest(".delete-text-section-btn");
+    if (del) deleteTextSection(del.dataset.id);
+  });
+  el("textSectionCancelBtn").addEventListener("click", closeTextSectionModal);
+  el("textSectionSaveBtn").addEventListener("click", saveTextSection);
+  el("textSectionModal").addEventListener("click", (e) => {
+    if (e.target === el("textSectionModal")) closeTextSectionModal();
+  });
+
   function fmtFileSize(bytes) {
     if (bytes == null) return "—";
     if (bytes < 1024) return `${bytes} B`;
@@ -3977,11 +5799,20 @@ ${err.message}`);
     renderDocuments(documentsList);
   }
 
+  // Filters client-side on name + filename - the whole list is already
+  // loaded, so there's no need for a server round-trip per keystroke.
   function renderDocuments(documents) {
     const body = el("documentsBody");
-    body.innerHTML = documents.length
-      ? documents.map(documentRowHtml).join("")
-      : '<tr><td colspan="5" class="empty">No documents uploaded yet.</td></tr>';
+    const query = el("documentsSearch").value.trim().toLowerCase();
+    const shown = query
+      ? documents.filter((d) =>
+          `${d.name || ""} ${d.filename || ""}`.toLowerCase().includes(query))
+      : documents;
+    body.innerHTML = shown.length
+      ? shown.map(documentRowHtml).join("")
+      : documents.length
+        ? '<tr><td colspan="5" class="empty">No documents match your search.</td></tr>'
+        : '<tr><td colspan="5" class="empty">No documents uploaded yet.</td></tr>';
 
     body.querySelectorAll(".actions-menu-btn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -4378,6 +6209,7 @@ ${err.message}`);
     previewFailed: false, // no preview - the same marks go on every page (allPagesMarks)
     downloading: new Map(),    // file -> progress text, for each file being marked for download
     downloadErrors: new Map(), // file -> why its last download failed
+    downloaded: new Map(),     // file -> its marks (marksSignature) when last downloaded
     // file -> { uploadId, parts, usedAt } - the server keeps an upload for an
     // hour after its last use, so marking the same file again skips the upload.
     uploads: new Map(),
@@ -4385,6 +6217,8 @@ ${err.message}`);
   const stampFiles = () => stampState.files;
   const isStampPdf = (file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   const isStampImage = (file) => /^image\/(png|jpeg)$/.test(file.type) || /\.(png|jpe?g)$/i.test(file.name);
+  // Word files are made PDFs first (convertWordFile), then handled like any PDF.
+  const isStampWord = (file) => /\.(docx?|odt|rtf)$/i.test(file.name);
   // Why the chosen files can't be marked, or "" when they can.
   function stampFilesProblem() {
     return stampFiles().length > STAMP_MAX_FILES ? `Choose at most ${STAMP_MAX_FILES} files at a time.` : "";
@@ -4429,11 +6263,24 @@ ${err.message}`);
     el("stampAllPages").hidden = !(hasFile && stampState.previewFailed);
     el("stampBulk").hidden = !(hasPreview() && !stampState.previewFailed);
     el("stampRailBlock").hidden = !hasPreview();
+    el("stampPreviewStatus").classList.toggle("busy", stampState.loading);
+    el("stampPreviewStatus").classList.toggle("first", stampState.loading && !stampState.pages.length);
     renderStampFiles();
     if (wasHidden && hasFile) syncScrollTableHeights();
   }
 
   // The Files list: type, name, size, pages and how many will be marked.
+  // `file`'s marks as a string - a download is only "Downloaded" while its
+  // marks are still the ones it was made with.
+  function marksSignature(file) {
+    if (stampState.previewFailed) return JSON.stringify(stampState.allPagesMarks);
+    return JSON.stringify(filePages(file).map((i) => [stampState.pageMarks[i], stampState.placements[i]]));
+  }
+
+  function isDownloaded(file) {
+    return stampState.downloaded.has(file) && stampState.downloaded.get(file) === marksSignature(file);
+  }
+
   function renderStampFiles() {
     const files = stampFiles();
     const pages = stampState.pages.length;
@@ -4443,38 +6290,55 @@ ${err.message}`);
         + (pages ? ` &middot; <b>${pages}</b> page${pages === 1 ? "" : "s"} &middot; <b>${marked}</b> to be marked` : "");
     const markedFiles = files.filter(fileIsMarked);
     const idle = markedFiles.filter((file) => !stampState.downloading.has(file));
-    el("stampDownloadAllBtn").hidden = markedFiles.length < 2;
+    const n = markedFiles.length;
+    const busy = stampState.downloading.size;
+    const allDone = n && !busy && markedFiles.every(isDownloaded);
+    el("stampDownloadAll").hidden = n < 2;
     el("stampDownloadAllBtn").disabled = !idle.length || stampState.loading;
-    el("stampDownloadAllBtn").textContent = stampState.downloading.size && !idle.length
-      ? `Downloading ${stampState.downloading.size} file${stampState.downloading.size === 1 ? "" : "s"}…`
-      : `Download all marked as PDFs (${markedFiles.length})`;
+    el("stampDownloadCombinedBtn").disabled = busy > 0 || stampState.loading;
+    el("stampDownloadAllBtn").classList.toggle("done", Boolean(allDone));
+    el("stampDownloadCombinedBtn").classList.toggle("done", Boolean(allDone));
+    el("stampDownloadAllHead").classList.toggle("done", Boolean(allDone));
+    el("stampDownloadAllHead").textContent = busy
+      ? `Preparing ${busy} file${busy === 1 ? "" : "s"}…`
+      : allDone ? `✓ All ${n} files downloaded - download again as` : `Download all ${n} marked files as`;
+    const icon = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
+    el("stampDownloadAllBtn").innerHTML = `${icon}<span>Separate PDFs <small>- one per file</small></span>`;
+    el("stampDownloadCombinedBtn").innerHTML = `${icon}<span>All in one PDF <small>- merged</small></span>`;
     el("stampFileList").innerHTML = files.map((file, f) => {
       const own = filePages(file);
       const ownMarked = own.filter(pageHasMarks).length;
       const pageText = own.length ? ` &middot; ${own.length} page${own.length === 1 ? "" : "s"}` : "";
       const marked = fileIsMarked(file);
       const isBusy = stampState.downloading.has(file);
-      const status = isBusy ? `<span class="stamp-file-progress">${escapeHtml(stampState.downloading.get(file))}</span>`
-        : stampState.downloadErrors.get(file) ? `<span class="stamp-file-error">${escapeHtml(stampState.downloadErrors.get(file))}</span>`
-        : marked ? `<span class="stamp-file-meta"><span class="ok">&#10003; ${stampState.previewFailed ? "every page" : `${ownMarked} page${ownMarked === 1 ? "" : "s"}`} marked</span></span>`
-        : `<span class="stamp-file-meta">No marks yet</span>`;
+      const error = stampState.downloadErrors.get(file);
+      const done = marked && isDownloaded(file);
+      const status = isBusy ? `<span class="stamp-file-status busy">${escapeHtml(stampState.downloading.get(file))}</span>`
+        : error ? `<span class="stamp-file-status error" title="${escapeHtml(error)}">Couldn't prepare - try again</span>`
+        : done ? `<span class="stamp-file-status done">&#10003; Downloaded</span>`
+        : marked ? `<span class="stamp-file-status ok">&#10003; ${stampState.previewFailed ? "Every page" : `${ownMarked} page${ownMarked === 1 ? "" : "s"}`} marked</span>`
+        : `<span class="stamp-file-status">No marks yet</span>`;
       const download = marked || isBusy
-        ? `<button class="stamp-file-download${isBusy ? " busy" : ""}" data-download="${f}"
+        ? `<button class="stamp-file-download${isBusy ? " busy" : done ? " done" : ""}" data-download="${f}"
               title="${isBusy ? "Preparing…" : `Download ${escapeHtml(file.name)} with its marks`}"${isBusy || stampState.loading ? " disabled" : ""}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${isBusy
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${isBusy
               ? '<path d="M21 12a9 9 0 1 1-6.2-8.6"/>'
               : '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>'}</svg>
+            <span>${isBusy ? "Working" : done ? "Download again" : "Download"}</span>
           </button>`
         : "";
-      return `<li class="stamp-file" data-file="${f}" title="Go to ${escapeHtml(file.name)}">
-          <span class="stamp-file-icon${isStampPdf(file) ? "" : " img"}">${isStampPdf(file) ? "PDF" : "IMG"}</span>
+      return `<li class="stamp-file${file === stampState.currentFile ? " current" : ""}" data-file="${f}" title="Go to ${escapeHtml(file.name)}">
+          <span class="stamp-file-icon${file.word || isStampWord(file) ? " doc" : isStampPdf(file) ? "" : " img"}"${file.word ? ` title="From ${escapeHtml(file.word.source.name)}"` : ""}>${file.word || isStampWord(file) ? "DOC" : isStampPdf(file) ? "PDF" : "IMG"}</span>
           <span class="stamp-file-text">
             <span class="stamp-file-name">${escapeHtml(file.name)}</span>
             <span class="stamp-file-meta">${fmtFileSize(file.size)}${pageText}</span>
             ${status}
           </span>
-          ${download}
           <button class="stamp-file-remove" data-remove="${f}" title="Remove this file"${stampState.loading || isBusy ? " disabled" : ""}>&times;</button>
+          ${canEditWord(file) || download ? `<span class="stamp-file-foot">
+            ${canEditWord(file) ? `<button class="stamp-file-edit" data-edit="${f}" title="Edit ${escapeHtml(file.word.source.name)} - text, formatting, lines"${stampState.loading || isBusy ? " disabled" : ""}>Edit</button>` : ""}
+            ${download}
+          </span>` : ""}
         </li>`;
     }).join("");
     renderBulkScope();
@@ -4720,6 +6584,15 @@ ${err.message}`);
         if (!entry.isIntersecting) continue;
         const i = entry.target.dataset.page;
         el("stampRail").querySelectorAll(".stamp-thumb.current").forEach((t) => t.classList.remove("current"));
+        // The Files list highlights the file being looked at.
+        const file = stampState.pages[i]?.file;
+        if (file && file !== stampState.currentFile) {
+          stampState.currentFile = file;
+          const f = stampFiles().indexOf(file);
+          el("stampFileList").querySelectorAll(".stamp-file").forEach((li) => {
+            li.classList.toggle("current", Number(li.dataset.file) === f);
+          });
+        }
         const thumb = el("stampRail").querySelector(`.stamp-thumb[data-page="${i}"]`);
         if (thumb) {
           thumb.classList.add("current");
@@ -4883,7 +6756,7 @@ ${err.message}`);
           el("stampPreviewStatus").textContent = `Loading ${label}… page ${n} of ${pdf.numPages}`;
           const page = await pdf.getPage(n);
           const base = page.getViewport({ scale: 1 });
-          const scale = Math.min((900 * (window.devicePixelRatio || 1)) / base.width, 3);
+          const scale = Math.min((1400 * (window.devicePixelRatio || 1)) / base.width, 3);
           const viewport = page.getViewport({ scale });
           canvas.width = Math.round(viewport.width);
           canvas.height = Math.round(viewport.height);
@@ -4906,31 +6779,533 @@ ${err.message}`);
     return pages;
   }
 
-  // Adds `files` (PDFs/images) after the ones already chosen - their pages
-  // previewed and appended, each starting on "None".
+  // A Word file as the PDF it lays out to (POST /stamp-document/convert -
+  // LibreOffice on the server, so alignment and page breaks stay as in Word).
+  // From then on it's previewed, marked and downloaded like any other PDF;
+  // the PDF's `word` keeps the original and its upload for "Edit text".
+  async function convertWordFile(file, label) {
+    const status = (text) => { el("stampPreviewStatus").textContent = text; };
+    const { uploadId, parts } = await uploadInParts(file, (i, n) =>
+      status(n > 1 ? `Uploading ${label}… ${i + 1}/${n}` : `Uploading ${label}…`));
+    const word = { source: file, upload: { uploadId, parts }, edits: {}, paragraphs: null };
+    const pdf = await runConversion("convert", { upload_id: uploadId, parts, filename: file.name }, label, status);
+    pdf.word = word;
+    return pdf;
+  }
+
+  // POST /stamp-document/{path} (convert, or word/edit), waited out - the PDF as a File.
+  async function runConversion(path, body, label, status) {
+    const start = await apiFetch(`${API_BASE_URL}/stamp-document/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!start.ok) throw Object.assign(await apiError(start), { status: start.status });
+    let job = await start.json();
+    for (let polls = 0; job.status === "running"; polls++) {
+      status(polls < 5 ? `Converting ${label} to PDF…` : `Converting ${label} to PDF… the first one takes a little longer`);
+      await new Promise((resolve) => setTimeout(resolve, polls < 10 ? 1000 : 2000));
+      const res = await apiFetch(`${API_BASE_URL}/stamp-document/convert/${job.job_id}`);
+      if (!res.ok) throw await apiError(res);
+      job = await res.json();
+    }
+    if (job.status !== "done") throw new Error(job.message || "converting it to PDF failed");
+    const chunks = [];
+    for (let i = 0; i < job.parts; i++) {
+      const res = await apiFetch(`${API_BASE_URL}/stamp-document/convert/${job.job_id}/result?part=${i}`);
+      if (!res.ok) throw await apiError(res);
+      chunks.push(await res.blob());
+    }
+    return new File(chunks, job.filename, { type: "application/pdf", lastModified: Date.now() });
+  }
+
+  // --- Edit text (Word files) --------------------------------------------
+  // Every paragraph of the document (POST /stamp-document/word/paragraphs) -
+  // blank lines too - with its words, bold/italic/underline, alignment and
+  // size editable, lines added below and deleted. Save sends every change
+  // so far against the original upload (POST /stamp-document/word/edit -
+  // everything else in the file kept), and the new PDF takes the old one's
+  // place, marks kept page for page. `word.rows` is the saved state; the
+  // editor works on a copy (Cancel drops it).
+  const wordEditState = { file: null, saving: false, rows: [], nextKey: 1 };
+  const canEditWord = (file) => !!file?.word && /\.docx$/i.test(file.word.source.name);
+  const WORD_FORMAT = ["bold", "italic", "underline"];
+
+  // A server call on the Word file's original upload - uploaded again first
+  // when the server no longer has it (409: it keeps one an hour after its last use).
+  async function withWordUpload(word, call) {
+    try {
+      return await call(word.upload);
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      word.upload = await uploadInParts(word.source);
+      return call(word.upload);
+    }
+  }
+
+  async function wordParagraphs(word) {
+    if (word.paragraphs) return word.paragraphs;
+    const res = await withWordUpload(word, async (upload) => {
+      const r = await apiFetch(`${API_BASE_URL}/stamp-document/word/paragraphs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upload_id: upload.uploadId, parts: upload.parts, filename: word.source.name }),
+      });
+      if (!r.ok) throw Object.assign(await apiError(r), { status: r.status });
+      return r.json();
+    });
+    word.paragraphs = res.paragraphs;
+    return word.paragraphs;
+  }
+
+  const wordRowFromParagraph = (p) => ({
+    id: p.id, where: p.where, picture: p.picture, deleted: false,
+    orig: { text: p.text, bold: p.bold, italic: p.italic, underline: p.underline, align: p.align, size: p.size },
+    text: p.text, bold: p.bold, italic: p.italic, underline: p.underline, align: p.align, size: p.size,
+  });
+  const cloneRows = (rows) => rows.map((r) => ({ ...r }));
+
+  // What changed in `row` (an original paragraph) - {} when nothing.
+  function wordRowChange(row) {
+    if (row.deleted) return { delete: true };
+    const change = {};
+    for (const prop of ["text", ...WORD_FORMAT, "align", "size"]) {
+      if (row[prop] !== row.orig[prop] && row[prop] !== null && row[prop] !== undefined) change[prop] = row[prop];
+    }
+    return change;
+  }
+
+  // The body for POST /stamp-document/word/edit: { edits, inserts }.
+  function wordEditPayload(rows) {
+    const edits = {};
+    const inserts = [];
+    let prev = null;
+    for (const row of rows) {
+      if (row.id) {
+        const change = wordRowChange(row);
+        if (Object.keys(change).length) edits[row.id] = change;
+      } else {
+        const add = { after: prev, key: row.key, text: row.text };
+        for (const prop of [...WORD_FORMAT, "align", "size"]) if (row[prop] !== null && row[prop] !== undefined) add[prop] = row[prop];
+        inserts.push(add);
+      }
+      prev = row.id || row.key;
+    }
+    return { edits, inserts };
+  }
+
+  function wordRowIsChanged(row) {
+    return !row.id || Object.keys(wordRowChange(row)).length > 0;
+  }
+
+  const WORD_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36];
+  const WORD_PLACE = { Table: "Table", "Text box": "Text box", Header: "Header", Footer: "Footer" };
+
+  // One paragraph on the page: a borderless textarea styled like the text.
+  function wordParaHtml(row, k) {
+    const size = Math.min(row.size || 11, 40);
+    const style = [
+      `font-size:${(size * 1.25).toFixed(1)}px`,
+      row.bold ? "font-weight:700" : "", row.italic ? "font-style:italic" : "", row.underline ? "text-decoration:underline" : "",
+      row.align ? `text-align:${row.align}` : "",
+    ].filter(Boolean).join(";");
+    const tag = WORD_PLACE[row.where] ? `<span class="word-para-tag">${WORD_PLACE[row.where]}</span>` : "";
+    const pic = row.picture ? `<span class="word-para-pic" title="This paragraph has a picture - it stays as it is">&#128247;</span>` : "";
+    const cls = ["word-para", wordRowIsChanged(row) ? "changed" : "", row.deleted ? "deleted" : "", row.id ? "" : "new",
+                 k === wordEditState.current ? "current" : ""].filter(Boolean).join(" ");
+    return `<div class="${cls}" data-k="${k}">${tag}${pic}
+        <textarea rows="1" spellcheck="true" placeholder="${row.deleted ? "" : "Empty line - click to type"}" style="${style}"
+          aria-label="Paragraph ${k + 1}"${row.deleted ? " readonly" : ""}>${escapeHtml(row.text)}</textarea>
+        ${row.deleted ? `<button type="button" class="word-para-restore" data-restore="${k}">Deleted - restore</button>` : ""}
+      </div>`;
+  }
+
+  // The whole page, grouped: the body, then each header/footer part.
+  function renderWordRows({ focus = null, caret = null } = {}) {
+    const body = el("wordEditBody");
+    const scroll = body.scrollTop;
+    const rows = wordEditState.rows;
+    let lastGroup = null;
+    const html = rows.map((row, k) => {
+      const group = row.where === "Header" || row.where === "Footer" ? row.where : "Body";
+      const divider = group !== lastGroup && group !== "Body"
+        ? `<div class="word-page-divider">${group}</div>` : "";
+      lastGroup = group;
+      return divider + wordParaHtml(row, k);
+    }).join("");
+    body.innerHTML = rows.length ? `<div class="word-page">${html}</div>` : `<p class="word-edit-empty">This document has no text to edit.</p>`;
+    body.querySelectorAll("textarea").forEach(fitTextarea);
+    applyWordFilter();
+    body.scrollTop = scroll;
+    syncWordChrome();
+    if (focus !== null) {
+      const area = body.querySelector(`.word-para[data-k="${focus}"] textarea`);
+      if (area) {
+        area.focus();
+        const at = caret === null ? area.value.length : caret;
+        area.setSelectionRange(at, at);
+      }
+    }
+  }
+
+  // One paragraph's look updated in place (typing/formatting keeps the caret).
+  function refreshWordPara(k) {
+    const node = el("wordEditBody").querySelector(`.word-para[data-k="${k}"]`);
+    if (!node) return;
+    const area = node.querySelector("textarea");
+    const [start, end] = [area.selectionStart, area.selectionEnd];
+    const hadFocus = document.activeElement === area;
+    node.outerHTML = wordParaHtml(wordEditState.rows[k], k);
+    const fresh = el("wordEditBody").querySelector(`.word-para[data-k="${k}"] textarea`);
+    fitTextarea(fresh);
+    if (hadFocus) { fresh.focus(); fresh.setSelectionRange(start, end); }
+    syncWordChrome();
+  }
+
+  // The toolbar showing the current paragraph's formatting, and the changes count.
+  function syncWordChrome() {
+    const row = wordEditState.rows[wordEditState.current];
+    const usable = !!row && !row.deleted && !wordEditState.saving;
+    el("wordToolbar").querySelectorAll("[data-tb], [data-tb-align], select").forEach((c) => { c.disabled = !usable; });
+    for (const prop of WORD_FORMAT) {
+      const btn = el("wordToolbar").querySelector(`[data-tb="${prop}"]`);
+      btn.classList.toggle("on", usable && row[prop] === true);
+      btn.classList.toggle("mixed", usable && row[prop] === null);
+    }
+    el("wordToolbar").querySelectorAll("[data-tb-align]").forEach((b) => b.classList.toggle("on", usable && row.align === b.dataset.tbAlign));
+    const sizes = [...new Set([...WORD_SIZES, ...(row?.size ? [row.size] : [])])].sort((a, b) => a - b);
+    el("wordTbSize").innerHTML = `<option value="">Size</option>`
+      + sizes.map((v) => `<option value="${v}"${row?.size === v ? " selected" : ""}>${v}</option>`).join("");
+    updateWordCount();
+  }
+
+  // "N changes" against the Word file - and whether they're all saved.
+  function updateWordCount() {
+    const word = wordEditState.file?.word;
+    if (!word?.paragraphs) return;
+    const changed = wordEditState.rows.filter(wordRowIsChanged).length;
+    const unsaved = JSON.stringify(wordEditPayload(wordEditState.rows))
+      !== JSON.stringify(wordEditPayload(word.rows || word.paragraphs.map(wordRowFromParagraph)));
+    el("wordEditCount").textContent = !changed && !unsaved ? "No changes yet"
+      : `${changed} change${changed === 1 ? "" : "s"} to the Word file${unsaved ? " · not saved yet" : " · saved"}`;
+    el("wordEditCount").classList.toggle("unsaved", unsaved);
+    el("wordEditResetBtn").hidden = !changed;
+  }
+
+  function applyWordFilter() {
+    const q = el("wordEditFilter").value.trim().toLowerCase();
+    el("wordEditBody").querySelectorAll(".word-para").forEach((node) => {
+      node.hidden = !!q && !node.querySelector("textarea").value.toLowerCase().includes(q);
+    });
+    el("wordEditBody").querySelectorAll(".word-page-divider").forEach((d) => { d.hidden = !!q; });
+  }
+
+  // --- what the toolbar and keys do to the current paragraph ---
+  function setWordFormat(prop, value) {
+    const k = wordEditState.current;
+    const row = wordEditState.rows[k];
+    if (!row || row.deleted) return;
+    row[prop] = value;
+    refreshWordPara(k);
+  }
+
+  function addWordLine(k, text = "", caretToNew = true) {
+    const row = wordEditState.rows[k];
+    // A new line starts formatted like the one above (its paragraph style
+    // comes along on the server); a mixed property starts off.
+    wordEditState.rows.splice(k + 1, 0, {
+      key: `new-${wordEditState.nextKey++}`, where: row.where, picture: false, deleted: false, orig: null,
+      text, bold: !!row.bold, italic: !!row.italic, underline: !!row.underline, align: row.align, size: row.size,
+    });
+    wordEditState.current = k + 1;
+    renderWordRows({ focus: caretToNew ? k + 1 : k, caret: caretToNew ? 0 : null });
+  }
+
+  async function deleteWordLine(k) {
+    const rows = wordEditState.rows;
+    const row = rows[k];
+    if (!row || row.deleted) return;
+    if (!row.id) {
+      rows.splice(k, 1); // a new line - just gone
+      wordEditState.current = Math.max(0, k - 1);
+      renderWordRows({ focus: wordEditState.current });
+      return;
+    }
+    if (row.picture && !(await askConfirm({
+      title: "Delete this paragraph?",
+      message: "It has a picture in it - the picture goes too.",
+      confirmLabel: "Delete",
+    }))) return;
+    row.deleted = true;
+    refreshWordPara(k);
+  }
+
+  async function openWordEditor(file) {
+    if (!canEditWord(file) || stampState.loading || stampState.downloading.has(file)) return;
+    wordEditState.file = file;
+    el("wordEditTitle").textContent = file.word.source.name;
+    el("wordEditError").textContent = "";
+    el("wordEditCount").textContent = "";
+    el("wordEditResetBtn").hidden = true;
+    el("wordEditFilter").value = "";
+    wordEditState.current = null;
+    wordEditState.rows = [];
+    syncWordChrome();
+    el("wordEditCount").textContent = "";
+    el("wordEditBody").innerHTML = `<div class="word-edit-loading">Opening the document…</div>`;
+    el("wordEditSaveBtn").disabled = true;
+    el("wordEditModal").hidden = false;
+    try {
+      const paragraphs = await wordParagraphs(file.word);
+      if (wordEditState.file !== file) return;
+      wordEditState.rows = cloneRows(file.word.rows || paragraphs.map(wordRowFromParagraph));
+      renderWordRows();
+      el("wordEditSaveBtn").disabled = false;
+    } catch (err) {
+      if (wordEditState.file !== file) return;
+      el("wordEditBody").innerHTML = "";
+      el("wordEditError").textContent = err.status === 404
+        ? "Couldn't open the document - the server is running an older version. Restart it and try again."
+        : `Couldn't open the document - ${err.message}`;
+    }
+  }
+
+  function fitTextarea(area) {
+    area.style.height = "auto";
+    area.style.height = `${area.scrollHeight + 2}px`;
+  }
+
+  function closeWordEditor() {
+    if (wordEditState.saving) return;
+    wordEditState.file = null;
+    el("wordEditModal").hidden = true;
+  }
+
+  async function saveWordEdits() {
+    const file = wordEditState.file;
+    if (!file || wordEditState.saving || !file.word.paragraphs) return;
+    const word = file.word;
+    const rows = cloneRows(wordEditState.rows);
+    const payload = wordEditPayload(rows);
+    const before = wordEditPayload(word.rows || word.paragraphs.map(wordRowFromParagraph));
+    if (JSON.stringify(payload) === JSON.stringify(before)) { closeWordEditor(); return; }
+
+    wordEditState.saving = true;
+    stampState.loading = true;
+    el("stampPreviewStatus").textContent = `Saving your changes to ${word.source.name}…`;
+    syncStampForm();
+    el("wordEditSaveBtn").disabled = true;
+    el("wordEditSaveBtn").textContent = "Saving…";
+    el("wordEditModal").classList.add("saving");
+    syncWordChrome();
+    el("wordEditError").textContent = "";
+    const token = stampState.token;
+    const status = (text) => { el("stampPreviewStatus").textContent = text; };
+    let saved = false;
+    try {
+      const pdf = await withWordUpload(word, (upload) => runConversion("word/edit",
+        { upload_id: upload.uploadId, parts: upload.parts, filename: word.source.name, ...payload }, word.source.name, status));
+      if (token !== stampState.token || !stampState.files.includes(file)) return;
+      pdf.word = { ...word, rows };
+      await replaceStampFile(file, pdf, token);
+      saved = true;
+    } catch (err) {
+      el("wordEditError").textContent = `Couldn't save the changes - ${err.message}`;
+    } finally {
+      wordEditState.saving = false;
+      el("wordEditModal").classList.remove("saving");
+      el("wordEditSaveBtn").disabled = false;
+      el("wordEditSaveBtn").textContent = "Save changes";
+      el("stampPreviewStatus").textContent = "";
+      if (token === stampState.token) { stampState.loading = false; syncStampForm(); }
+    }
+    if (saved) {
+      closeWordEditor();
+      showToast(`${word.source.name} updated`);
+    }
+  }
+
+  // `pdf` in `old`'s place - its pages previewed where old's were, each
+  // keeping the old page's marks and where they were dragged.
+  async function replaceStampFile(old, pdf, token) {
+    const own = filePages(old);
+    const pages = stampState.previewFailed ? [] : await renderFilePages(pdf, token, pdf.name);
+    if (!pages || token !== stampState.token) return;
+    stampState.files[stampState.files.indexOf(old)] = pdf;
+    stampState.uploads.delete(old);
+    stampState.downloadErrors.delete(old);
+    if (stampState.previewFailed) return;
+    const first = own.length ? own[0] : stampState.pages.length;
+    revokePageUrls(own.map((i) => stampState.pages[i]));
+    const marks = own.map((i) => stampState.pageMarks[i]);
+    const placements = own.map((i) => stampState.placements[i]);
+    stampState.pages.splice(first, own.length, ...pages);
+    stampState.pageMarks.splice(first, own.length, ...pages.map((_, k) => marks[k] || noMarks()));
+    stampState.placements.splice(first, own.length, ...pages.map(() => null));
+    pages.forEach((_, k) => { stampState.placements[first + k] = placements[k] || defaultPlacements(first + k); });
+    renderStampPages();
+  }
+
+  el("wordEditCloseBtn").addEventListener("click", closeWordEditor);
+  el("wordEditCancelBtn").addEventListener("click", closeWordEditor);
+  el("wordEditSaveBtn").addEventListener("click", saveWordEdits);
+  el("wordEditModal").addEventListener("click", (e) => { if (e.target === el("wordEditModal")) closeWordEditor(); });
+  el("wordEditFilter").addEventListener("input", applyWordFilter);
+  el("wordEditResetBtn").addEventListener("click", async () => {
+    if (!(await askConfirm({ title: "Undo all changes?", message: "The document goes back to how it was in the Word file.",
+                             confirmLabel: "Undo all" }))) return;
+    wordEditState.rows = wordEditState.file.word.paragraphs.map(wordRowFromParagraph);
+    wordEditState.current = null;
+    renderWordRows();
+  });
+
+  // The toolbar keeps the cursor in the paragraph (mousedown would take it away).
+  el("wordToolbar").addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
+  el("wordToolbar").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn || btn.disabled) return;
+    const k = wordEditState.current;
+    const row = wordEditState.rows[k];
+    if (!row) return;
+    if (btn.dataset.tbAlign) setWordFormat("align", btn.dataset.tbAlign);
+    else if (WORD_FORMAT.includes(btn.dataset.tb)) setWordFormat(btn.dataset.tb, row[btn.dataset.tb] !== true);
+    else if (btn.dataset.tb === "add") addWordLine(k);
+    else if (btn.dataset.tb === "delete") deleteWordLine(k);
+  });
+  el("wordTbSize").addEventListener("change", (e) => {
+    const row = wordEditState.rows[wordEditState.current];
+    if (!row) return;
+    setWordFormat("size", e.target.value ? Number(e.target.value) : (row.id ? row.orig.size : null));
+    el("wordEditBody").querySelector(`.word-para[data-k="${wordEditState.current}"] textarea`)?.focus();
+  });
+
+  el("wordEditBody").addEventListener("focusin", (e) => {
+    const node = e.target.closest(".word-para");
+    if (!node) return;
+    const k = Number(node.dataset.k);
+    if (k === wordEditState.current) return;
+    el("wordEditBody").querySelector(".word-para.current")?.classList.remove("current");
+    node.classList.add("current");
+    wordEditState.current = k;
+    syncWordChrome();
+  });
+
+  el("wordEditBody").addEventListener("click", (e) => {
+    const restore = e.target.closest("[data-restore]");
+    if (!restore) return;
+    const k = Number(restore.dataset.restore);
+    wordEditState.rows[k].deleted = false;
+    wordEditState.current = k;
+    renderWordRows({ focus: k });
+  });
+
+  // Typing: the row's text, kept without re-rendering (the caret stays put).
+  el("wordEditBody").addEventListener("input", (e) => {
+    const node = e.target.closest(".word-para");
+    if (!node || !e.target.matches("textarea")) return;
+    const row = wordEditState.rows[Number(node.dataset.k)];
+    row.text = e.target.value;
+    fitTextarea(e.target);
+    node.classList.toggle("changed", wordRowIsChanged(row));
+    updateWordCount();
+  });
+
+  // Word's keys: Enter splits the paragraph, Shift+Enter is a line break,
+  // Backspace in an empty line removes it, arrows move between paragraphs.
+  el("wordEditBody").addEventListener("keydown", (e) => {
+    const area = e.target.closest("textarea");
+    if (!area) return;
+    const k = Number(area.closest(".word-para").dataset.k);
+    const row = wordEditState.rows[k];
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && ["b", "i", "u"].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      const prop = { b: "bold", i: "italic", u: "underline" }[e.key.toLowerCase()];
+      setWordFormat(prop, row[prop] !== true);
+    } else if (e.key === "Enter" && !e.shiftKey && !mod && !row.deleted) {
+      e.preventDefault();
+      const at = area.selectionStart;
+      const rest = area.value.slice(area.selectionEnd);
+      row.text = area.value.slice(0, at);
+      addWordLine(k, rest);
+    } else if (e.key === "Backspace" && !area.value && !row.deleted && area.selectionStart === 0) {
+      e.preventDefault();
+      deleteWordLine(k).then(() => {
+        const prev = Math.max(0, k - 1);
+        wordEditState.current = prev;
+        el("wordEditBody").querySelector(`.word-para[data-k="${prev}"] textarea`)?.focus();
+      });
+    } else if ((e.key === "ArrowUp" && area.selectionStart === 0) || (e.key === "ArrowDown" && area.selectionEnd === area.value.length)) {
+      const next = el("wordEditBody").querySelector(`.word-para[data-k="${k + (e.key === "ArrowUp" ? -1 : 1)}"] textarea`);
+      if (next) { e.preventDefault(); next.focus(); }
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (el("wordEditModal").hidden) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveWordEdits(); }
+    else if (e.key === "Escape" && el("confirmModal").hidden) closeWordEditor();
+  });
+
+  // Swaps each Word file in `added` (and the chosen files) for its PDF - one
+  // that can't be converted is dropped, with why. False when the files were
+  // cleared meanwhile.
+  async function convertWordFiles(added, token) {
+    const failed = [];
+    for (const [n, file] of added.entries()) {
+      if (!isStampWord(file)) continue;
+      const label = added.length > 1 ? `${file.name} (${n + 1} of ${added.length})` : file.name;
+      let pdf = null;
+      try {
+        pdf = await convertWordFile(file, label);
+      } catch (err) {
+        failed.push(`"${file.name}": ${err.message}`);
+      }
+      if (token !== stampState.token) return false;
+      const at = stampState.files.indexOf(file);
+      if (pdf && at >= 0) stampState.files[at] = pdf;
+      else if (at >= 0) stampState.files.splice(at, 1);
+      added[n] = pdf && at >= 0 ? pdf : null;
+    }
+    for (let n = added.length - 1; n >= 0; n--) if (!added[n]) added.splice(n, 1);
+    if (failed.length) {
+      el("stampError").textContent = [el("stampError").textContent, `Couldn't convert ${failed.join("; ")}`]
+        .filter(Boolean).join(" ");
+    }
+    return true;
+  }
+
+  // Adds `files` (PDFs/images/Word files) after the ones already chosen -
+  // their pages previewed and appended, each starting on "None".
   async function addStampFiles(incoming) {
     const known = new Set(stampFiles().map((f) => `${f.name}|${f.size}|${f.lastModified}`));
     const skipped = [];
     const added = [];
     for (const file of incoming) {
-      if (!isStampPdf(file) && !isStampImage(file)) { skipped.push(file.name); continue; }
+      if (!isStampPdf(file) && !isStampImage(file) && !isStampWord(file)) { skipped.push(file.name); continue; }
       const key = `${file.name}|${file.size}|${file.lastModified}`;
       if (known.has(key)) continue; // the same file chosen twice
       known.add(key);
       added.push(file);
     }
     el("stampError").textContent = skipped.length
-      ? `Skipped ${skipped.map((n) => `"${n}"`).join(", ")} - only PDF, JPEG and PNG files can be marked.` : "";
+      ? `Skipped ${skipped.map((n) => `"${n}"`).join(", ")} - only PDF, Word, JPEG and PNG files can be marked.` : "";
     if (!added.length) { syncStampForm(); return; }
     stampState.files.push(...added);
     const problem = stampFilesProblem();
     if (problem) el("stampError").textContent = problem;
-    if (stampState.previewFailed) { syncStampForm(); return; } // nothing to preview them in
 
     const token = stampState.token;
     stampState.loading = true;
+    const notice = el("stampPreviewStatus").textContent; // without a preview: why, kept
+    el("stampPreviewStatus").textContent = `Adding ${added.length === 1 ? added[0].name : `${added.length} files`}…`;
     syncStampForm();
     try {
+      if (added.some(isStampWord)) {
+        if (!(await convertWordFiles(added, token))) return;
+        el("stampPreviewStatus").textContent = "";
+      }
+      if (stampState.previewFailed) { el("stampPreviewStatus").textContent = notice; return; } // nothing to preview them in
       for (const [n, file] of added.entries()) {
         const label = added.length > 1 ? `${file.name} (${n + 1} of ${added.length})` : file.name;
         const pages = await renderFilePages(file, token, label);
@@ -4941,6 +7316,7 @@ ${err.message}`);
         stampState.pageMarks.push(...pages.map(noMarks)); // every page starts on "None"
         stampState.placements.push(...pages.map((_, k) => defaultPlacements(first + k)));
         renderStampPages(); // each file shows as soon as it's ready
+        el("stampPreviewStatus").classList.remove("first"); // the loader moves above the pages
       }
       el("stampPreviewStatus").textContent = "";
     } catch (err) {
@@ -4985,6 +7361,7 @@ ${err.message}`);
     if (stampState.downloading.size) return;
     stampState.token++; // drops any preview still rendering
     stampState.downloadErrors.clear();
+    stampState.downloaded.clear();
     stampState.uploads.clear();
     revokePageUrls(stampState.pages);
     stampState.files = [];
@@ -5074,6 +7451,8 @@ ${err.message}`);
   el("stampFileList").addEventListener("click", (e) => {
     const remove = e.target.closest(".stamp-file-remove");
     if (remove) { removeStampFile(Number(remove.dataset.remove)); return; }
+    const edit = e.target.closest(".stamp-file-edit");
+    if (edit) { openWordEditor(stampFiles()[Number(edit.dataset.edit)]); return; }
     const download = e.target.closest(".stamp-file-download");
     if (download) { downloadStampedFile(stampFiles()[Number(download.dataset.download)]); return; }
     const item = e.target.closest(".stamp-file");
@@ -5165,8 +7544,11 @@ ${err.message}`);
 
   // A short "done" notice at the bottom of the screen, gone after a few seconds.
   let toastTimer = null;
-  function showToast(message) {
+  // kind: "success" (a tick) or "error" (red, an exclamation mark).
+  function showToast(message, kind = "success") {
     el("toastMessage").textContent = message;
+    el("toast").classList.toggle("error", kind === "error");
+    el("toast").querySelector(".toast-icon").textContent = kind === "error" ? "!" : "✓";
     el("toast").hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el("toast").hidden = true; }, 4000);
@@ -5354,6 +7736,7 @@ ${err.message}`);
   });
   el("stampDocsManageBtn").addEventListener("click", () => {
     closeStampDocs();
+    showDocumentsTab("files");
     showPage("documents");
   });
 
@@ -5414,11 +7797,25 @@ ${err.message}`);
 
   // Waits out a background POST /stamp-document/jobs job - its final status.
   async function waitForStampJob(job, onWait) {
+    let failedPolls = 0;
     for (let polls = 0; job.status === "queued" || job.status === "running"; polls++) {
       onWait(polls);
       await new Promise((resolve) => setTimeout(resolve, polls < 10 ? 1000 : 2000));
-      const res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}`);
+      let res = null;
+      try {
+        res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}`);
+      } catch (err) {
+        // A throttled request (429) reaches the page as "Failed to fetch" -
+        // the job carries on regardless, so just ask again next time.
+        if (++failedPolls > 5) throw err;
+        continue;
+      }
+      if (res.status === 429 || res.status >= 500) {
+        if (++failedPolls > 5) throw await apiError(res);
+        continue;
+      }
       if (!res.ok) throw await apiError(res);
+      failedPolls = 0;
       job = await res.json();
     }
     if (job.status !== "done") throw new Error(job.message || "marking the files failed");
@@ -5436,25 +7833,32 @@ ${err.message}`);
     return { ...upload, usedAt: Date.now() };
   }
 
-  // The job's form for `file`: its own pages with their marks, where they
-  // were dragged, numbered from 0 within the file - pages without any are
-  // left as they are. Without a preview: the same marks on every page.
-  function stampJobForm(file, upload, asPdf) {
+  // The job's form for `files` ([{ file, upload }], in order): their pages
+  // with marks, where they were dragged, numbered from 0 on through the
+  // files in turn (the server merges several into one PDF) - pages without
+  // any are left as they are. Without a preview: the same marks on every page.
+  function stampJobForm(files, asPdf) {
     const formData = new FormData();
     if (asPdf) formData.append("as_pdf", "true");
-    formData.append("files", JSON.stringify([{ upload_id: upload.uploadId, parts: upload.parts, filename: file.name, content_type: file.type }]));
+    formData.append("files", JSON.stringify(files.map(({ file, upload }) =>
+      ({ upload_id: upload.uploadId, parts: upload.parts, filename: file.name, content_type: file.type }))));
     if (hasPreview()) {
-      const own = filePages(file);
-      const first = own[0];
-      const marked = own.filter(pageHasMarks);
-      formData.append("pages", JSON.stringify(marked.map((i) => ({ page: i - first, ...stampState.pageMarks[i] }))));
-      const placements = marked.flatMap((i) =>
-        Object.entries(stampState.placements[i]).map(([mark, p]) => ({ page: i - first, mark, x: p.x, y: p.y, w: p.w, h: p.h })));
+      const pages = [], placements = [], layouts = [];
+      let start = 0;
+      for (const { file } of files) {
+        const own = filePages(file);
+        const at = (i) => start + i - own[0];
+        own.filter(pageHasMarks).forEach((i) => {
+          pages.push({ page: at(i), ...stampState.pageMarks[i] });
+          Object.entries(stampState.placements[i]).forEach(([mark, p]) =>
+            placements.push({ page: at(i), mark, x: p.x, y: p.y, w: p.w, h: p.h }));
+          const layout = contentLayout(i);
+          if (layout) layouts.push({ page: at(i), ...layout });
+        });
+        start += own.length;
+      }
+      formData.append("pages", JSON.stringify(pages));
       formData.append("placements", JSON.stringify(placements));
-      const layouts = marked.flatMap((i) => {
-        const layout = contentLayout(i);
-        return layout ? [{ page: i - first, ...layout }] : [];
-      });
       if (layouts.length) formData.append("layouts", JSON.stringify(layouts));
     } else {
       MARK_KINDS.forEach((kind) => {
@@ -5464,12 +7868,28 @@ ${err.message}`);
     return formData;
   }
 
-  async function runStampJob(file, upload, progress, asPdf) {
-    const start = await apiFetch(`${API_BASE_URL}/stamp-document/jobs`, { method: "POST", body: stampJobForm(file, upload, asPdf) });
+  async function runStampJob(files, progress, asPdf) {
+    const start = await apiFetch(`${API_BASE_URL}/stamp-document/jobs`, { method: "POST", body: stampJobForm(files, asPdf) });
     if (!start.ok) throw await apiError(start);
     return waitForStampJob(await start.json(), (polls) => {
       progress(polls < 4 ? "Marking…" : "Marking… large files take a minute");
     });
+  }
+
+  // Opens signed download links one at a time, with a pause between them. A
+  // link opened while another is still starting cancels it, which is why
+  // "Download all" used to save only the last file.
+  let downloadLinkQueue = Promise.resolve();
+  function openDownloadLink(url) {
+    const opened = downloadLinkQueue.then(() => {
+      const a = document.createElement("a");
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+    downloadLinkQueue = opened.then(() => new Promise((resolve) => setTimeout(resolve, 1500)));
+    return opened;
   }
 
   // Marks `file` on its own and downloads it - a PDF for a PDF, an image for
@@ -5478,8 +7898,10 @@ ${err.message}`);
   // the server still has it), marked in the background, then downloaded
   // straight from file storage.
   // `asPdf`: an image comes back as a one-page PDF too ("Download all marked").
-  async function downloadStampedFile(file, { asPdf = false } = {}) {
-    if (!file || stampState.downloading.has(file) || stampState.loading || !fileIsMarked(file)) return;
+  // Resolves true once downloaded, false if it failed, null if not started.
+  // `quiet`: no toast of its own ("Download all" counts them instead).
+  async function downloadStampedFile(file, { asPdf = false, quiet = false } = {}) {
+    if (!file || stampState.downloading.has(file) || stampState.loading || !fileIsMarked(file)) return null;
     const progress = (text) => {
       if (!stampFiles().includes(file)) return;
       stampState.downloading.set(file, text);
@@ -5487,48 +7909,137 @@ ${err.message}`);
     };
     stampState.downloadErrors.delete(file);
     el("stampError").textContent = "";
-    progress("Preparing…");
+    progress("Waiting…");
     try {
-      let upload = await stampUpload(file, progress);
-      let job;
-      try {
-        job = await runStampJob(file, upload, progress, asPdf);
-      } catch (err) {
-        // The kept upload had expired after all - send it again, once.
-        if (!/upload the file again/.test(err.message)) throw err;
-        upload = await stampUpload(file, progress, true);
-        job = await runStampJob(file, upload, progress, asPdf);
-      }
-      stampState.uploads.set(file, { ...upload, usedAt: Date.now() });
-
-      progress("Downloading…");
-      if (job.url) {
-        // A navigation, not a fetch - the signed link needs no token, and
-        // its Content-Disposition makes it a download.
-        const a = document.createElement("a");
-        a.href = job.url;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } else {
-        // Running locally - no bucket to link to.
-        const res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}/result`);
-        if (!res.ok) throw await apiError(res);
-        saveBlob(await res.blob(), job.filename);
-      }
-      showToast(`"${job.filename}" downloaded.`);
+      const marks = marksSignature(file);
+      const job = await withStampSlot(() => markAndDownload(file, progress, asPdf));
+      stampState.downloaded.set(file, marks);
+      if (!quiet) showToast(`"${job.filename}" downloaded.`);
+      return true;
     } catch (err) {
       console.error("Failed to sign/stamp document:", err);
       stampState.downloadErrors.set(file, `Couldn't prepare this - ${err.message}`);
+      return false;
     } finally {
       stampState.downloading.delete(file);
       syncStampForm();
     }
   }
 
-  // Every marked file, each downloaded as its own PDF (images too) - all at once.
-  el("stampDownloadAllBtn").addEventListener("click", () => {
-    stampFiles().filter(fileIsMarked).forEach((file) => downloadStampedFile(file, { asPdf: true }));
+  // At most this many files are marked at once - each one polls its job
+  // every second, and "Download all" on 15 files at once went past the
+  // API's rate limit (template.yaml's throttling), failing with "Failed to fetch".
+  const STAMP_CONCURRENCY = 3;
+  let stampSlotsFree = STAMP_CONCURRENCY;
+  const stampSlotWaiters = [];
+  async function withStampSlot(task) {
+    if (stampSlotsFree > 0) stampSlotsFree--;
+    else await new Promise((resolve) => stampSlotWaiters.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = stampSlotWaiters.shift();
+      if (next) next(); else stampSlotsFree++;
+    }
+  }
+
+  async function markAndDownload(file, progress, asPdf) {
+    progress("Preparing…");
+    let upload = await stampUpload(file, progress);
+    let job;
+    try {
+      job = await runStampJob([{ file, upload }], progress, asPdf);
+    } catch (err) {
+      // The kept upload had expired after all - send it again, once.
+      if (!/upload the file again/.test(err.message)) throw err;
+      upload = await stampUpload(file, progress, true);
+      job = await runStampJob([{ file, upload }], progress, asPdf);
+    }
+    stampState.uploads.set(file, { ...upload, usedAt: Date.now() });
+
+    progress("Downloading…");
+    await saveStampResult(job);
+    return job;
+  }
+
+  // Downloads a finished job's file.
+  async function saveStampResult(job) {
+    if (job.url) {
+      // A navigation, not a fetch - the signed link needs no token, and
+      // its Content-Disposition makes it a download. Queued (see
+      // openDownloadLink) so files finishing together don't cancel each other.
+      await openDownloadLink(job.url);
+    } else {
+      // Running locally - no bucket to link to.
+      const res = await apiFetch(`${API_BASE_URL}/stamp-document/jobs/${job.job_id}/result`);
+      if (!res.ok) throw await apiError(res);
+      saveBlob(await res.blob(), job.filename);
+    }
+  }
+
+  // "All in one PDF": every marked file, in the Files list's order, marked
+  // in one job that merges them into a single PDF.
+  el("stampDownloadCombinedBtn").addEventListener("click", async () => {
+    const files = stampFiles().filter(fileIsMarked);
+    if (files.length < 2 || stampState.downloading.size || stampState.loading) return;
+    const marks = files.map(marksSignature);
+    const progress = (text) => {
+      files.forEach((file) => { if (stampFiles().includes(file)) stampState.downloading.set(file, text); });
+      renderStampFiles();
+    };
+    files.forEach((file) => stampState.downloadErrors.delete(file));
+    el("stampError").textContent = "";
+    progress("Combining…");
+    try {
+      const uploadAll = (fresh) => Promise.all(files.map(async (file) =>
+        ({ file, upload: await stampUpload(file, () => progress("Uploading…"), fresh) })));
+      let entries = await uploadAll(false);
+      let job;
+      try {
+        job = await runStampJob(entries, progress, true);
+      } catch (err) {
+        // A kept upload had expired after all - send them again, once.
+        if (!/upload the file again/.test(err.message)) throw err;
+        entries = await uploadAll(true);
+        job = await runStampJob(entries, progress, true);
+      }
+      entries.forEach(({ file, upload }) => stampState.uploads.set(file, { ...upload, usedAt: Date.now() }));
+      progress("Downloading…");
+      await saveStampResult(job);
+      files.forEach((file, i) => stampState.downloaded.set(file, marks[i]));
+      showToast(`All ${files.length} files downloaded in one PDF - "${job.filename}".`);
+    } catch (err) {
+      console.error("Failed to combine and sign/stamp documents:", err);
+      el("stampError").textContent = `Couldn't make the combined PDF - ${err.message}`;
+      showToast("Couldn't make the combined PDF - see the message below the files.");
+    } finally {
+      files.forEach((file) => stampState.downloading.delete(file));
+      syncStampForm();
+    }
+  });
+
+  // Every marked file, each downloaded as its own PDF (images too) - with a
+  // running count as they finish, then a summary.
+  const filesText = (n) => `${n} file${n === 1 ? "" : "s"}`;
+  el("stampDownloadAllBtn").addEventListener("click", async () => {
+    const files = stampFiles().filter((f) => fileIsMarked(f) && !stampState.downloading.has(f));
+    if (!files.length) return;
+    let done = 0;
+    let failed = 0;
+    const results = await Promise.all(files.map(async (file) => {
+      const ok = await downloadStampedFile(file, { asPdf: true, quiet: true });
+      if (ok) done++;
+      if (ok === false) failed++;
+      if (ok !== null && done + failed < files.length) {
+        showToast(`${done} of ${filesText(files.length)} downloaded…`);
+      }
+      return ok;
+    }));
+    const started = results.filter((ok) => ok !== null).length;
+    if (!started) return;
+    showToast(failed
+      ? `${filesText(done)} downloaded - ${filesText(failed)} couldn't be prepared (see the Files list).`
+      : `${done === 1 ? "1 file" : `All ${done} files`} downloaded.`);
   });
 
   el("tendersRefreshBtn").addEventListener("click", refreshTenders);
@@ -5543,14 +8054,36 @@ ${err.message}`);
   });
 
   el("filterClosingSoon").addEventListener("change", () => { skip = 0; loadTenders(); });
+  el("filterReopened").addEventListener("change", () => { skip = 0; loadTenders(); });
   let searchDebounce;
   el("filterSearch").addEventListener("input", () => {
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => { skip = 0; loadTenders(); }, 300);
   });
+  el("documentsSearch").addEventListener("input", () => renderDocuments(documentsList));
   el("prevBtn").addEventListener("click", () => { skip = Math.max(0, skip - PAGE_SIZE); loadTenders(); });
   el("nextBtn").addEventListener("click", () => { skip += PAGE_SIZE; loadTenders(); });
   el("backBtn").addEventListener("click", showQueryView);
+
+  el("addTenderBtn").addEventListener("click", openAddTenderModal);
+  el("addTenderForm").addEventListener("submit", submitAddTender);
+  el("addTenderCancelBtn").addEventListener("click", closeAddTenderModal);
+  el("addTenderModal").addEventListener("click", (e) => {
+    if (e.target === el("addTenderModal")) closeAddTenderModal();
+  });
+  setupDropzone(el("addTenderFiles"), showChosenFiles);
+  setupDropzone(el("tenderDocsFiles"), onTenderDocsFiles);
+  el("addTenderXBtn").addEventListener("click", closeAddTenderModal);
+  el("tenderDocsXBtn").addEventListener("click", closeTenderDocsModal);
+  el("tenderDocsLinkBtn").addEventListener("click", onTenderDocsLink);
+  el("tenderDocsLink").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); onTenderDocsLink(); }
+  });
+  el("tenderDocsList").addEventListener("click", onTenderDocsListClick);
+  el("tenderDocsCloseBtn").addEventListener("click", closeTenderDocsModal);
+  el("tenderDocsModal").addEventListener("click", (e) => {
+    if (e.target === el("tenderDocsModal")) closeTenderDocsModal();
+  });
 
   el("generateCancelBtn").addEventListener("click", closeGenerateModal);
   el("generateConfirmBtn").addEventListener("click", confirmGenerate);
@@ -5610,11 +8143,18 @@ ${err.message}`);
   // Gateway ~6 MB cap) and isn't kept, so the API hands out a 5-minute link
   // (/bid-document/link) and the browser downloads it straight from file
   // storage. Running locally there's no bucket (url is null), and the pack
-  // comes from /bid-document itself.
-  async function startBidPackDownload(tenderId) {
-    const base = `${API_BASE_URL}/tenders/${tenderId}/bid-document`;
+  // comes from /bid-document itself. The PowerPoint presentation generated
+  // with the pack (data-kind="presentation") downloads the same way.
+  const DOWNLOADS = {
+    pack: { path: "bid-document", name: "bid pack", fallback: "bid-pack.pdf" },
+    presentation: { path: "presentation", name: "presentation", fallback: "presentation.pptx" },
+  };
+
+  async function startBidPackDownload(tenderId, kind = "pack") {
+    const what = DOWNLOADS[kind] || DOWNLOADS.pack;
+    const base = `${API_BASE_URL}/tenders/${tenderId}/${what.path}`;
     const linkRes = await apiFetch(`${base}/link`);
-    if (linkRes.status === 404) throw new Error("the bid pack has expired - generate it again");
+    if (linkRes.status === 404) throw new Error(`the ${what.name} has expired - generate the bid pack again`);
     if (!linkRes.ok) throw new Error(`HTTP ${linkRes.status}`);
     const { url, filename } = await linkRes.json();
     if (url) {
@@ -5629,7 +8169,7 @@ ${err.message}`);
     }
     const res = await apiFetch(base);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    saveBlob(await res.blob(), filename || "bid-pack.pdf");
+    saveBlob(await res.blob(), filename || what.fallback);
   }
 
   async function downloadBidPack(link) {
@@ -5638,9 +8178,9 @@ ${err.message}`);
     const label = link.innerHTML;
     link.textContent = "Downloading…";
     try {
-      await startBidPackDownload(link.dataset.id);
+      await startBidPackDownload(link.dataset.id, link.dataset.kind);
     } catch (err) {
-      alert(`Couldn't download the bid pack - ${err.message}.`);
+      alert(`Couldn't download the ${(DOWNLOADS[link.dataset.kind] || DOWNLOADS.pack).name} - ${err.message}.`);
     } finally {
       link.innerHTML = label;
       delete link.dataset.busy;
@@ -5660,6 +8200,33 @@ ${err.message}`);
 
   el("signOutBtn").addEventListener("click", logout);
   el("navToggle").addEventListener("click", () => setNavMenuOpen(el("navToggle").getAttribute("aria-expanded") !== "true"));
+
+  // Desktop sidebar hide/show, remembered across visits.
+  function setSidebarCollapsed(collapsed) {
+    document.querySelector(".shell").classList.toggle("sidebar-collapsed", collapsed);
+    const btn = el("sidebarCollapse");
+    const label = collapsed ? "Show sidebar" : "Hide sidebar";
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    btn.setAttribute("aria-label", label);
+    btn.dataset.tip = label;
+    try { localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0"); } catch {}
+  }
+  const sidebarIsCollapsed = () => document.querySelector(".shell").classList.contains("sidebar-collapsed");
+  try { if (localStorage.getItem("sidebarCollapsed") === "1") setSidebarCollapsed(true); } catch {}
+  el("sidebarCollapse").addEventListener("click", () => setSidebarCollapsed(!sidebarIsCollapsed()));
+  // The folded ribbon itself also opens the sidebar.
+  document.querySelector(".sidebar").addEventListener("click", () => {
+    if (sidebarIsCollapsed() && !NARROW_SCREEN.matches) setSidebarCollapsed(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "[" || e.ctrlKey || e.metaKey || e.altKey || NARROW_SCREEN.matches) return;
+    if (e.target.closest("input, textarea, select, [contenteditable]")) return;
+    setSidebarCollapsed(!sidebarIsCollapsed());
+  });
+  // The main area's width changes once the sidebar's width transition ends.
+  document.querySelector(".sidebar").addEventListener("transitionend", (e) => {
+    if (e.target === e.currentTarget && e.propertyName === "width") syncScrollTableHeights();
+  });
   document.addEventListener("click", (e) => { if (!e.target.closest(".sidebar")) setNavMenuOpen(false); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNavMenuOpen(false); });
   NARROW_SCREEN.addEventListener("change", () => {

@@ -164,6 +164,47 @@ def test_draft_checklist_documents_matches_by_position_when_ids_are_dropped():
     assert drafted["r0"].title == "First" and drafted["r1"].title == "Second"
 
 
+def test_a_draft_in_marathi_is_redrafted_in_english():
+    # A tender's Marathi annexure copied verbatim prints as black boxes.
+    def respond(user_prompt):
+        english = "previous draft" in user_prompt
+        return json.dumps({"documents": [
+            {"id": "r0", "title": "Annexure 9",
+             "body_paragraphs": ["I, Jane Doe, authorise ..." if english else "मी खालील सही करणार"]},
+            {"id": "r1", "title": "Annexure 1", "body_paragraphs": ["We submit ..."]},
+        ]})
+
+    provider = FakeProvider(respond=respond)
+    drafted, errors = draft_checklist_documents(TENDER, _rows(2), COMPANY_PROFILE, [], provider, batch_size=2)
+
+    assert errors == []
+    assert drafted["r0"].body_paragraphs == ["I, Jane Doe, authorise ..."]
+    assert len(provider.calls) == 2
+    assert "id r0:" in provider.calls[1][1] and "id r1:" not in provider.calls[1][1]  # only the Marathi one
+    assert "ENGLISH ONLY" in provider.calls[0][0]
+
+
+def test_a_failed_english_redraft_keeps_the_first_draft():
+    def respond(user_prompt):
+        return json.dumps({"documents": [{"id": "r0", "title": "Annexure 9", "body_paragraphs": ["मी"]}]})
+
+    drafted, _ = draft_checklist_documents(TENDER, _rows(1), COMPANY_PROFILE, [], FakeProvider(respond=respond))
+    assert drafted["r0"].body_paragraphs == ["मी"]  # the renderer flags it rather than losing the page
+
+
+def test_draft_prompt_gives_the_signatory_age_from_date_of_birth():
+    profile = {**COMPANY_PROFILE, "authorized_signatory": {
+        "name": "Jane Doe", "designation": "Director", "date_of_birth": "1980-01-01",
+        "residential_address": "2 Home Road"}}
+    provider = FakeProvider(responses=[json.dumps({"documents": []})])
+    draft_checklist_documents(TENDER, _rows(1), profile, [], provider)
+
+    user_prompt = provider.calls[0][1]
+    assert " years; residential address 2 Home Road" in user_prompt
+    assert "age [not on record]" not in user_prompt
+    assert "THE AUTHORISED SIGNATORY is the person" in provider.calls[0][0]
+
+
 # --- Company data, tailoring, notary -----------------------------------------------
 
 RICH_PROFILE = {
@@ -252,7 +293,7 @@ def test_draft_prompt_gives_the_bid_date_personnel_and_tender_fact_rules():
                               provider=provider)
     system_prompt, user_prompt = provider.calls[0]
     assert f"Bid date: {dt.date.today().strftime('%d-%m-%Y')}" in user_prompt
-    assert "name: Asha Rao | role: Social Media Manager | qualification: MBA | experience (years): 7" in user_prompt
+    assert "name: Asha Rao | proposed role: Social Media Manager | qualification: MBA | total experience (years): 7" in user_prompt
     for rule in ("TENDER FACTS COME FROM THE TENDER", "PRICES are never written",
                  "FIELDS THAT DON'T APPLY", "Never invent a person"):
         assert rule in system_prompt
@@ -260,3 +301,69 @@ def test_draft_prompt_gives_the_bid_date_personnel_and_tender_fact_rules():
     provider = FakeProvider(responses=[json.dumps({"documents": []})])
     draft_checklist_documents(TENDER, [{"id": "r1", "document": "CVs"}], RICH_PROFILE, [], provider=provider)
     assert "Key personnel: none on record" in provider.calls[0][1]
+
+
+def test_the_prescribed_format_is_found_past_the_prompt_text_cap():
+    from app.intelligence.prompts import MAX_TENDER_TEXT_CHARS, prescribed_format_excerpt
+
+    text = ("General conditions. Submit the undertaking as per Annexure-V.\n" + "Clause text. " * 6000
+            + "\nIndex of annexures\nAnnexure V Undertaking\nAnnexure VI Bank details\n" + "More clauses. " * 50
+            + "\nANNEXURE - V\nUNDERTAKING OF NON-BLACKLISTING\nI/We ______ hereby declare that the firm has "
+            "not been blacklisted by any Government department. Column A | Column B | Column C\n"
+            "\nANNEXURE - VI\nBank details format")
+    assert text.index("UNDERTAKING OF NON-BLACKLISTING") > MAX_TENDER_TEXT_CHARS
+    excerpt = prescribed_format_excerpt(text, {"document": "Annexure 5 - Non-blacklisting Undertaking"})
+    assert excerpt.startswith("ANNEXURE - V\nUNDERTAKING OF NON-BLACKLISTING")
+    assert "Column A | Column B | Column C" in excerpt
+    assert "Bank details format" not in excerpt  # stops at the next annexure
+    assert prescribed_format_excerpt(text, {"document": "Covering Letter"}) == ""
+
+
+def test_draft_prompt_carries_the_format_the_pack_contents_and_the_conditions():
+    from app.intelligence.prompts import build_bid_draft_user_prompt
+
+    tender = {**TENDER, "document_text": "Intro " * 20000 + "\nAnnexure 3\nDECLARATION. We declare the following "
+              "exact wording that must be reproduced verbatim by the bidder in full."}
+    row = {"id": "a3", "document": "Annexure 3 - Declaration", "what_to_upload": "Declaration", "source": "draft"}
+    pack = [{"document": "Covering Letter", "source": "draft"}, row,
+            {"document": "CA Turnover Certificate", "source": "upload", "document_id": "x", "reference": "Elig 4"},
+            {"document": "EMD Proof", "source": "upload", "status": "Not applicable"}]
+    prompt = build_bid_draft_user_prompt(
+        tender, [row], COMPANY_PROFILE, [], pack_rows=pack,
+        conditions=[{"ref": "Elig 4 Turnover", "proved_by": "CA Turnover Certificate"}])
+    assert "Prescribed format for id a3" in prompt and "exact wording that must be reproduced" in prompt
+    assert "3. CA Turnover Certificate [Elig 4] -  (enclosed)" in prompt
+    assert "4. EMD Proof -  (not applicable)" in prompt
+    assert "Elig 4 Turnover: CA Turnover Certificate (S.No. 3)" in prompt
+
+
+def test_a_draft_left_as_the_bare_format_is_redrafted_once():
+    from app.intelligence.bid_drafter import UNFILLED_REMINDER
+
+    rows = [{"id": "e", "document": "Appendix E - Financial Capacity", "what_to_upload": "CA certificate"}]
+    bare = {"documents": [{"id": "e", "title": "Appendix E", "body_paragraphs": [
+        "Bidder", "Annual turnover", "Name & address of bidder:", "Instructions:"]}]}
+    filled = {"documents": [{"id": "e", "title": "Appendix E", "body_paragraphs": [
+        "Bidder: TEST COMPANY PRIVATE LIMITED", "Name & address of bidder: TEST COMPANY PRIVATE LIMITED, 1 Test Street"]}]}
+
+    def respond(prompt):
+        return json.dumps(filled if prompt.startswith(UNFILLED_REMINDER) else bare)
+
+    provider = FakeProvider(respond=respond)
+    drafted, errors = draft_checklist_documents(TENDER, rows, COMPANY_PROFILE, [], provider)
+    assert errors == [] and len(provider.calls) == 2
+    assert drafted["e"].body_paragraphs[0] == "Bidder: TEST COMPANY PRIVATE LIMITED"
+
+
+def test_filled_documents_price_bids_and_honest_gaps_are_not_unfilled():
+    from app.intelligence.bid_drafter import DraftedDocument
+    from app.reports.bid_generator import looks_unfilled
+
+    def doc(*paragraphs):
+        return DraftedDocument(id="x", title="T", body_paragraphs=list(paragraphs))
+
+    assert not looks_unfilled(doc("We, TEST COMPANY PRIVATE LIMITED, declare."), COMPANY_PROFILE)
+    assert not looks_unfilled(doc("[TO BE FILLED FROM COMPANY RECORDS: CV of the proposed Editor]"), COMPANY_PROFILE)
+    assert not looks_unfilled(doc("Rate:", "Quantity:", "Amount:"), COMPANY_PROFILE, "BOQ")
+    assert looks_unfilled(doc("Name of firm: TEST COMPANY PRIVATE LIMITED", "Address:", "PAN:", "GSTIN:"),
+                          COMPANY_PROFILE)

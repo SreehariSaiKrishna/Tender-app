@@ -20,10 +20,13 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -37,14 +40,23 @@ from pymongo import DESCENDING
 
 from app import storage
 from app.config import CONFIG_DIR, get_settings, load_company_profile, load_saved_queries
+from app.convert.converter import ConversionError, convert_to_pdf, is_word_document
+from app.convert.word_text import NewParagraph, ParagraphChange, WordTextError, apply_edits, read_paragraphs
+from app.text_sections import USE_IN_OPTIONS, default_sections, parse_day, with_text_sections
 from app.database import (
     get_automation_runs_collection,
     get_collection,
     get_company_documents_collection,
     get_eligibility_criteria_collection,
     get_stamp_transfers_collection,
+    get_text_sections_collection,
 )
-from app.intelligence.bid_drafter import BidDraftingError, draft_checklist_documents, plan_submission_checklist
+from app.intelligence.bid_drafter import (
+    BidDraftingError,
+    draft_checklist_documents,
+    draft_presentation,
+    plan_submission_checklist,
+)
 from app.reports.bid_generator import (
     CHECKLIST_VERSION,
     DEFAULT_WHERE,
@@ -64,19 +76,24 @@ from app.reports.bid_generator import (
     enclosure_documents,
     established_facts,
     generate_bid_package,
+    guard_financial_years,
     is_submission_checklist,
     mark_document,
     merge_drafted_open_items,
+    prepare_check_list_annexures,
+    records_not_drafted,
     refresh_statuses,
     signing_assets,
 )
+from app.models import UNSCREENED_PRIORITY_RANK, TenderStatus
+from app.reports.presentation import is_presentation_row, render_presentation
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tender Intelligence API")
 
-# Locally, uvicorn serves no CORS headers on its own and the dashboard is
-# served from a different localhost port, so allow that. There's no login
+# Locally the dashboard is served by this app (same origin, see
+# SERVE_DASHBOARD below); any other localhost port is allowed too. There's no login
 # locally - keep uvicorn bound to 127.0.0.1. Deployed, API Gateway sets the
 # CORS headers itself (template.yaml's CorsConfiguration) and its Cognito
 # authorizer rejects any request without a login before it reaches this
@@ -95,6 +112,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["content-type", "authorization"],
 )
+
+# Local dev (scripts/dev.ps1 sets SERVE_DASHBOARD=1) serves the dashboard
+# from this same uvicorn process, so the page can never be up without the
+# API behind it. Never set deployed - CloudFront serves the dashboard there.
+if os.environ.get("SERVE_DASHBOARD") == "1":
+    from fastapi.responses import FileResponse
+
+    _DASHBOARD = Path(__file__).resolve().parents[2] / "frontend" / "index.html"
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(_DASHBOARD, headers={"Cache-Control": "no-store"})
 
 
 
@@ -140,7 +169,12 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     out.pop("checklist", None)
     out.pop("document_text_key", None)
     out["bid_pack_available"] = _bid_pack_available(doc)
+    out["presentation_available"] = bool(doc.get("presentation_key")) and out["bid_pack_available"]
     out.pop("bid_pack_key", None)
+    out.pop("presentation_key", None)
+    out.pop("edited_fields", None)
+    if "manual_documents" in out:
+        out["manual_documents"] = [_serialize_manual_document(e) for e in out["manual_documents"]]
 
     for key in (
         "first_seen",
@@ -156,9 +190,18 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
         "document_summary_generated_at",
         "bid_generated_at",
         "checklist_generated_at",
+        "reopened_at",
+        "disappeared_at",
+        "edited_at",
+        "hidden_at",
     ):
         if out.get(key) is not None:
             out[key] = _iso(out[key])
+
+    for event in out.get("status_history", []):
+        for key in ("at", "closing_date", "previous_closing_date"):
+            if event.get(key) is not None:
+                event[key] = _iso(event[key])
 
     for match in out.get("query_matches", []):
         match["first_seen"] = _iso(match.get("first_seen"))
@@ -186,6 +229,7 @@ def list_tenders(
     closing_soon: bool = False,
     shortlisted_only: bool = False,
     eligible_only: bool = False,
+    reopened_only: bool = False,
     q: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     skip: int = Query(0, ge=0),
@@ -195,7 +239,7 @@ def list_tenders(
     # app.processing.deduplicator._mark_disappeared) - every other status
     # implies disappeared=False, so only the closed bucket needs to look
     # past the default "still live" filter.
-    filt: dict[str, Any] = {"disappeared": status == "closed"}
+    filt: dict[str, Any] = {"disappeared": status == "closed", "hidden": {"$ne": True}}
     if status:
         filt["status"] = status
     if priority:
@@ -212,6 +256,10 @@ def list_tenders(
         filt["closing_date"] = {"$ne": None, "$gte": today, "$lte": cutoff}
     if eligible_only:
         filt["eligibility_match"] = True
+    if reopened_only:
+        # Ever reopened (app.processing.deduplicator) - a sticky flag, so
+        # this also finds ones that have since closed again (closed bucket).
+        filt["reopened"] = True
     if q:
         pattern = re.compile(re.escape(q), re.IGNORECASE)
         filt["$or"] = [{"title": pattern}, {"organisation": pattern}]
@@ -254,8 +302,7 @@ def get_tender(tender_id: str) -> dict[str, Any]:
 def mark_applied(tender_id: str) -> dict[str, Any]:
     """Record that the user applied to this tender - a one-way flag; once
     set, the frontend disables the decline option for this tender and
-    there's no "unapply". It doesn't keep the tender past
-    app.processing.cleanup's deletion of closed tenders.
+    there's no "unapply".
     """
     collection = get_collection()
     try:
@@ -312,6 +359,477 @@ def mark_declined(tender_id: str, body: DeclineRequest) -> dict[str, Any]:
     return _serialize(doc)
 
 
+# --- Manually added tenders ----------------------------------------------------
+# Tenders found outside the saved queries (another portal, a newspaper, an
+# email) are added by hand under this pseudo-query, so they get the same
+# drill-down list, checklist and bid pack as scraped ones. No pipeline pass
+# ever processes this name, so app.processing.deduplicator._mark_disappeared
+# never closes them.
+MANUAL_QUERY_NAME = "Other Tenders"
+
+
+class ManualTenderRequest(BaseModel):
+    title: str
+    organisation: str | None = None
+    tender_ref: str | None = None
+    location: str | None = None
+    state: str | None = None
+    published_date: dt.date | None = None
+    closing_date: dt.date | None = None
+    opening_date: dt.date | None = None
+    tender_value: float | None = Field(None, ge=0)
+    earnest_money: float | None = Field(None, ge=0)
+    document_fees: float | None = Field(None, ge=0)
+    source_url: str | None = None
+    description: str | None = None
+
+
+def _clean(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+def _utc_midnight(value: dt.date | None) -> dt.datetime | None:
+    if value is None:
+        return None
+    return dt.datetime.combine(value, dt.time.min).replace(tzinfo=dt.timezone.utc)
+
+
+@app.post("/tenders/manual", status_code=201)
+def add_manual_tender(body: ManualTenderRequest) -> dict[str, Any]:
+    """Adds a tender by hand to the Other Tenders bucket. A tender already
+    on record under the same dedup key (same reference number, or same
+    title+organisation+closing date) is just added to the bucket rather
+    than duplicated."""
+    from app.processing.eligibility import (
+        compute_eligibility_match,
+        emd_in_range,
+        load_match_keywords,
+        tender_fee_in_range,
+        tender_value_in_range,
+    )
+    from app.processing.normalizer import make_dedup_key
+
+    title = _clean(body.title)
+    if not title:
+        raise HTTPException(status_code=422, detail="A tender title is required")
+    tender_ref = _clean(body.tender_ref)
+    organisation = _clean(body.organisation)
+    source_url = _clean(body.source_url)
+    if source_url and not re.match(r"https?://", source_url, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="The tender link must start with http:// or https://")
+    dedup_key, is_synthetic = make_dedup_key(tender_ref, title, organisation, body.closing_date)
+
+    collection = get_collection()
+    now = dt.datetime.now(dt.timezone.utc)
+    manual_match = {"query_name": MANUAL_QUERY_NAME, "first_seen": now, "last_seen": now, "manual": True}
+
+    existing = collection.find_one({"dedup_key": dedup_key})
+    if existing is not None:
+        if any(m.get("query_name") == MANUAL_QUERY_NAME for m in existing.get("query_matches", [])):
+            raise HTTPException(status_code=409, detail="This tender is already in Other Tenders")
+        collection.update_one(
+            {"_id": existing["_id"]},
+            {"$push": {"query_matches": manual_match}, "$inc": {"query_match_count": 1}},
+        )
+        return _serialize(collection.find_one({"_id": existing["_id"]}))
+
+    description = _clean(body.description)
+    domain_match = compute_eligibility_match(f"{title} {description or ''}", load_match_keywords())
+    doc = {
+        "dedup_key": dedup_key,
+        "tender_ref": tender_ref,
+        "ref_is_synthetic": is_synthetic,
+        "title": title,
+        "organisation": organisation,
+        "location": _clean(body.location),
+        "state": _clean(body.state),
+        "published_date": _utc_midnight(body.published_date or now.date()),
+        "opening_date": _utc_midnight(body.opening_date),
+        "closing_date": _utc_midnight(body.closing_date),
+        "previous_closing_date": None,
+        "deadline_changed": False,
+        "tender_value": body.tender_value,
+        "earnest_money": body.earnest_money,
+        "document_fees": body.document_fees,
+        "document_url": None,
+        "source_url": source_url,
+        "description": description,
+        "first_seen": now,
+        "last_seen": now,
+        "content_last_changed": now,
+        "times_found": 1,
+        "disappeared": False,
+        "status": TenderStatus.NEW.value,
+        "query_matches": [manual_match],
+        "query_match_count": 1,
+        "screenings": [],
+        "applied": False,
+        "applied_at": None,
+        "reopened": False,
+        "reopened_at": None,
+        "reopen_count": 0,
+        "status_history": [],
+        "latest_priority_rank": UNSCREENED_PRIORITY_RANK,
+        "manually_added": True,
+        "domain_match": domain_match,
+        "eligibility_match": (
+            domain_match
+            and tender_value_in_range(body.tender_value)
+            and emd_in_range(body.earnest_money)
+            and tender_fee_in_range(body.document_fees)
+        ),
+    }
+    inserted = collection.insert_one(doc)
+    return _serialize(collection.find_one({"_id": inserted.inserted_id}))
+
+
+@app.delete("/tenders/{tender_id}/manual")
+def remove_manual_tender(tender_id: str) -> dict[str, Any]:
+    """Takes a tender out of Other Tenders. One that was only ever added by
+    hand is deleted outright; one the scrape also found just loses its
+    Other Tenders entry - scraped tenders are never deleted."""
+    collection = get_collection()
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    doc = collection.find_one({"_id": object_id})
+    # Already removed (another tab, a double click) - the outcome asked for.
+    if doc is None:
+        return {"deleted": True}
+    if not any(m.get("query_name") == MANUAL_QUERY_NAME for m in doc.get("query_matches", [])):
+        return {"deleted": False}
+
+    if doc.get("manually_added") and len(doc.get("query_matches", [])) == 1:
+        collection.delete_one({"_id": object_id})
+        _delete_files_quietly(_uploaded_keys(doc))
+        return {"deleted": True}
+    collection.update_one(
+        {"_id": object_id},
+        {"$pull": {"query_matches": {"query_name": MANUAL_QUERY_NAME}}, "$inc": {"query_match_count": -1}},
+    )
+    return {"deleted": False}
+
+
+@app.post("/tenders/{tender_id}/other-tenders")
+def add_to_other_tenders(tender_id: str) -> dict[str, Any]:
+    """Adds a scraped tender to Other Tenders too (its saved queries keep it)."""
+    collection = get_collection()
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    now = dt.datetime.now(dt.timezone.utc)
+    result = collection.update_one(
+        {"_id": object_id, "query_matches.query_name": {"$ne": MANUAL_QUERY_NAME}},
+        {
+            "$push": {"query_matches": {"query_name": MANUAL_QUERY_NAME, "first_seen": now, "last_seen": now, "manual": True}},
+            "$inc": {"query_match_count": 1},
+        },
+    )
+    doc = collection.find_one({"_id": object_id})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    if result.modified_count == 0:
+        raise HTTPException(status_code=409, detail="This tender is already in Other Tenders")
+    return _serialize(doc)
+
+
+# Fields an edit can change - the same as the Add Tender form.
+_EDITABLE_TEXT = ("title", "organisation", "tender_ref", "location", "state", "source_url", "description")
+_EDITABLE_DATES = ("published_date", "closing_date", "opening_date")
+_EDITABLE_AMOUNTS = ("tender_value", "earnest_money", "document_fees")
+
+
+@app.put("/tenders/{tender_id}")
+def edit_tender(tender_id: str, body: ManualTenderRequest) -> dict[str, Any]:
+    """Edits any tender's details. A scraped tender's edits are kept in
+    `edited_fields` too, so the next scrape doesn't overwrite them (see
+    app.processing.deduplicator)."""
+    from app.processing.eligibility import (
+        compute_eligibility_match,
+        emd_in_range,
+        load_match_keywords,
+        tender_fee_in_range,
+        tender_value_in_range,
+    )
+    from app.processing.normalizer import make_dedup_key
+
+    collection = get_collection()
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    doc = collection.find_one({"_id": object_id}, {"document_text": 0, "raw_data": 0})
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+
+    values: dict[str, Any] = {name: _clean(getattr(body, name)) for name in _EDITABLE_TEXT}
+    if not values["title"]:
+        raise HTTPException(status_code=422, detail="A tender title is required")
+    if values["source_url"] and not re.match(r"https?://", values["source_url"], re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="The tender link must start with http:// or https://")
+    values.update({name: _utc_midnight(getattr(body, name)) for name in _EDITABLE_DATES})
+    values.update({name: getattr(body, name) for name in _EDITABLE_AMOUNTS})
+
+    def _differs(name: str) -> bool:
+        old, new = doc.get(name), values[name]
+        if isinstance(old, dt.datetime) or isinstance(new, dt.datetime):
+            old_day = old.date() if isinstance(old, dt.datetime) else None
+            return old_day != (new.date() if new else None)
+        return old != new
+
+    changed = {name: values[name] for name in values if _differs(name)}
+    if not changed:
+        return _serialize(collection.find_one({"_id": object_id}))
+
+    update: dict[str, Any] = dict(changed)
+    if doc.get("manually_added"):
+        dedup_key, is_synthetic = make_dedup_key(
+            values["tender_ref"], values["title"], values["organisation"],
+            values["closing_date"].date() if values["closing_date"] else None,
+        )
+        if dedup_key != doc.get("dedup_key"):
+            if collection.find_one({"dedup_key": dedup_key, "_id": {"$ne": object_id}}, {"_id": 1}):
+                raise HTTPException(status_code=409, detail="Another tender already has this reference number "
+                                                            "(or the same title, organisation and closing date)")
+            update.update({"dedup_key": dedup_key, "ref_is_synthetic": is_synthetic})
+    else:
+        update.update({f"edited_fields.{name}": value for name, value in changed.items()})
+
+    merged = {**doc, **values}
+    domain_match = compute_eligibility_match(
+        f"{merged.get('title') or ''} {merged.get('description') or ''}", load_match_keywords()
+    ) or (not doc.get("manually_added") and bool(doc.get("domain_match")))
+    update["domain_match"] = domain_match
+    update["eligibility_match"] = (
+        domain_match
+        and tender_value_in_range(merged.get("tender_value"))
+        and emd_in_range(merged.get("earnest_money"))
+        and tender_fee_in_range(merged.get("document_fees"))
+    )
+    update["edited_at"] = dt.datetime.now(dt.timezone.utc)
+    collection.update_one({"_id": object_id}, {"$set": update})
+    return _serialize(collection.find_one({"_id": object_id}))
+
+
+@app.delete("/tenders/{tender_id}")
+def delete_tender(tender_id: str) -> dict[str, Any]:
+    """Deletes a tender from the dashboard. One added by hand is deleted
+    outright, with its uploaded documents. A scraped one is hidden for good
+    instead - deleting it would only bring it back with the next scrape."""
+    collection = get_collection()
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    doc = collection.find_one({"_id": object_id}, {"document_text": 0, "raw_data": 0})
+    if doc is None:
+        # Already gone (another tab, a double click) - the outcome asked for.
+        return {"deleted": True}
+    # The record goes first - files that can't be deleted (see
+    # _delete_files_quietly) never keep a tender on the dashboard.
+    scraped = any(m.get("query_name") != MANUAL_QUERY_NAME for m in doc.get("query_matches", []))
+    if doc.get("manually_added") and not scraped:
+        collection.delete_one({"_id": object_id})
+    else:
+        collection.update_one(
+            {"_id": object_id},
+            {"$set": {"hidden": True, "hidden_at": dt.datetime.now(dt.timezone.utc), "manual_documents": []}},
+        )
+    _delete_files_quietly(_uploaded_keys(doc) + [doc[k] for k in ("bid_pack_key", "presentation_key") if doc.get(k)])
+    return {"deleted": True}
+
+
+def _uploaded_keys(doc: dict[str, Any]) -> list[str]:
+    return [e["s3_key"] for e in doc.get("manual_documents", []) if e.get("s3_key")]
+
+
+def _delete_files_quietly(keys: list[str]) -> None:
+    """Best effort: a file that can't be deleted (no permission - e.g. a
+    local run on a role without s3:DeleteObject - or a storage blip) is
+    logged and left behind, never failing the request that removed it."""
+    for key in keys:
+        try:
+            storage.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not delete stored file %s: %s", key, exc)
+
+
+# --- A tender's own documents added by hand ----------------------------------
+# Uploaded files (kept under tender-documents/, see
+# app.processing.manual_documents) and links to documents or pages on any
+# site - on any tender. The checklist reads them through the same on-demand
+# fetch as a TenderDetail tender's documents (_require_document_text) - the
+# pipeline function downloads the links, reads every file's text (alongside
+# a scraped tender's TenderDetail documents) and summarises it.
+#
+# No limit on a file's size or on how many a tender has - like Sign & Stamp,
+# only the API function's memory bounds one upload (it's joined there before
+# being stored).
+
+
+def _tender_for_documents_or_404(tender_id: str) -> tuple[ObjectId, dict[str, Any]]:
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    tender = get_collection().find_one({"_id": object_id}, {"document_text": 0, "raw_data": 0})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    return object_id, tender
+
+
+def _serialize_manual_document(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": entry["id"],
+        "kind": entry.get("kind"),
+        "filename": entry.get("filename"),
+        "url": entry.get("url"),
+        "size": entry.get("size"),
+        "added_at": _iso(entry.get("added_at")),
+    }
+
+
+def _manual_documents_response(tender: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "documents": [_serialize_manual_document(e) for e in tender.get("manual_documents", [])],
+        # Their text has been read since the documents last changed.
+        "documents_read": bool(tender.get("document_text_key") or tender.get("document_text")),
+        "download_error": tender.get("documents_download_error"),
+    }
+
+
+def _save_manual_document(object_id: ObjectId, tender: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    """Adds `entry` and forgets the text read from the previous set of
+    documents, so the next checklist reads them all again."""
+    collection = get_collection()
+    collection.update_one(
+        {"_id": object_id},
+        {"$push": {"manual_documents": entry}, **_DOCUMENTS_CHANGED},
+    )
+    return _manual_documents_response(collection.find_one({"_id": object_id}, {"document_text": 0}))
+
+
+# The previously read text no longer matches the documents (the stored file
+# itself is overwritten on the next read).
+_DOCUMENTS_CHANGED = {
+    "$unset": {
+        "document_text_key": "",
+        "document_text_chars": "",
+        "document_text": "",
+        "document_fetch_started_at": "",
+        "document_fetch_finished_at": "",
+        "documents_download_error": "",
+    }
+}
+
+
+@app.get("/tenders/{tender_id}/manual-documents")
+def list_manual_documents(tender_id: str) -> dict[str, Any]:
+    _, tender = _tender_for_documents_or_404(tender_id)
+    return _manual_documents_response(tender)
+
+
+class ManualDocumentUploadFinish(BaseModel):
+    parts: int = Field(..., ge=1)
+    filename: str
+    content_type: str | None = None
+
+
+@app.post("/tenders/{tender_id}/manual-documents/uploads/{upload_id}/finish")
+def finish_manual_document_upload(tender_id: str, upload_id: str, body: ManualDocumentUploadFinish) -> dict[str, Any]:
+    """A tender document sent with PUT /uploads/{id}/parts/N - any size."""
+    from app.processing.manual_documents import safe_filename, tender_document_key
+
+    object_id, tender = _tender_for_documents_or_404(tender_id)
+    content = _take_upload(upload_id, body.parts, max_size=None)
+    if not content:
+        raise HTTPException(status_code=422, detail="File is empty")
+    document_id = uuid.uuid4().hex
+    filename = safe_filename(body.filename)
+    key = tender_document_key(object_id, document_id, filename)
+    storage.put_bytes(key, content, body.content_type or "application/octet-stream")
+    entry = {
+        "id": document_id,
+        "kind": "file",
+        "filename": filename,
+        "content_type": body.content_type or "application/octet-stream",
+        "size": len(content),
+        "s3_key": key,
+        "added_at": dt.datetime.now(dt.timezone.utc),
+    }
+    try:
+        return _save_manual_document(object_id, tender, entry)
+    except HTTPException:
+        _delete_files_quietly([key])
+        raise
+
+
+class ManualDocumentLink(BaseModel):
+    url: str
+
+
+@app.post("/tenders/{tender_id}/manual-documents/links")
+def add_manual_document_link(tender_id: str, body: ManualDocumentLink) -> dict[str, Any]:
+    """A link to one of the tender's documents (or its page) on any site -
+    downloaded when the documents are next read."""
+    object_id, tender = _tender_for_documents_or_404(tender_id)
+    url = body.url.strip()
+    if not re.match(r"https?://\S+$", url, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="Enter a full link starting with http:// or https://")
+    if any(e.get("url") == url for e in tender.get("manual_documents", [])):
+        raise HTTPException(status_code=409, detail="That link is already added")
+    entry = {
+        "id": uuid.uuid4().hex,
+        "kind": "link",
+        "url": url,
+        "added_at": dt.datetime.now(dt.timezone.utc),
+    }
+    return _save_manual_document(object_id, tender, entry)
+
+
+@app.delete("/tenders/{tender_id}/manual-documents/{document_id}")
+def remove_manual_document(tender_id: str, document_id: str) -> dict[str, Any]:
+    object_id, tender = _tender_for_documents_or_404(tender_id)
+    entry = next((e for e in tender.get("manual_documents", []) if e.get("id") == document_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    collection = get_collection()
+    collection.update_one(
+        {"_id": object_id},
+        {"$pull": {"manual_documents": {"id": document_id}}, **_DOCUMENTS_CHANGED},
+    )
+    _delete_files_quietly(_uploaded_keys({"manual_documents": [entry]}))
+    return _manual_documents_response(collection.find_one({"_id": object_id}, {"document_text": 0}))
+
+
+def _manual_file_or_404(tender_id: str, document_id: str) -> dict[str, Any]:
+    _, tender = _tender_for_documents_or_404(tender_id)
+    entry = next((e for e in tender.get("manual_documents", []) if e.get("id") == document_id), None)
+    if entry is None or entry.get("kind") != "file":
+        raise HTTPException(status_code=404, detail="Document not found")
+    return entry
+
+
+@app.get("/tenders/{tender_id}/manual-documents/{document_id}/link")
+def manual_document_link(tender_id: str, document_id: str) -> dict[str, Any]:
+    """Like /bid-document/link: `url` is null locally, where .../file serves it."""
+    entry = _manual_file_or_404(tender_id, document_id)
+    return {"url": storage.download_url(entry["s3_key"], entry["filename"]), "filename": entry["filename"]}
+
+
+@app.get("/tenders/{tender_id}/manual-documents/{document_id}/file")
+def manual_document_file(tender_id: str, document_id: str) -> Response:
+    entry = _manual_file_or_404(tender_id, document_id)
+    return Response(
+        content=_document_bytes(entry["s3_key"]),
+        media_type=entry.get("content_type") or "application/octet-stream",
+        headers={"Content-Disposition": _content_disposition("attachment", entry["filename"])},
+    )
+
+
 def _load_company_documents_for_generation() -> list[CompanyDocumentRef]:
     """The documents library (see the Documents tab section below), reshaped
     for app.reports.bid_generator - `open_bytes` is lazy so generating a bid
@@ -355,13 +873,23 @@ def _letterhead_path(company_profile: dict[str, Any]) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _logo_path(company_profile: dict[str, Any]) -> Path | None:
+    """company_profile.json's logo_image (for presentation slides), when
+    that file exists."""
+    if not company_profile.get("logo_image"):
+        return None
+    candidate = CONFIG_DIR / company_profile["logo_image"]
+    return candidate if candidate.is_file() else None
+
+
 def _generation_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], list[CompanyDocumentRef]]:
     """Eligibility criteria, company profile and documents library - what
-    both the checklist and the bid pack are built from."""
+    both the checklist and the bid pack are built from. The profile carries
+    the Documents tab's Text sections too (see app.text_sections)."""
     criteria_doc = get_eligibility_criteria_collection().find_one({"_id": CRITERIA_DOC_ID})
     return (
         (criteria_doc or {}).get("criteria", []),
-        load_company_profile(),
+        with_text_sections(load_company_profile(), _load_text_sections()),
         _load_company_documents_for_generation(),
     )
 
@@ -384,10 +912,12 @@ def _start_document_fetch(tender: dict[str, Any]) -> bool:
     right away (see app.lambda_handler.fetch_tender_documents), rather than
     leaving them for the next scheduled run - at most once per
     _DOCUMENT_FETCH_TIMEOUT, since the dashboard keeps asking while it
-    waits. True while a fetch is running; False when there's no pipeline
-    function to ask (running locally) or it couldn't be invoked."""
+    waits. Running locally (no pipeline function) the fetch runs in this
+    process instead - see _fetch_documents_locally. True while a fetch is
+    running; False when it couldn't be started."""
     function_name = get_settings().pipeline_function_name
-    if not function_name:
+    run_locally = not function_name and not os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    if not function_name and not run_locally:
         return False
     now = dt.datetime.now(dt.timezone.utc)
     claimed = get_collection().update_one(
@@ -402,6 +932,9 @@ def _start_document_fetch(tender: dict[str, Any]) -> bool:
     )
     if not claimed.modified_count:
         return True  # already running
+    if run_locally:
+        threading.Thread(target=_fetch_documents_locally, args=(tender["_id"],), daemon=True).start()
+        return True
     try:
         import boto3
 
@@ -417,12 +950,33 @@ def _start_document_fetch(tender: dict[str, Any]) -> bool:
     return True
 
 
+def _fetch_documents_locally(tender_id: ObjectId) -> None:
+    """Running the API locally there's no pipeline function to invoke, so
+    the fetch runs here in the background - the same as the CLI's
+    `fetch-tender-documents`. Marked finished even when it fails, so the
+    dashboard stops waiting and says the documents couldn't be read."""
+    from app.lambda_handler import fetch_tender_documents
+
+    try:
+        fetch_tender_documents([str(tender_id)])
+    except Exception:  # noqa: BLE001 - reported through document_fetch_finished_at
+        logger.exception("Local document fetch failed for tender %s", tender_id)
+        get_collection().update_one(
+            {"_id": tender_id}, {"$set": {"document_fetch_finished_at": dt.datetime.now(dt.timezone.utc)}}
+        )
+
+
 def _documents_unreadable(tender: dict[str, Any]) -> bool:
     """The last on-demand fetch finished, but left no document text - the
     files were downloaded and read and none had any (scanned images,
     unsupported formats), or the download itself failed."""
     started, finished = tender.get("document_fetch_started_at"), tender.get("document_fetch_finished_at")
     return started is not None and finished is not None and finished >= started
+
+
+def _is_tenderdetail_url(url: str | None) -> bool:
+    host = (urlparse(url or "").hostname or "").lower()
+    return host == "tenderdetail.com" or host.endswith(".tenderdetail.com")
 
 
 def _require_document_text(tender: dict[str, Any]) -> None:
@@ -437,13 +991,36 @@ def _require_document_text(tender: dict[str, Any]) -> None:
     `fetching` is true."""
     if (tender.get("document_text") or "").strip():
         return
-    if not tender.get("source_url"):
+    # Other Tenders: read from the documents added by hand - or, with none,
+    # from a TenderDetail link like any scraped tender. Any other link is
+    # just a reference; there's no knowing where its documents are.
+    hand_added = bool(tender.get("manual_documents"))
+    if tender.get("manually_added") and not hand_added and not _is_tenderdetail_url(tender.get("source_url")):
+        raise HTTPException(
+            status_code=409,
+            detail="Add this tender's documents first - open Documents on the tender and upload the files "
+                   "or add links to them. The checklist is built from what they say.",
+        )
+    if not hand_added and not tender.get("source_url"):
         raise HTTPException(
             status_code=409,
             detail="This tender has no source page to download its documents from, so a checklist "
                    "can't be built from its documents.",
         )
     if _documents_unreadable(tender):
+        if hand_added:
+            problem = tender.get("documents_download_error")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "fetching": False,
+                    "message": "No text could be read from the documents added to this tender (scanned images "
+                               "or an unsupported format, or a link that couldn't be downloaded)"
+                               + (f" - {problem}" if problem else "")
+                               + ". Upload the files themselves (PDF, Word, Excel or ZIP) under Documents, "
+                                 "then generate the checklist again.",
+                },
+            )
         raise HTTPException(
             status_code=409,
             detail={
@@ -459,14 +1036,21 @@ def _require_document_text(tender: dict[str, Any]) -> None:
         {"_id": tender["_id"], "document_text_requested_at": None},
         {"$set": {"document_text_requested_at": dt.datetime.now(dt.timezone.utc)}},
     )
+    which = "the documents added to this tender" if hand_added else \
+        "this tender's documents (View Original Notice/Document)"
     if _start_document_fetch(tender):
         raise HTTPException(
             status_code=409,
             detail={
                 "fetching": True,
-                "message": "Downloading and reading this tender's documents (View Original Notice/Document) "
-                           "now - this takes a few minutes. The checklist is built as soon as they're read.",
+                "message": f"Downloading and reading {which} now - this takes a few minutes. The checklist "
+                           "is built as soon as they're read.",
             },
+        )
+    if tender.get("manually_added"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Couldn't start reading {which} - try generating the checklist again in a minute.",
         )
     raise HTTPException(
         status_code=409,
@@ -583,6 +1167,7 @@ class ChecklistRow(BaseModel):
     # Absent on checklists saved before these existed - defaults keep them loading.
     notary: bool = False
     section: str = ""
+    reference: str = ""
     format_text: str = ""
     notes: str = ""
     done: bool = False
@@ -814,6 +1399,9 @@ def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, An
     checklist = tender.get("checklist")
     if not is_submission_checklist(checklist):
         checklist = _build_tender_checklist(tender, eligibility_criteria, company_profile, company_documents)
+    # A saved checklist may still list an issued record (office address
+    # proof, an empanelment certificate) as a document to draft.
+    checklist = records_not_drafted(checklist)
 
     # AI-draft every row the bidder writes itself. `facts` tells the
     # drafting prompt which company facts are already established, from the
@@ -824,18 +1412,35 @@ def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, An
         r for r in checklist.get("items", [])
         if r.get("source") == "draft" and r.get("status") != STATUS_NOT_APPLICABLE
     ]
+    # A presentation row becomes a slide deck (app.reports.presentation),
+    # drafted alongside the other documents rather than as a letter.
+    decks = [r for r in to_draft if is_presentation_row(r)]
+    to_draft = [r for r in to_draft if not is_presentation_row(r)]
     drafted: dict[str, Any] = {}
+    drafted_decks: dict[str, Any] = {}
+    errors: list[str] = []
     drafting_note = None
-    if to_draft:
+    if to_draft or decks:
         # The brochure and other reference documents are never enclosed in
         # the pack - their text only gives the drafter descriptive background.
         background = company_background_text(company_documents, company_profile)
-        try:
-            drafted, errors = draft_checklist_documents(
-                tender, to_draft, company_profile, facts, company_background=background
-            )
-        except BidDraftingError as exc:
-            errors = [str(exc)]
+        with ThreadPoolExecutor(max_workers=len(decks) or 1) as pool:
+            deck_runs = {r["id"]: pool.submit(draft_presentation, tender, r, company_profile, facts,
+                                              company_background=background) for r in decks}
+            if to_draft:
+                try:
+                    drafted, draft_errors = draft_checklist_documents(
+                        tender, to_draft, company_profile, facts, company_background=background,
+                        pack_rows=checklist.get("items", []), conditions=checklist.get("conditions") or [],
+                    )
+                    errors += draft_errors
+                except BidDraftingError as exc:
+                    errors.append(str(exc))
+            for r in decks:
+                try:
+                    drafted_decks[r["id"]] = deck_runs[r["id"]].result()
+                except BidDraftingError as exc:
+                    errors.append(f"{r['document']}: {exc}")
         if errors:
             logger.warning("AI bid-document drafting incomplete for tender %s: %s", tender_id, errors)
             drafting_note = (
@@ -843,14 +1448,30 @@ def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, An
                 "templates to complete by hand."
             )
 
+    # Every presentation row gets a deck - its fixed slides come from the
+    # verified company data even when its drafted slides are unavailable.
+    rendered: dict[str, Any] = {}
+    for r in decks:
+        try:
+            rendered[r["id"]] = render_presentation(
+                tender, company_profile, checklist.get("header"), drafted_decks.get(r["id"]),
+                _logo_path(company_profile))
+        except Exception:  # noqa: BLE001 - the row falls back to a page to complete by hand
+            logger.exception("Rendering the presentation failed for tender %s", tender_id)
+
     letterhead = _letterhead_path(company_profile)
     if letterhead is None and company_profile.get("letterhead_image"):
         logger.warning("Letterhead image %s not found - bid pack will use plain pages",
                        CONFIG_DIR / company_profile["letterhead_image"])
 
     drafted = collapse_unfilled_cvs(drafted, to_draft, company_profile)
-    checklist = merge_drafted_open_items(checklist, drafted.values())
-    checklist = refresh_statuses(checklist, company_documents, drafted)
+    # A turnover table must give each year its own CA-certified figure.
+    drafted = guard_financial_years(drafted, company_profile)
+    drafted = prepare_check_list_annexures(drafted, to_draft)
+    deck_items = [SimpleNamespace(title=r["document"], open_items=drafted_decks[r["id"]].open_items)
+                  for r in decks if r["id"] in drafted_decks and r["id"] in rendered]
+    checklist = merge_drafted_open_items(checklist, list(drafted.values()) + deck_items)
+    checklist = refresh_statuses(checklist, company_documents, set(drafted) | set(rendered))
 
     try:
         pdf_bytes = generate_bid_package(
@@ -862,6 +1483,7 @@ def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, An
             drafting_note=drafting_note,
             letterhead_image=letterhead,
             checklist=checklist,
+            presentations={row_id: deck.pdf for row_id, deck in rendered.items()},
         )
     except BidGenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -869,15 +1491,24 @@ def _build_bid_pack(object_id: ObjectId, tender: dict[str, Any]) -> dict[str, An
     now = dt.datetime.now(dt.timezone.utc)
     pack_key = f"{storage.BID_PACKS_PREFIX}{tender_id}/{uuid.uuid4().hex}.pdf"
     storage.put_bytes(pack_key, pdf_bytes, "application/pdf")
+    # The PowerPoint version of the (first) presentation, downloadable
+    # beside the pack (GET /tenders/{id}/presentation/link) - kept and
+    # expired with it.
+    presentation_key = None
+    if rendered:
+        presentation_key = f"{storage.BID_PACKS_PREFIX}{tender_id}/{uuid.uuid4().hex}.pptx"
+        storage.put_bytes(presentation_key, next(iter(rendered.values())).pptx, PPTX_MEDIA_TYPE)
     # The previous pack goes as soon as the new one is stored.
-    if tender.get("bid_pack_key"):
-        try:
-            storage.delete(tender["bid_pack_key"])
-        except Exception as exc:  # noqa: BLE001 - it expires on its own anyway
-            logger.warning("Could not delete the previous bid pack for tender %s: %s", tender_id, exc)
+    for old in ("bid_pack_key", "presentation_key"):
+        if tender.get(old):
+            try:
+                storage.delete(tender[old])
+            except Exception as exc:  # noqa: BLE001 - it expires on its own anyway
+                logger.warning("Could not delete the previous %s for tender %s: %s", old, tender_id, exc)
 
     update: dict[str, Any] = {
         "bid_pack_key": pack_key,
+        "presentation_key": presentation_key,
         "bid_generated_at": now,
         "checklist": checklist,
     }
@@ -949,6 +1580,50 @@ def download_bid_document(tender_id: str) -> Response:
         content=content,
         media_type="application/pdf",
         headers={"Content-Disposition": _content_disposition("attachment", _bid_pack_filename(tender))},
+    )
+
+
+PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _presentation_key_or_404(tender_id: str) -> tuple[dict[str, Any], str]:
+    """The technical presentation generated with the tender's current bid
+    pack (see _build_bid_pack) - offered for as long as the pack is."""
+    try:
+        object_id = ObjectId(tender_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid tender id")
+    tender = get_collection().find_one(
+        {"_id": object_id}, {"bid_pack_key": 1, "presentation_key": 1, "bid_generated_at": 1, "tender_ref": 1})
+    if tender is None:
+        raise HTTPException(status_code=404, detail="Tender not found")
+    if not (tender.get("presentation_key") and _bid_pack_available(tender)):
+        raise HTTPException(status_code=404, detail="No presentation to download - generate the bid pack again.")
+    return tender, tender["presentation_key"]
+
+
+def _presentation_filename(tender: dict[str, Any]) -> str:
+    return f"presentation-{tender.get('tender_ref') or tender['_id']}.pptx"
+
+
+@app.get("/tenders/{tender_id}/presentation/link")
+def presentation_link(tender_id: str) -> dict[str, Any]:
+    """Like /bid-document/link, for the PowerPoint presentation."""
+    tender, key = _presentation_key_or_404(tender_id)
+    return {"url": storage.download_url(key, _presentation_filename(tender)), "filename": _presentation_filename(tender)}
+
+
+@app.get("/tenders/{tender_id}/presentation")
+def download_presentation(tender_id: str) -> Response:
+    """The PowerPoint presentation itself - for local runs (see presentation_link)."""
+    tender, key = _presentation_key_or_404(tender_id)
+    content = storage.get_bytes(key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="No presentation to download - generate the bid pack again.")
+    return Response(
+        content=content,
+        media_type=PPTX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition("attachment", _presentation_filename(tender))},
     )
 
 
@@ -1074,6 +1749,118 @@ def delete_eligibility_criterion(criterion_id: str) -> dict[str, Any]:
     )
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Criterion not found")
+    return {"status": "deleted"}
+
+
+# --- Text sections -----------------------------------------------------------
+# The Documents tab's Text sections (see app.text_sections): company text the
+# team edits by hand, each with an "as on" date, an optional expiry and the
+# kinds of bid document it's used in. Every checklist / bid-pack build reads
+# them (_generation_inputs), so an edit applies to the next generated pack.
+
+_TEXT_SECTIONS_SEEDED_ID = "seeded"
+
+
+def _serialize_text_section(doc: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(doc["_id"]),
+        "header": doc.get("header", ""),
+        "text": doc.get("text", ""),
+        "as_on": doc.get("as_on"),
+        "valid_until": doc.get("valid_until"),
+        "use_in": doc.get("use_in", []),
+        "updated_at": _iso(doc.get("updated_at")),
+    }
+
+
+def _load_text_sections() -> list[dict[str, Any]]:
+    """Every section, in display order - the defaults (app.text_sections.
+    default_sections) are added the first time, and only then, so deleting
+    them all leaves the tab empty rather than bringing them back."""
+    collection = get_text_sections_collection()
+    if collection.find_one({"_id": _TEXT_SECTIONS_SEEDED_ID}) is None:
+        now = dt.datetime.now(dt.timezone.utc)
+        defaults = [
+            {**section, "position": n, "updated_at": now}
+            for n, section in enumerate(default_sections(load_company_profile()))
+        ]
+        if collection.count_documents({"meta": {"$ne": True}}) == 0:
+            collection.insert_many(defaults)
+        collection.update_one({"_id": _TEXT_SECTIONS_SEEDED_ID}, {"$set": {"meta": True}}, upsert=True)
+    docs = collection.find({"meta": {"$ne": True}}).sort([("position", 1), ("_id", 1)])
+    return [_serialize_text_section(d) for d in docs]
+
+
+class TextSectionRequest(BaseModel):
+    header: str
+    text: str = ""
+    as_on: str | None = None
+    valid_until: str | None = None
+    use_in: list[str] = []
+
+
+def _clean_text_section(body: TextSectionRequest) -> dict[str, Any]:
+    header = body.header.strip()
+    if not header:
+        raise HTTPException(status_code=422, detail="A section needs a header")
+    dates = {}
+    for field in ("as_on", "valid_until"):
+        value = (getattr(body, field) or "").strip() or None
+        try:
+            parse_day(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"{field} must be a date (YYYY-MM-DD)")
+        dates[field] = value
+    use_in = [k for k in USE_IN_OPTIONS if k in body.use_in] or ["all"]
+    return {
+        "header": header,
+        "text": body.text.strip(),
+        **dates,
+        "use_in": use_in,
+        "updated_at": dt.datetime.now(dt.timezone.utc),
+    }
+
+
+def _text_section_id(section_id: str) -> ObjectId:
+    try:
+        return ObjectId(section_id)
+    except InvalidId:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+
+@app.get("/text-sections")
+def list_text_sections() -> dict[str, Any]:
+    return {
+        "sections": _load_text_sections(),
+        "use_in_options": [{"key": k, "label": v} for k, v in USE_IN_OPTIONS.items()],
+    }
+
+
+@app.post("/text-sections")
+def create_text_section(body: TextSectionRequest) -> dict[str, Any]:
+    collection = get_text_sections_collection()
+    _load_text_sections()  # adds the defaults first, so a new section goes after them
+    last = collection.find_one({"meta": {"$ne": True}}, sort=[("position", -1)])
+    doc = {**_clean_text_section(body), "position": (last or {}).get("position", -1) + 1}
+    doc["_id"] = collection.insert_one(doc).inserted_id
+    return _serialize_text_section(doc)
+
+
+@app.put("/text-sections/{section_id}")
+def update_text_section(section_id: str, body: TextSectionRequest) -> dict[str, Any]:
+    collection = get_text_sections_collection()
+    object_id = _text_section_id(section_id)
+    result = collection.update_one({"_id": object_id}, {"$set": _clean_text_section(body)})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Section not found")
+    return _serialize_text_section(collection.find_one({"_id": object_id}))
+
+
+@app.delete("/text-sections/{section_id}")
+def delete_text_section(section_id: str) -> dict[str, Any]:
+    result = get_text_sections_collection().delete_one({"_id": _text_section_id(section_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Section not found")
     return {"status": "deleted"}
 
 
@@ -1760,6 +2547,172 @@ def _run_stamp_job(job_id: str) -> None:
             logger.exception("Could not record the failure of Sign & Stamp job %s", job_id)
 
 
+# A Word file dropped on Sign & Stamp is first made a PDF here - laid out as
+# Word does (app.convert) - and from then on previewed, marked and downloaded
+# like any other PDF. Deployed, DocxConvertFunction (its own image, with
+# LibreOffice) converts it in an async invocation and writes a status file
+# next to the result; locally, soffice runs in the request. The dashboard
+# polls GET /stamp-document/convert/{id}, then fetches the PDF with
+# GET .../result?part=N (no S3 link: the page fetches it, not the browser's
+# download, and the bucket has no CORS for that).
+_CONVERT_TIMEOUT = dt.timedelta(minutes=4)  # DocxConvertFunction's Timeout plus a margin
+
+
+class ConvertFileModel(BaseModel):
+    upload_id: str
+    parts: int = Field(ge=1)
+    filename: str = "document.docx"
+
+
+def _convert_keys(job_id: str) -> dict[str, str]:
+    base = f"{storage.BID_PACKS_PREFIX}converted/{job_id}/"
+    return {"source_key": f"{base}source", "result_key": f"{base}result.pdf", "status_key": f"{base}status.json"}
+
+
+@app.post("/stamp-document/convert")
+def start_word_conversion(body: ConvertFileModel) -> dict[str, Any]:
+    """Starts converting an upload (sent in parts) of a Word document to PDF -
+    answers with GET /stamp-document/convert/{id}'s body."""
+    if not is_word_document(body.filename):
+        raise HTTPException(status_code=422, detail="Only Word documents (.docx, .doc, .odt, .rtf) can be converted")
+    # Kept: "Edit text" reads and edits this same upload (see edit_word_text).
+    return _start_conversion(_take_upload(body.upload_id, body.parts, max_size=None, keep=True), body.filename)
+
+
+def _start_conversion(content: bytes, filename: str) -> dict[str, Any]:
+    job_id = uuid.uuid4().hex
+    keys = _convert_keys(job_id)
+    filename = re.sub(r"[\\/]+", "_", filename)
+    transfers = get_stamp_transfers_collection()
+    transfers.insert_one({"kind": "convert", "key": job_id, "filename": filename,
+                          "created_at": dt.datetime.now(dt.timezone.utc), **keys})
+    function_name = os.environ.get("DOCX_CONVERT_FUNCTION_NAME")
+    if not function_name:  # local: convert right here
+        try:
+            pdf = convert_to_pdf(content, filename)
+        except ConversionError as exc:
+            storage.put_text(keys["status_key"], json.dumps({"status": "failed", "message": str(exc)}))
+        else:
+            storage.put_bytes(keys["result_key"], pdf, "application/pdf")
+            storage.put_text(keys["status_key"], json.dumps({"status": "done", "size": len(pdf)}))
+    else:
+        storage.put_bytes(keys["source_key"], content)
+        try:
+            import boto3
+
+            boto3.client("lambda").invoke(
+                FunctionName=function_name,
+                InvocationType="Event",
+                Payload=json.dumps({"bucket": get_settings().files_bucket, "filename": filename, **keys}).encode(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Could not start converting %s: %s", filename, exc)
+            transfers.delete_one({"kind": "convert", "key": job_id})
+            raise HTTPException(status_code=503, detail="Couldn't start converting the Word file - try again.")
+    return _convert_status(transfers.find_one({"kind": "convert", "key": job_id}))
+
+
+def _convert_job(job_id: str) -> dict[str, Any]:
+    job = get_stamp_transfers_collection().find_one({"kind": "convert", "key": _transfer_key(job_id)})
+    if job is None:
+        raise HTTPException(status_code=404, detail="This conversion has expired - add the Word file again")
+    return job
+
+
+def _convert_status(job: dict[str, Any]) -> dict[str, Any]:
+    """{"job_id", "status": "running" | "done" | "failed", "message"}, plus the
+    PDF's `filename`, `size` and how many ?part=N requests fetch it once "done"."""
+    out = {"job_id": job["key"], "status": "running", "message": None}
+    text = storage.get_text(job["status_key"])
+    if text is None:
+        created = job["created_at"]
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=dt.timezone.utc)
+        if dt.datetime.now(dt.timezone.utc) - created > _CONVERT_TIMEOUT:
+            return {**out, "status": "failed", "message": "Converting the Word file took too long - try again."}
+        return out
+    result = json.loads(text)
+    if result.get("status") != "done":
+        return {**out, "status": "failed", "message": result.get("message") or "Converting the Word file failed."}
+    return {**out, "status": "done", "filename": f"{Path(job['filename']).stem or 'document'}.pdf",
+            "size": result["size"], "parts": max(1, -(-result["size"] // TRANSFER_PART_SIZE))}
+
+
+class ParagraphChangeModel(BaseModel):
+    """Changes to one paragraph (see app.convert.word_text.ParagraphChange) -
+    a field left out stays as it is."""
+
+    text: str | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    underline: bool | None = None
+    align: Literal["left", "center", "right", "justify"] | None = None
+    size: float | None = Field(None, ge=1, le=400)
+    delete: bool = False
+
+
+class NewParagraphModel(ParagraphChangeModel):
+    after: str  # a paragraph id, or an earlier new paragraph's key
+    key: str = ""
+
+
+class WordEditModel(ConvertFileModel):
+    """POST /stamp-document/word/edit - every change so far, by paragraph id
+    (from POST /stamp-document/word/paragraphs), against the original upload."""
+
+    edits: dict[str, ParagraphChangeModel] = Field(default_factory=dict, max_length=5000)
+    inserts: list[NewParagraphModel] = Field(default_factory=list, max_length=2000)
+
+
+def _word_upload(body: ConvertFileModel) -> bytes:
+    if Path(body.filename).suffix.lower() != ".docx":
+        raise HTTPException(status_code=422, detail="Only .docx files can be edited - save it as .docx in Word first")
+    return _take_upload(body.upload_id, body.parts, max_size=None, keep=True)
+
+
+@app.post("/stamp-document/word/paragraphs")
+def word_paragraphs(body: ConvertFileModel) -> dict[str, Any]:
+    """The text of a .docx upload, paragraph by paragraph, for "Edit text"."""
+    try:
+        return {"paragraphs": read_paragraphs(_word_upload(body))}
+    except WordTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post("/stamp-document/word/edit")
+def edit_word_text(body: WordEditModel) -> dict[str, Any]:
+    """The .docx upload with `edits` and `inserts` made (everything else in
+    the file kept - see app.convert.word_text), converted to PDF again: answers like
+    POST /stamp-document/convert."""
+    try:
+        edited = apply_edits(
+            _word_upload(body),
+            {key: ParagraphChange(**change.model_dump()) for key, change in body.edits.items()},
+            [NewParagraph(**new.model_dump()) for new in body.inserts],
+        )
+    except WordTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _start_conversion(edited, body.filename)
+
+
+@app.get("/stamp-document/convert/{job_id}")
+def word_conversion_status(job_id: str) -> dict[str, Any]:
+    return _convert_status(_convert_job(job_id))
+
+
+@app.get("/stamp-document/convert/{job_id}/result")
+def word_conversion_result(job_id: str, part: int = Query(0, ge=0)) -> Response:
+    """One TRANSFER_PART_SIZE slice of the converted PDF."""
+    job = _convert_job(job_id)
+    content = storage.get_bytes(job["result_key"])
+    if content is None:
+        raise HTTPException(status_code=404, detail="This conversion has expired - add the Word file again")
+    if part * TRANSFER_PART_SIZE >= len(content):
+        raise HTTPException(status_code=416, detail="Part out of range")
+    return Response(content=content[part * TRANSFER_PART_SIZE:(part + 1) * TRANSFER_PART_SIZE],
+                    media_type="application/octet-stream")
+
+
 def _options_for_pages(options: dict[str, Any], start: int, count: int) -> dict[str, Any]:
     """`options` (see _stamp_options) for one of several files - the pages
     `start` .. `start + count - 1` of them all, numbered from 0 again."""
@@ -1941,6 +2894,8 @@ def _per_query_counts(
         return {"$and": [*base, *extra_conditions]}
 
     pipeline = [
+        # Deleted from the dashboard (DELETE /tenders/{id}) - never counted.
+        {"$match": {"hidden": {"$ne": True}}},
         {"$unwind": "$query_matches"},
         {
             "$group": {
@@ -1986,7 +2941,7 @@ def _per_query_counts(
 @app.get("/stats")
 def stats() -> dict[str, Any]:
     collection = get_collection()
-    base_filter = {"disappeared": False}
+    base_filter = {"disappeared": False, "hidden": {"$ne": True}}
 
     pipeline = [
         {"$match": base_filter},
@@ -2019,6 +2974,7 @@ def stats() -> dict[str, Any]:
     cross_query = collection.count_documents(
         {**base_filter, "query_match_count": {"$gt": 1}}
     )
+    reopened = collection.count_documents({**base_filter, "reopened": True})
 
     # "Total tenders"/"Eligible"/"Fresh tenders" are the sum of the
     # per-saved-query breakdown (see /stats/by-query) rather than a
@@ -2026,8 +2982,8 @@ def stats() -> dict[str, Any]:
     # matched to more than one saved query is counted once per query, both
     # here and in that table.
     by_name = _per_query_counts(collection, today)
-    enabled_names = [saved.name for saved in load_saved_queries() if saved.enabled]
-    total = sum(by_name.get(name, {}).get("total", 0) for name in enabled_names)
+    enabled_names = [saved.name for saved in load_saved_queries() if saved.enabled] + [MANUAL_QUERY_NAME]
+    total =sum(by_name.get(name, {}).get("total", 0) for name in enabled_names)
     eligible = sum(by_name.get(name, {}).get("eligible", 0) for name in enabled_names)
     fresh = sum(by_name.get(name, {}).get("fresh", 0) for name in enabled_names)
 
@@ -2037,6 +2993,7 @@ def stats() -> dict[str, Any]:
         "by_priority": by_priority,
         "closing_soon": closing_soon,
         "cross_query": cross_query,
+        "reopened": reopened,
         "eligible": eligible,
         "fresh": fresh,
     }
@@ -2072,14 +3029,16 @@ def stats_by_query(shortlisted_only: bool = False, eligible_only: bool = False) 
     ).replace(tzinfo=dt.timezone.utc)
     by_name = _per_query_counts(collection, today, extra_conditions)
 
+    # Other Tenders (the manually added ones) always comes last, even empty,
+    # since it's where new ones are added from.
+    names = [saved.name for saved in load_saved_queries() if saved.enabled] + [MANUAL_QUERY_NAME]
     rows = []
-    for saved in load_saved_queries():
-        if not saved.enabled:
-            continue
-        r = by_name.get(saved.name, {})
+    for name in names:
+        r = by_name.get(name, {})
         rows.append(
             {
-                "query_name": saved.name,
+                "query_name": name,
+                "manual": name == MANUAL_QUERY_NAME,
                 "total": r.get("total", 0),
                 "eligible": r.get("eligible", 0),
                 "fresh": r.get("fresh", 0),

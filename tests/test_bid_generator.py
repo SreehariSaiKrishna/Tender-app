@@ -412,13 +412,13 @@ def test_letterhead_signature_and_stamp_only_where_ticked(tmp_path):
         TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs, letterhead_image=letterhead, checklist=checklist,
         **PLAIN_LAYOUT,
     )))
-    checklist_page, pan, ca, letter, notes = reader.pages
+    checklist_page, pan, ca, letter, *notes = reader.pages
     assert _image_count(checklist_page) == 1  # the letterhead
     assert _image_count(pan) == 3  # letterhead + signature + seal
     assert _image_count(ca) == 0  # attached untouched
     assert _image_count(letter) == 1  # signature only, no letterhead
     assert "Yours faithfully" in letter.extract_text()  # templated covering letter when there's no AI draft
-    assert _image_count(notes) == 0
+    assert notes and all(_image_count(page) == 0 for page in notes)
 
 
 def test_image_uploads_become_pages():
@@ -426,7 +426,7 @@ def test_image_uploads_become_pages():
     checklist = _checklist(submission_item("GST", document_id="GST Certificate"))
     reader = PdfReader(io.BytesIO(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
                                                        checklist=checklist, **PLAIN_LAYOUT)))
-    assert len(reader.pages) == 3  # checklist, the scanned image, notes
+    assert "INTERNAL REVIEW NOTES" in reader.pages[2].extract_text()  # checklist, the scanned image, notes
     assert _image_count(reader.pages[1]) == 1  # the scan itself
 
 
@@ -694,6 +694,23 @@ def test_drafted_tables_render_in_the_document():
     assert text.index("Our relevant projects") < text.index("SIV/WO/2025-26/011") < text.index("Yours faithfully")
 
 
+def test_a_drafted_table_row_taller_than_a_page_continues_on_the_next():
+    from app.intelligence.bid_drafter import DraftedTable
+
+    # Eight narrow columns and a long project description - one row needs
+    # more than a page.
+    row = submission_item("Annexure 5 - List of Completed Works", source="draft", letterhead=False)
+    columns = ["Sr. No.", "Name of Project/Work", "Project Description, Address", "Name of Client/Agency",
+               "Date of Sanction Order", "Project Cost (Cr.)", "Duration Of Project", "Completion Period"]
+    long_text = " ".join(f"scope item {n} delivered with analytics dashboards and reporting;" for n in range(120))
+    drafted = {row["id"]: DraftedDocument(id=row["id"], title="Annexure 5", tables=[DraftedTable(
+        columns=columns, rows=[["1", "Campaign", long_text, "Dept", "23-02-2026", "3.025", "FY 2025-26", "Ongoing"]])])}
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [],
+                                             drafted_documents=drafted, checklist=_checklist(row), **PLAIN_LAYOUT))
+    words = [" ".join(p.split()) for p in pages]
+    assert "scope item 0 " in words[1] and "scope item 119 " in " ".join(words[2:])
+
+
 def test_work_order_rows_are_named_for_their_project_and_summarised():
     profile = {**COMPANY_PROFILE, "past_experience": [
         {"short_name": "MP CAEC", "scope_label": "Social Media & Digital Campaign",
@@ -814,3 +831,335 @@ def test_msme_documents_are_never_not_applicable_and_the_exempt_emd_proof_is():
     assert rows["Request for EMD Exemption (MSME)"]["status"] == STATUS_TO_PREPARE
     assert rows["EMD Payment Proof"]["status"] == STATUS_NOT_APPLICABLE
     assert rows["EMD Payment Proof"]["notes"].startswith('Exempt as MSME - see "Request for EMD Exemption (MSME)"')
+
+
+# --- Non-English text, issued records, the tender's check list, price bids ---------
+
+def test_untranslated_script_is_flagged_instead_of_printed_as_black_boxes():
+    from app.reports.bid_generator import UNTRANSLATED
+
+    assert _safe("We, मी खालील सही करणार, OAKS") == f"We, {UNTRANSLATED}, OAKS"
+    assert _safe("Ref Acsw/Thane/2026-27/01 - café") == "Ref Acsw/Thane/2026-27/01 - café"  # Latin stays
+
+
+def test_issued_records_are_never_drafted():
+    from app.reports.bid_generator import records_not_drafted
+
+    plan = SubmissionChecklistPlan(rows=[
+        SubmissionRow(document="DGIPR Empanelment Certificate", source="draft"),
+        SubmissionRow(document="Annexure 9 - Certificate of Authorization", source="draft"),
+    ])
+    rows = {r["document"]: r for r in build_checklist(READ_TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [],
+                                                        plan)["items"]}
+    assert rows["DGIPR Empanelment Certificate"]["source"] == "upload"
+    assert rows["DGIPR Empanelment Certificate"]["status"] == STATUS_MISSING
+    assert rows["Annexure 9 - Certificate of Authorization"]["source"] == "draft"
+
+    # A checklist saved before this - unless the user set the row up by hand.
+    saved = _checklist(submission_item("Mumbai Office Address Proof", source="draft", status=STATUS_ENCLOSED),
+                       submission_item("Office lease note", source="draft", origin="user"))
+    fixed = records_not_drafted(saved)["items"]
+    assert (fixed[0]["source"], fixed[0]["status"]) == ("upload", STATUS_MISSING)
+    assert fixed[1]["source"] == "draft"
+
+
+def test_the_tenders_check_list_annexure_is_filled_with_page_numbers():
+    from app.intelligence.bid_drafter import DraftedTable
+    from app.reports.bid_generator import prepare_check_list_annexures
+
+    docs = [_company_doc("PAN Card", "pan.pdf", _one_page_pdf("PAN enclosure page"))]
+    check_list = submission_item("Annexure 11 - Check List", source="draft", letterhead=False)
+    letter = submission_item("Covering Letter", source="draft", letterhead=False)
+    checklist = _checklist(
+        letter, check_list,
+        submission_item("PAN", "PAN card", document_id="PAN Card", signature=True),
+        submission_item("DGIPR Empanelment Certificate"),  # not on file
+        submission_item("EMD", status=STATUS_NOT_APPLICABLE),
+    )
+    drafted = {
+        letter["id"]: DraftedDocument(id=letter["id"], title="Covering Letter", body_paragraphs=["We submit."]),
+        check_list["id"]: DraftedDocument(
+            id=check_list["id"], title="Annexure 11: Check List", body_paragraphs=["Please find the check list."],
+            tables=[DraftedTable(columns=["Sr.No.", "Details of Requirement", "Document Type", "Yes / No",
+                                          "If Yes Page No."],
+                                 rows=[["1", "[TO BE FILLED FROM COMPANY RECORDS: Details of Requirement 1]",
+                                        "", "", ""]])],
+            open_items=["[TO BE FILLED FROM COMPANY RECORDS: Page No. 1]"]),
+    }
+    prepare_check_list_annexures(drafted, [letter, check_list])
+    assert drafted[check_list["id"]].open_items == []
+
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
+                                             drafted_documents=drafted, checklist=checklist, **PLAIN_LAYOUT))
+    annexure = pages[2]
+    assert "TO BE FILLED" not in annexure
+    assert "Please find the check list." in annexure
+    cells = " ".join(annexure.split())
+    pan_page = next(i for i, p in enumerate(pages, 1) if "PAN enclosure page" in p)
+    assert f"3 PAN Self-attested copy Yes {pan_page} " in cells
+    assert "4 DGIPR Empanelment Certificate Copy No - " in cells
+    assert "EMD" not in annexure  # not applicable rows aren't listed
+
+
+def test_price_bid_rates_are_left_blank_to_fill_by_hand():
+    from app.intelligence.bid_drafter import DraftedTable
+
+    row = submission_item("Annexure 10 - Price Bid Format", source="draft", letterhead=False)
+    drafted = {row["id"]: DraftedDocument(
+        id=row["id"], title="Price Bid", body_paragraphs=["Our price bid:"],
+        tables=[DraftedTable(columns=["Sr No", "Medium", "Item", "Units", "Cost Per Thousands", "Total"],
+                             rows=[["1", "Facebook", "Post Boost", "Reach / Impressions",
+                                    "As quoted in the Price Schedule / Financial Bid",
+                                    "[TO BE FILLED FROM COMPANY RECORDS: total]"]])])}
+    text = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, [],
+                                            drafted_documents=drafted, checklist=_checklist(row), **PLAIN_LAYOUT))[1]
+    assert "Reach / Impressions" in text
+    assert "TO BE FILLED" not in text and "As quoted" not in text
+
+
+def _pdf_of_pages(*texts: str) -> bytes:
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    for text in texts:
+        c.drawString(100, 750, text)
+        c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def test_every_submission_page_is_numbered_continuously_and_the_index_gives_page_ranges():
+    docs = [_company_doc("Work Order X", "wo.pdf", _pdf_of_pages("WO page one", "WO page two", "WO page three"))]
+    checklist = _checklist(
+        submission_item("Covering Letter", source="draft", letterhead=False),
+        submission_item("Annexure 4 - Work Order X", "Work order", document_id="Work Order X",
+                        reference="Annexure 4"),
+    )
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
+                                             checklist=checklist))
+    notes_at = next(i for i, p in enumerate(pages) if "INTERNAL REVIEW NOTES" in p)
+    assert notes_at == 6  # cover, index, letter, three work order pages
+    for i, text in enumerate(pages[:notes_at], 1):
+        assert f"Page {i} of {notes_at}" in text
+    assert all("Page " not in p.split("INTERNAL")[0] or "of 6" not in p for p in pages[notes_at:])
+    index = " ".join(pages[1].split())
+    assert "Annexure / Ref." in index and "Annexure 4" in index
+    assert "4-6" in index  # the work order's pages
+    # Each document's pages carry its checklist S.No.; the cover and index don't.
+    assert "S.No. 1" in pages[2] and all("S.No. 2" in p for p in pages[3:6])
+    assert "S.No." not in pages[0]
+
+
+def test_a_presentation_row_is_added_when_the_tender_asks_for_one():
+    from app.reports.bid_generator import _add_presentation
+    from app.reports.presentation import is_presentation_row
+
+    rows = [submission_item("Covering Letter", source="draft")]
+    tender = {"document_text": "Shortlisted bidders shall make a technical presentation before the evaluation "
+                               "committee on their approach and methodology. Other text."}
+    _add_presentation(rows, tender)
+    deck = [r for r in rows if is_presentation_row(r)]
+    assert len(deck) == 1 and "technical presentation" in deck[0]["format_text"]
+
+    _add_presentation(rows, tender)  # never twice
+    assert len([r for r in rows if is_presentation_row(r)]) == 1
+
+
+def test_no_presentation_row_for_presentation_of_documents():
+    from app.reports.bid_generator import _add_presentation
+
+    rows = [submission_item("Covering Letter", source="draft")]
+    _add_presentation(rows, {"document_text": "Bids shall be rejected on presentation of forged documents."})
+    assert len(rows) == 1
+
+
+def test_page_references_in_drafts_become_the_final_page_numbers():
+    docs = [_company_doc("Work Order X", "wo.pdf", _pdf_of_pages("WO page one", "WO page two"))]
+    statement = submission_item("Eligibility Compliance Statement", source="draft", letterhead=False)
+    checklist = _checklist(
+        statement,
+        submission_item("Work Order X", document_id="Work Order X"),
+        submission_item("Empanelment Certificate"),  # not on file
+    )
+    drafted = {statement["id"]: DraftedDocument(
+        id=statement["id"], title="Eligibility Compliance Statement",
+        body_paragraphs=["Experience: Complied - Work Order X ([[PAGE 2]]).",
+                         "Empanelment: To be confirmed ([[PAGE 3]])."])}
+    pages = _pages_text(generate_bid_package(TENDER, ELIGIBILITY_CRITERIA, COMPANY_PROFILE, docs,
+                                             drafted_documents=drafted, checklist=checklist, **PLAIN_LAYOUT))
+    wo_first = next(i for i, p in enumerate(pages, 1) if "WO page one" in p)
+    text = " ".join(pages[1].split())
+    assert f"Work Order X (Pages {wo_first}-{wo_first + 1})" in text
+    assert "[[PAGE" not in text and "000" not in text
+    assert "S.No. 3 (Empanelment Certificate) is not enclosed yet" in text
+
+
+def test_financial_rows_flag_years_not_on_record_and_ca_formats_are_left_to_the_ca():
+    profile = {**COMPANY_PROFILE, "financials": {"annual_turnover": [
+        {"financial_year": "2023-24"}, {"financial_year": "2024-25"}, {"financial_year": "2025-26"}]}}
+    plan = SubmissionChecklistPlan(rows=[
+        SubmissionRow(document="Turnover Certificate", what_to_upload="CA certificate of turnover for FY 2022-23, "
+                      "2023-24 and 2024-25", source="upload", section="Financial"),
+        SubmissionRow(document="Annexure 7 - CA Certificate of Net Worth", what_to_upload="Net worth certificate "
+                      "by a Chartered Accountant", source="draft", format_hint="Annexure 7 - Net Worth Certificate"),
+    ])
+    rows = {r["document"]: r for r in build_checklist(READ_TENDER, [], profile, [], plan=plan)["items"]}
+    assert "FY 2022-23" in rows["Turnover Certificate"]["notes"]
+    assert "2023-24" not in rows["Turnover Certificate"]["notes"].split("FY")[-1].split("which")[0]
+    ca = rows["Annexure 7 - CA Certificate of Net Worth"]
+    assert (ca["letterhead"], ca["signature"], ca["stamp"]) == (False, False, False)
+    assert "Chartered Accountant to issue" in ca["notes"] and ca["reference"] == "Annexure 7"
+
+
+def test_a_compliance_statement_is_added_for_a_tender_with_several_conditions():
+    from app.intelligence.bid_drafter import CoveredCondition
+
+    conditions = [CoveredCondition(ref=f"Elig {i}", proved_by="PAN") for i in range(1, 4)]
+    plan = SubmissionChecklistPlan(conditions=conditions, rows=[
+        SubmissionRow(document="Covering Letter", source="draft"),
+        SubmissionRow(document="PAN", source="upload", basis="Elig 1 Legal Status")])
+    checklist = build_checklist(READ_TENDER, [], COMPANY_PROFILE, [], plan=plan)
+    names = [r["document"] for r in checklist["items"]]
+    assert names[:2] == ["Covering Letter", "Eligibility Compliance Statement"]
+    assert checklist["conditions"][0] == {"ref": "Elig 1", "proved_by": "PAN"}
+    pan = next(r for r in checklist["items"] if r["document"] == "PAN")
+    assert pan["reference"] == "Elig 1 Legal Status"
+
+    few = SubmissionChecklistPlan(conditions=conditions[:2], rows=plan.rows)
+    assert ELIGIBILITY not in [r["document"] for r in build_checklist(READ_TENDER, [], COMPANY_PROFILE, [],
+                                                                       plan=few)["items"]]
+
+
+ELIGIBILITY = "Eligibility Compliance Statement"
+
+
+def test_qa_flags_another_tenders_number_a_missing_reference_and_unverified_figures():
+    from app.reports.bid_generator import plan_rows, qa_findings
+
+    profile = {**COMPANY_PROFILE, "financials": {"annual_turnover": [{"amount_display": "Rs. 1,64,02,384"}]}}
+    declaration = submission_item("Self Declaration of Non-blacklisting", source="draft", signature=True)
+    letter = submission_item("Covering Letter", source="draft")
+    checklist = _checklist(declaration, letter, header={"bid_number": "GEM/2026/B/1"})
+    drafted = {
+        declaration["id"]: DraftedDocument(id=declaration["id"], title="Declaration", body_paragraphs=[
+            "We declare for bid GEM/2025/B/999 that we are not blacklisted."]),
+        letter["id"]: DraftedDocument(id=letter["id"], title="Covering Letter", body_paragraphs=[
+            "Ref: GEM/2026/B/1. Our turnover was Rs. 1,64,02,384 in FY 2023-24 and Rs. 9 crore in FY 2024-25.",
+            "Name: [TO BE FILLED FROM COMPANY RECORDS: TAN]"]),
+    }
+    qa = qa_findings(READ_TENDER, checklist, plan_rows(checklist, []), None, drafted, profile, [])
+    text = "\n".join(qa)
+    assert "GEM/2025/B/999" in text and "copy-paste" in text
+    assert "S.No. 1 Self Declaration of Non-blacklisting: does not quote the tender reference" in text
+    assert "\"Rs. 9 crore\"" in text and "1,64,02,384\"" not in text
+    assert "S.No. 2 Covering Letter: 1 placeholder(s)" in text
+    assert "No signature image" in text
+
+
+def test_a_turnover_figure_under_the_wrong_year_never_reaches_the_pack():
+    from app.intelligence.bid_drafter import DraftedTable
+    from app.reports.bid_generator import guard_financial_years
+
+    profile = {**COMPANY_PROFILE, "financials": {
+        "annual_turnover": [{"financial_year": "2023-24", "amount_display": "Rs. 1,64,02,384"},
+                            {"financial_year": "2024-25", "amount_display": "Rs. 5,23,89,823"},
+                            {"financial_year": "2025-26", "amount_display": "Rs. 3,59,46,518"}],
+        "average_turnover": {"period": "FY 2023-24 to FY 2025-26", "amount_display": "Rs. 3,49,12,908.33"}}}
+    # The tender asks for 2022-23 to 2024-25; the draft shifted every figure one year back.
+    shifted = DraftedDocument(id="e", title="Appendix E - Financial Capacity", tables=[DraftedTable(
+        columns=["Bidder", "Annual turnover 2022-23", "Annual turnover 2023-24", "Annual turnover 2024-25",
+                 "Average annual turnover"],
+        rows=[["TEST CO", "Rs. 1,64,02,384", "Rs. 5,23,89,823", "Rs. 3,59,46,518", "Rs. 3,49,12,908.33"]])])
+    # Row-wise, with the right figures, stays as it is.
+    correct = DraftedDocument(id="c", title="Turnover", tables=[DraftedTable(
+        columns=["Financial Year", "Turnover (Rs.)"],
+        rows=[["FY 2023-24", "1,64,02,384"], ["FY 2024-25", "Rs. 5,23,89,823"], ["FY 2025-26", "3,59,46,518"],
+              ["Average", "Rs. 3,49,12,908.33"]])])
+    guard_financial_years({"e": shifted, "c": correct}, profile)
+    row = shifted.tables[0].rows[0]
+    assert row[1] == "[TO BE VERIFIED: FY 2022-23 turnover - not in the CA-certified figures on file]"
+    assert row[2] == "[TO BE VERIFIED: FY 2023-24 turnover - the CA-certified figure is Rs. 1,64,02,384]"
+    assert "average turnover over FY 2022-23, 2023-24, 2024-25" in row[4]
+    assert len(shifted.open_items) == 4
+    assert correct.tables[0].rows[0][1] == "1,64,02,384" and correct.open_items == []
+
+
+def test_emd_rows_stay_in_their_own_section_and_tender_experience_formats_lead_the_work_orders():
+    from app.reports.bid_generator import SECTION_EMD_FINANCIAL, row_section
+
+    assert row_section({"document": "BOQ", "section": "EMD / Financial Bid"}) == SECTION_EMD_FINANCIAL
+    library = _wo_library()
+    plan = SubmissionChecklistPlan(rows=[
+        SubmissionRow(document="Work Order A", source="upload", library_document=library[0].name),
+        SubmissionRow(document="GST Registration (REG-06 + Annex A & B)", source="upload", basis="Elig 3 GST"),
+        SubmissionRow(document="Work Order B", source="upload", library_document=library[1].name),
+        SubmissionRow(document="Appendix D - Project Data Sheet", source="draft", section="Prescribed Annexures"),
+    ])
+    items = build_checklist(READ_TENDER, [], COMPANY_PROFILE, library, plan=plan)["items"]
+    names = [r["document"] for r in items]
+    assert "Project Experience Summary" not in names  # the tender's own format is the summary
+    d = names.index("Appendix D - Project Data Sheet")
+    assert all(n.startswith("Work Order") for n in names[d + 1:d + 3])
+    gst = next(r for r in items if r["document"].startswith("GST"))
+    assert gst["reference"] == "Elig 3 GST"
+
+
+def test_signature_and_seal_are_found_when_the_library_names_them_differently():
+    from app.reports.bid_generator import enclosure_documents, signing_assets
+
+    profile = {**COMPANY_PROFILE, "trade_name": "Test Co Pvt Ltd", "authorized_signatory": {
+        "name": "Jane Doe", "signature_document_name": "Jane_Signature", "seal_document_name": "Test Stamp"}}
+    docs = [
+        CompanyDocumentRef("1", "Jane_Sign", "jane.png", "image/png", lambda: _png(), mark_kind="signature"),
+        CompanyDocumentRef("2", "Other_Sign", "other.png", "image/png", lambda: _png(), mark_kind="signature"),
+        CompanyDocumentRef("3", "test_stamp", "stamp.png", "image/png", lambda: _png("red"), mark_kind="stamp"),
+        _company_doc("PAN Card", "pan.pdf"),
+    ]
+    signature, seal = signing_assets(profile, docs)
+    assert (signature.name, seal.name) == ("Jane_Sign", "test_stamp")
+    assert [d.name for d in enclosure_documents(docs, profile)] == ["PAN Card"]
+
+
+def test_lower_cased_appendix_letters_are_capitalised_in_row_names():
+    plan = SubmissionChecklistPlan(rows=[
+        SubmissionRow(document="Appendix a - Covering Letter", source="draft", basis="Appendix a; Elig 19"),
+        SubmissionRow(document="boq", source="draft")])
+    names = [(r["document"], r["reference"]) for r in build_checklist(READ_TENDER, [], COMPANY_PROFILE, [],
+                                                                      plan=plan)["items"]]
+    assert ("Appendix A - Covering Letter", "Appendix A") in names
+    assert any(n == "Boq" for n, _ in names)
+
+
+def test_a_format_listed_bare_and_per_instance_is_listed_once():
+    plan = SubmissionChecklistPlan(rows=[
+        SubmissionRow(document="Appendix D - Project Data Sheet", source="draft", notes="One per project."),
+        SubmissionRow(document="Appendix D - Project Data Sheet (MP CAEC)", source="draft"),
+        SubmissionRow(document="Appendix D - Project Data Sheet (Dumka)", source="draft"),
+        SubmissionRow(document="Appendix H - Manpower & Qualification", source="draft"),
+        SubmissionRow(document="Appendix H - Manpower & Qualification (Resource List)", source="draft",
+                      notes="List every resource."),
+    ])
+    items = build_checklist(READ_TENDER, [], COMPANY_PROFILE, [], plan=plan)["items"]
+    names = [r["document"] for r in items]
+    assert [n for n in names if n.startswith("Appendix D")] == [
+        "Appendix D - Project Data Sheet (MP CAEC)", "Appendix D - Project Data Sheet (Dumka)"]
+    assert [n for n in names if n.startswith("Appendix H")] == ["Appendix H - Manpower & Qualification"]
+    h = next(r for r in items if r["document"] == "Appendix H - Manpower & Qualification")
+    assert "List every resource." in h["notes"]
+
+
+def test_a_page_reference_the_drafter_could_not_number_never_reaches_the_pack():
+    from types import SimpleNamespace
+
+    from app.reports.bid_generator import resolve_page_refs
+
+    doc = SimpleNamespace(title="T", body_paragraphs=[
+        "Technical Proposal ([[PAGE [TO BE FILLED FROM COMPANY RECORDS: S.No. of Technical Proposal]]).",
+        "Other ([[PAGE ?]]) and [[PAGES 1]]."], tables=[], closing_paragraphs=[], open_items=[])
+    checklist = _checklist(submission_item("Covering Letter", source="draft"))
+    out = resolve_page_refs(doc, checklist, plan_rows(checklist, []), {checklist["items"][0]["id"]: (3, 4)})
+    text = " ".join(out.body_paragraphs)
+    assert "[[" not in text and "]]" not in text
+    assert text.count("cites a document that is not in this bid pack") == 2
+    assert "Pages 3-4." in text

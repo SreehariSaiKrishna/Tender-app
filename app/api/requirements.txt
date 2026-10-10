@@ -21,3 +21,7 @@ openai>=1.50
 pillow>=10.0
 # ...and renders a PDF letterhead from the documents library to an image.
 pypdfium2>=4.30
+# ...and edits a Word file's text in place (app.convert.word_text).
+lxml>=5.0
+# A tender's technical presentation as a PowerPoint deck (app.reports.presentation).
+python-pptx>=1.0

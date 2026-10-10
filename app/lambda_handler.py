@@ -10,10 +10,16 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import logging
+import re
+import time
 from typing import Any
 
 from app.config import get_settings
 from app.pipeline import run_pipeline
+
+# Seconds kept back from the Lambda's remaining time when the run starts:
+# the last AI call in flight when the deadline passes, then recording the run.
+RUN_FINISH_HEADROOM_SECONDS = 150
 
 
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
@@ -46,7 +52,13 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
 
     include_report = bool((event or {}).get("include_report", False))
 
-    summary = run_pipeline(settings, include_report=include_report, trigger="scheduled")
+    # The run must finish (and record itself) inside the Lambda's timeout -
+    # a run killed at the limit is retried by Lambda and alarms every time.
+    deadline = None
+    if hasattr(context, "get_remaining_time_in_millis"):
+        deadline = time.monotonic() + context.get_remaining_time_in_millis() / 1000 - RUN_FINISH_HEADROOM_SECONDS
+
+    summary = run_pipeline(settings, include_report=include_report, trigger="scheduled", deadline=deadline)
 
     return dataclasses.asdict(summary)
 
@@ -60,16 +72,34 @@ def fetch_tender_documents(tender_ids: list[str], settings=None) -> dict[str, An
     from app.browser.document_collector import run_document_collection
     from app.database import get_collection
     from app.intelligence.document_summarizer import summarize_pending_documents
+    from app.processing.manual_documents import collect_manual_documents
 
     ids = [ObjectId(t) for t in tender_ids]
-    downloads = run_document_collection(settings, tender_ids=ids)
+    # A tender with a TenderDetail page is downloaded from it (any documents
+    # added by hand are read along with those - see run_document_collection);
+    # one without - added by hand, with any other link or none - is read from
+    # the documents added to it.
+    manual_ids = [
+        d["_id"] for d in get_collection().find(
+            {
+                "_id": {"$in": ids},
+                "manual_documents.0": {"$exists": True},
+                "source_url": {"$not": re.compile(r"^https?://([^/]+\.)?tenderdetail\.com(/|$)", re.IGNORECASE)},
+            },
+            {"_id": 1},
+        )
+    ]
+    scraped_ids = [i for i in ids if i not in manual_ids]
+    manual_problems = collect_manual_documents(manual_ids, settings) if manual_ids else {}
+    downloads = run_document_collection(settings, tender_ids=scraped_ids) if scraped_ids else None
     summary = summarize_pending_documents(settings, tender_ids=ids)
     get_collection().update_many(
         {"_id": {"$in": ids}},
         {"$set": {"document_fetch_finished_at": dt.datetime.now(dt.timezone.utc)}},
     )
     return {
-        "downloads": [dataclasses.asdict(o) for o in downloads.outcomes],
+        "downloads": [dataclasses.asdict(o) for o in downloads.outcomes] if downloads else [],
+        "manual_document_problems": manual_problems,
         "summarized": summary.summarized,
         "failed": summary.failed,
     }

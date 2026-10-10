@@ -71,11 +71,14 @@ python main.py status
 ### Running the dashboard locally
 
 ```powershell
-.\scripts\dev.ps1
+.\scripts\dev.ps1     # PowerShell
+./scripts/dev.sh      # WSL / Git Bash (hands off to dev.ps1)
 ```
 
-This starts the API on http://127.0.0.1:8001 (uvicorn, reloading on code
-changes) and the dashboard on http://localhost:8000. Ctrl+C stops both.
+This starts one uvicorn process on http://localhost:8000 that serves both the
+dashboard (at `/`) and the API (docs at `/docs`), reloading on code changes.
+Ctrl+C stops it. Don't serve `frontend/` with `python -m http.server`: the
+page would load with no API behind it.
 
 - **No login locally.** On localhost the dashboard skips Cognito, and uvicorn
   has no authorizer in front of it. To review the sign-in screens, open
@@ -89,6 +92,22 @@ changes) and the dashboard on http://localhost:8000. Ctrl+C stops both.
 - **Checklists wait on document fetches.** A checklist for a tender whose
   documents haven't been read can't start the pipeline Lambda locally. Run
   `python main.py fetch-tender-documents <id>` instead.
+
+## Schedule (AWS)
+
+The pipeline Lambda runs 3 times a day, every day, from EventBridge rules in
+`template.yaml` (cron is in UTC; IST = UTC + 5:30):
+
+| Rule                   | IST   | Cron (UTC)           | Report email |
+|------------------------|-------|----------------------|--------------|
+| `tender-agent-morning` | 08:00 | `cron(30 2 * * ? *)` | no           |
+| `tender-agent-midday`  | 13:00 | `cron(30 7 * * ? *)` | no           |
+| `tender-agent-evening` | 18:00 | `cron(30 12 * * ? *)`| yes (once Phase 6 exists) |
+
+A run takes 4-15 minutes and is capped at Lambda's 15-minute limit; only one
+runs at a time (`ReservedConcurrentExecutions: 1`). Each run is recorded in
+the MongoDB `automation_runs` collection. The 13:00 run was added on
+2026-10-06.
 
 ## Security model (read this before running anything)
 

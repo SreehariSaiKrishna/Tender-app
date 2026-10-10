@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -72,7 +73,9 @@ class OpenAIProvider:
             raise ScreeningError(
                 "OPENAI_API_KEY is not set. Add it to .env before running AI screening."
             )
-        self._client = OpenAI(api_key=api_key)
+        # The SDK's default is a 600s timeout with 2 retries - one stalled
+        # call could outlast the whole pipeline Lambda (900s).
+        self._client = OpenAI(api_key=api_key, timeout=120, max_retries=1)
         self._model = model
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
@@ -189,6 +192,7 @@ def screen_tenders(
     limit: int | None = None,
     only_unscreened: bool = True,
     collection: Collection | None = None,
+    deadline: float | None = None,
 ) -> ScreenSummary:
     """Screen candidate tenders and append a screening entry for each.
 
@@ -196,6 +200,9 @@ def screen_tenders(
     changed (last_seen advanced) since their most recent screening - this
     keeps repeated `screen` runs cheap rather than re-billing every tender
     every time.
+
+    `deadline` (a time.monotonic() value): no new tender is screened after
+    it - the rest still need screening, so the next run picks them up.
     """
     settings = get_settings()
     provider = provider or get_provider(settings)
@@ -212,7 +219,10 @@ def screen_tenders(
         candidates = candidates[:limit]
 
     summary = ScreenSummary()
-    for tender in candidates:
+    for n, tender in enumerate(candidates):
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning("Run time budget reached; %d tender(s) left to screen next run", len(candidates) - n)
+            break
         try:
             verdict = screen_tender(_tender_to_dict(tender), capabilities, provider)
         except ScreeningError as exc:
