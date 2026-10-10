@@ -426,3 +426,70 @@ def test_unreadable_file_is_rejected(client):
     res = client.post("/stamp-document", files={"file": ("a.txt", b"not an image", "text/plain")},
                       data={"stamp": "true"})
     assert res.status_code == 422
+
+
+# --- Word files: POST /stamp-document/convert ---------------------------------
+
+def _convert(client, data: bytes, filename: str = "Letter.docx") -> dict:
+    parts = _upload_in_parts(client, data)
+    res = client.post("/stamp-document/convert", json={"upload_id": "a" * 32, "parts": parts, "filename": filename})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_a_word_file_comes_back_as_a_pdf_in_parts(client, transfers, monkeypatch):
+    monkeypatch.delenv("DOCX_CONVERT_FUNCTION_NAME", raising=False)  # converted in the request
+    pdf = _pdf(40)
+    seen = {}
+    monkeypatch.setattr(api, "convert_to_pdf", lambda content, filename: seen.update(name=filename) or pdf)
+    job = _convert(client, b"PK fake docx")
+    assert job["status"] == "done", job
+    assert seen["name"] == "Letter.docx" and job["filename"] == "Letter.pdf" and job["size"] == len(pdf)
+    assert client.get(f"/stamp-document/convert/{job['job_id']}").json()["status"] == "done"
+
+    monkeypatch.setattr(api, "TRANSFER_PART_SIZE", 1000)
+    status = client.get(f"/stamp-document/convert/{job['job_id']}").json()
+    got = b"".join(client.get(f"/stamp-document/convert/{job['job_id']}/result?part={i}").content
+                   for i in range(status["parts"]))
+    assert got == pdf
+    assert client.get(f"/stamp-document/convert/{job['job_id']}/result?part={status['parts']}").status_code == 416
+
+
+def test_a_word_file_that_cant_be_converted_says_why(client, transfers, monkeypatch):
+    monkeypatch.delenv("DOCX_CONVERT_FUNCTION_NAME", raising=False)
+
+    def fail(content, filename):
+        raise api.ConversionError(f"Couldn't convert '{filename}' to PDF")
+
+    monkeypatch.setattr(api, "convert_to_pdf", fail)
+    job = _convert(client, b"not a docx")
+    assert job["status"] == "failed" and "Letter.docx" in job["message"]
+
+
+def test_only_word_files_are_converted(client, transfers):
+    parts = _upload_in_parts(client, _pdf(1))
+    res = client.post("/stamp-document/convert", json={"upload_id": "a" * 32, "parts": parts, "filename": "a.pdf"})
+    assert res.status_code == 422
+
+
+def test_deployed_a_word_file_is_handed_to_the_converter_function(client, transfers, monkeypatch):
+    import boto3
+
+    monkeypatch.setenv("DOCX_CONVERT_FUNCTION_NAME", "convert-fn")
+    calls = []
+
+    class FakeLambda:
+        def invoke(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(boto3, "client", lambda name: FakeLambda())
+    job = _convert(client, b"PK fake docx")
+    assert job["status"] == "running"
+    payload = json.loads(calls[0]["Payload"])
+    assert calls[0]["FunctionName"] == "convert-fn" and calls[0]["InvocationType"] == "Event"
+    assert payload["filename"] == "Letter.docx" and api.storage.get_bytes(payload["source_key"]) == b"PK fake docx"
+
+    # What DocxConvertFunction (app.convert.handler) writes when it's done.
+    api.storage.put_bytes(payload["result_key"], _pdf(1))
+    api.storage.put_text(payload["status_key"], json.dumps({"status": "done", "size": len(_pdf(1))}))
+    assert client.get(f"/stamp-document/convert/{job['job_id']}").json()["status"] == "done"

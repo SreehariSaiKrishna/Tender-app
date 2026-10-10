@@ -27,15 +27,18 @@
       "designation": "Director"
     }
   ],
+  "_authorized_signatory_comment": "Optional: add \"date_of_birth\" (YYYY-MM-DD) and \"residential_address\" from the signatory's ID proof - affidavits ask for the deponent's age and residence, and without them the drafter leaves those two fields as placeholders.",
   "authorized_signatory": {
     "name": "Suman Matcha",
     "designation": "Director",
-    "signature_document_name": "Suman_Signature",
-    "seal_document_name": "Oaks Stamp",
+    "signature_document_name": "Suman_Sign",
+    "seal_document_name": "Oaks_stamp",
     "place": "Hyderabad"
   },
   "_letterhead_comment": "Full-page A4 letterhead image (relative to config/) drawn behind every page of a bid pack that goes to the tendering authority. The content area is inset to clear its header logo/address and footer contact strip - see app.reports.bid_generator.LETTERHEAD_MARGINS.",
   "letterhead_image": "letterhead.jpg",
+  "_logo_comment": "Company logo (relative to config/), cut from the letterhead's header - shown on every slide of a generated technical presentation (app.reports.presentation).",
+  "logo_image": "logo.png",
   "_reference_documents_comment": "Documents-library entries (by display name) that are background reading for drafting only - their text is fed to the AI drafter as company context, but they are never merged into or listed as enclosures of a bid pack. Any document whose name contains 'brochure' is treated this way too.",
   "reference_documents": [
     "Oaks Brochure",
@@ -248,7 +251,7 @@
     "as_of": "2026-09-16",
     "verified": false
   },
-  "_key_personnel_comment": "People the company proposes in tenders (lists of proposed personnel, CVs). Add one entry per person - name, role, qualification, experience_years, experience (relevant projects/employers), skills, languages - and keep their CV / degree / experience certificates in the Documents library. The drafter fills personnel lists only from here; a tender role with nobody listed stays a placeholder.",
+  "_key_personnel_comment": "People the company proposes in tenders (lists of proposed personnel, CVs). Add one entry per person - name, role (the position proposed), designation (current), qualification, experience_years (total), relevant_experience_years, experience (employers / summary), projects (list of relevant projects and the person's role in each), certifications, skills, languages, library_document (their CV in the library) - and keep their CV / degree / experience certificates in the Documents library. The drafter fills personnel lists only from here; a tender role with nobody listed stays a placeholder.",
   "key_personnel": [],
   "_past_experience_comment": "One entry per project, transcribed from its work order in the library (library_document). scope_label: the short scope a checklist row names it by (\"Work Order - <short_name> (<scope_label>)\") when the AI gives it no tender-specific one. contracted_as: the name the work order is addressed to. Fields a work order in hand doesn't state are left out, never guessed.",
   "past_experience": [

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
+from pathlib import Path
 
 import mongomock
 import pytest
@@ -184,32 +186,48 @@ def test_extract_text_rar_without_unrar_tool_returns_empty(monkeypatch, tmp_path
 # --- OCR fallback for scanned/image-only PDFs -----------------------------------------------------
 
 
-def _make_blank_pdf(path):
-    from pypdf import PdfWriter
+def _make_scanned_pdf(path, pages=1, width=200, height=200, blank=()):
+    """Image-only pages, like a scan (no text layer); page numbers in
+    `blank` get no image at all, like a blank separator page."""
+    import pymupdf
 
-    writer = PdfWriter()
-    writer.add_blank_page(width=200, height=200)
-    with open(path, "wb") as f:
-        writer.write(f)
+    image = pymupdf.Pixmap(pymupdf.csGRAY, pymupdf.IRect(0, 0, 8, 8), 0)
+    image.clear_with(200)
+    with pymupdf.open() as doc:
+        for n in range(pages):
+            page = doc.new_page(width=width, height=height)
+            if n not in blank:
+                page.insert_image(page.rect, pixmap=image)
+        doc.save(str(path))
 
 
-def test_extract_pdf_text_falls_back_to_ocr_for_pages_with_no_text_layer(monkeypatch, tmp_path):
-    """A blank/scanned page (no embedded text at all) must trigger OCR
-    rather than being reported as empty - confirmed live against two real
-    scanned tender notices (2026-09-16), both recovered this way.
+@pytest.fixture()
+def ocr_calls(monkeypatch):
+    """Fakes the OCR engine; records (file name, page number) per OCR'd page."""
+    import app.intelligence.document_summarizer as doc_sum
+
+    calls = []
+    monkeypatch.setattr(doc_sum, "_tesseract_cmd", lambda: "tesseract")
+    monkeypatch.setattr(doc_sum, "_ocr_workers", lambda: 1)  # calls in page order
+    monkeypatch.setattr(doc_sum, "_render_page_for_ocr", lambda page: (Path(page.parent.name).name, page.number))
+    monkeypatch.setattr(doc_sum, "_ocr_image", lambda image: calls.append(image) or "OCR extracted text")
+    return calls
+
+
+def test_extract_pdf_text_falls_back_to_ocr_for_pages_with_no_text_layer(ocr_calls, tmp_path):
+    """A scanned page (no embedded text at all) must trigger OCR rather
+    than being reported as empty - confirmed live against two real scanned
+    tender notices (2026-09-16), both recovered this way.
     """
     import app.intelligence.document_summarizer as doc_sum
 
     path = tmp_path / "scanned.pdf"
-    _make_blank_pdf(path)
+    _make_scanned_pdf(path)
 
-    monkeypatch.setattr(doc_sum, "_ocr_pdf_page", lambda pdf_path, page_number, dpi=200: "OCR extracted text")
-
-    text = doc_sum._extract_pdf_text(path)
-    assert "OCR extracted text" in text
+    assert "OCR extracted text" in doc_sum._extract_pdf_text(path)
 
 
-def test_extract_pdf_text_skips_ocr_when_real_text_present(monkeypatch, tmp_path):
+def test_extract_pdf_text_skips_ocr_when_real_text_present(ocr_calls, tmp_path):
     """A page with a normal text layer must not trigger OCR at all -
     OCR is strictly a fallback for pages pypdf couldn't read anything from.
     """
@@ -222,47 +240,124 @@ def test_extract_pdf_text_skips_ocr_when_real_text_present(monkeypatch, tmp_path
         doc.new_page().insert_text((50, 72), "Plenty of real text here")
         doc.save(str(path))
 
-    calls = []
-    monkeypatch.setattr(doc_sum, "_ocr_pdf_page", lambda *a, **k: calls.append(1))
-
     assert "Plenty of real text here" in doc_sum._extract_pdf_text(path)
-    assert calls == []
+    assert ocr_calls == []
 
 
-def test_extract_pdf_text_caps_ocr_pages_per_file(monkeypatch, tmp_path):
+def test_blank_pages_without_an_image_are_not_ocrd(ocr_calls, tmp_path):
+    import app.intelligence.document_summarizer as doc_sum
+
+    path = tmp_path / "scan.pdf"
+    _make_scanned_pdf(path, pages=3, blank={1})
+
+    doc_sum._extract_pdf_text(path)
+    assert ocr_calls == [("scan.pdf", 0), ("scan.pdf", 2)]
+
+
+def test_extract_pdf_text_caps_ocr_pages_per_file(monkeypatch, ocr_calls, tmp_path):
     """A long scanned bundle mustn't OCR every page - it stalled whole
     summarization runs at ~2s a page."""
     import app.intelligence.document_summarizer as doc_sum
-    from pypdf import PdfWriter
 
     path = tmp_path / "long-scan.pdf"
-    writer = PdfWriter()
-    for _ in range(5):
-        writer.add_blank_page(width=200, height=200)
-    with open(path, "wb") as f:
-        writer.write(f)
-
-    calls = []
+    _make_scanned_pdf(path, pages=5)
     monkeypatch.setattr(doc_sum, "MAX_OCR_PAGES_PER_FILE", 2)
-    monkeypatch.setattr(doc_sum, "_ocr_pdf_page", lambda pdf_path, page_number, dpi=200: calls.append(page_number) or "x")
 
     doc_sum._extract_pdf_text(path)
-    assert calls == [0, 1]
+    assert [page for _, page in ocr_calls] == [0, 1]
 
 
-def test_extract_pdf_text_ocr_failure_does_not_crash(monkeypatch, tmp_path):
+def test_one_tenders_files_share_an_ocr_budget(ocr_calls, tmp_path):
+    """The per-file cap alone let one tender's scanned volumes OCR for longer
+    than the whole pipeline Lambda may run (2026-10-01/02)."""
+    import app.intelligence.document_summarizer as doc_sum
+
+    for name in ("vol1.pdf", "vol2.pdf"):
+        _make_scanned_pdf(tmp_path / name, pages=3)
+
+    budget = doc_sum.OcrBudget(pages=4)
+    doc_sum.extract_text(tmp_path / "vol1.pdf", budget)
+    doc_sum.extract_text(tmp_path / "vol2.pdf", budget)
+    assert [name for name, _ in ocr_calls] == ["vol1.pdf"] * 3 + ["vol2.pdf"]
+
+    ocr_calls.clear()
+    doc_sum.extract_text(tmp_path / "vol1.pdf", doc_sum.OcrBudget(seconds=0))
+    assert ocr_calls == []  # out of time: nothing more is OCR'd
+
+
+def test_parallel_ocr_keeps_each_pages_text_in_place(monkeypatch, tmp_path):
+    import app.intelligence.document_summarizer as doc_sum
+
+    path = tmp_path / "scan.pdf"
+    _make_scanned_pdf(path, pages=5)
+    monkeypatch.setattr(doc_sum, "_tesseract_cmd", lambda: "tesseract")
+    monkeypatch.setattr(doc_sum, "_ocr_workers", lambda: 3)
+    monkeypatch.setattr(doc_sum, "_render_page_for_ocr", lambda page: page.number)
+    monkeypatch.setattr(doc_sum, "_ocr_image", lambda n: f"page {n} text")
+
+    assert doc_sum._extract_pdf_text(path).split("\n") == [f"page {n} text" for n in range(5)]
+
+
+def test_drawings_are_never_ocrd(ocr_calls, tmp_path):
+    """Drawing-sized pages, and files named as drawings - neither has
+    text worth reading, and a scanned A0 sheet takes Tesseract minutes."""
+    import app.intelligence.document_summarizer as doc_sum
+
+    _make_scanned_pdf(tmp_path / "volume.pdf", pages=2, width=2384, height=3370)  # A0
+    _make_scanned_pdf(tmp_path / "MAINDRG1TO115.pdf", pages=2, width=595, height=842)  # A4
+    _make_scanned_pdf(tmp_path / "notice.pdf", pages=1, width=595, height=842)
+
+    doc_sum.extract_text(tmp_path / "volume.pdf")
+    doc_sum.extract_text(tmp_path / "MAINDRG1TO115.pdf")
+    assert ocr_calls == []
+    doc_sum.extract_text(tmp_path / "notice.pdf")
+    assert ocr_calls == [("notice.pdf", 0)]
+
+
+@pytest.mark.parametrize(
+    ("filename", "priority"),
+    [("Tendernotice_1.pdf", 0), ("NIT03.pdf", 0), ("completetenderhay.pdf", 0), ("Corrigendum-2.pdf", 0),
+     ("Vol-01.pdf", 1), ("1785221082.pdf", 1), ("unit_list.pdf", 1), ("corporate_profile.pdf", 1),
+     ("MAINDRG1TO115EXPSP.pdf", 2), ("BOQ_968757.xls", 2), ("Schedule_of_rates.pdf", 2)],
+)
+def test_document_priority(filename, priority):
+    import app.intelligence.document_summarizer as doc_sum
+
+    assert doc_sum._document_priority(filename) == priority
+
+
+def test_the_ocr_budget_goes_to_the_most_useful_file_first(monkeypatch, ocr_calls, collection, tmp_path):
+    """Files come in TenderDetail's order; the notice must be read before a
+    big unlabelled volume uses up the tender's budget."""
+    import app.intelligence.document_summarizer as doc_sum
+
+    monkeypatch.setattr(doc_sum, "MAX_OCR_PAGES_PER_TENDER", 2)
+    _make_scanned_pdf(tmp_path / "Vol-01.pdf", pages=3)
+    _make_scanned_pdf(tmp_path / "Tendernotice_1.pdf", pages=1)
+    make_tender(
+        collection,
+        dedup_key="ref:1",
+        documents=[{"filename": n, "local_path": str(tmp_path / n)} for n in ("Vol-01.pdf", "Tendernotice_1.pdf")],
+        documents_downloaded_at=dt.datetime.now(dt.timezone.utc),
+    )
+
+    summarize_pending_documents(provider=FakeProvider(response=VALID_SUMMARY), collection=collection)
+    assert ocr_calls == [("Tendernotice_1.pdf", 0), ("Vol-01.pdf", 0)]
+
+
+def test_extract_pdf_text_ocr_failure_does_not_crash(monkeypatch, ocr_calls, tmp_path):
     """OCR itself failing (engine missing, corrupt page, etc.) must not
     propagate - the page just stays empty, same as any other single-file
     failure in this module."""
     import app.intelligence.document_summarizer as doc_sum
 
     path = tmp_path / "scanned.pdf"
-    _make_blank_pdf(path)
+    _make_scanned_pdf(path)
 
-    def raise_ocr_error(pdf_path, page_number, dpi=200):
-        raise RuntimeError("tesseract not found")
+    def raise_ocr_error(image):
+        raise RuntimeError("tesseract crashed")
 
-    monkeypatch.setattr(doc_sum, "_ocr_pdf_page", raise_ocr_error)
+    monkeypatch.setattr(doc_sum, "_ocr_image", raise_ocr_error)
 
     text = doc_sum._extract_pdf_text(path)  # must not raise
     assert text.strip() == ""
@@ -676,3 +771,19 @@ def test_summarize_pending_documents_respects_limit(collection, tmp_path):
 
     summary = summarize_pending_documents(provider=provider, limit=2, collection=collection)
     assert summary.summarized == 2
+
+
+def test_summarize_pending_documents_starts_nothing_past_the_deadline(collection, tmp_path):
+    doc_path = tmp_path / "notice.txt"
+    doc_path.write_text("Tender text", encoding="utf-8")
+    make_tender(
+        collection,
+        dedup_key="ref:1",
+        documents=[{"filename": "notice.txt", "local_path": str(doc_path)}],
+        documents_downloaded_at=dt.datetime.now(dt.timezone.utc),
+    )
+    provider = FakeProvider(response=VALID_SUMMARY)
+
+    summary = summarize_pending_documents(provider=provider, collection=collection, deadline=time.monotonic() - 1)
+    assert (summary.summarized, summary.failed) == (0, 0)
+    assert doc_path.exists()  # left for the summarize step / next run

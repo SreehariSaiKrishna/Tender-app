@@ -32,6 +32,9 @@ class TenderStatus(str, enum.Enum):
     UPDATED = "updated"
     CLOSING_SOON = "closing_soon"
     CLOSED = "closed"
+    # Was closed (gone from TenderDetail, or past its closing date) and is
+    # live again - set on the pass it comes back; the `reopened` flag stays.
+    REOPENED = "reopened"
 
 
 class Priority(str, enum.Enum):

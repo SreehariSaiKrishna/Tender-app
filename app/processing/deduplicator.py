@@ -16,6 +16,11 @@ query - and merges it into the `tenders` collection:
     part of this pass - a query that wasn't downloaded this run (skipped/
     failed) never causes its previously-tracked tenders to be marked gone,
     since we simply have no fresh data for it.
+  - Detects tenders that reopened: a closed tender (disappeared, or past its
+    closing date) that is live again is tagged `reopened`, with
+    `reopened_at`/`reopen_count`. Every pass compares against every stored
+    tender, closed ones included, so a reopen is never missed.
+  - Keeps a `status_history` of each "closed"/"reopened" event per tender.
   - Never deletes a document. A tender that disappears is marked, not removed.
 
 MongoDB has no pure "date" type (only datetime), so `closing_date` /
@@ -86,6 +91,7 @@ class IngestSummary:
     updated: int = 0  # deadline changed on an existing tender
     unchanged: int = 0
     disappeared: int = 0
+    reopened: int = 0
     closing_soon: int = 0
     cross_query_matches: int = 0
     queries_processed: list[str] = field(default_factory=list)
@@ -134,6 +140,7 @@ def ingest_batch(
         matched_queries = keys_this_pass[dedup_key]
         existing = existing_by_key.get(dedup_key)
         deadline_changed = False
+        reopened = False
         is_new = existing is None
         new_closing_date = _date_to_dt(normalized.closing_date)
 
@@ -174,6 +181,10 @@ def ingest_batch(
                 # generated) when the user pursues this tender.
                 "applied": False,
                 "applied_at": None,
+                "reopened": False,
+                "reopened_at": None,
+                "reopen_count": 0,
+                "status_history": [],
                 # Kept in sync with `latest_priority` once AI screening runs
                 # (see app.intelligence.scorer) - defaults to "unscreened"
                 # rank so a never-screened tender sorts last, not first.
@@ -181,7 +192,35 @@ def ingest_batch(
             }
         else:
             doc = existing
+            # Fields the user edited on the dashboard (PUT /tenders/{id})
+            # win over the listing - an edited closing date isn't a
+            # deadline change every pass.
+            overrides = doc.get("edited_fields") or {}
+            if "closing_date" in overrides:
+                new_closing_date = overrides["closing_date"]
             existing_closing = doc.get("closing_date")
+            # Closed before this pass: gone from TenderDetail, or listed but
+            # already past its closing date. Live again now: back in an
+            # export, and not past its (possibly extended) closing date.
+            was_closed = bool(doc.get("disappeared")) or (
+                existing_closing is not None and _dt_to_date(existing_closing) < today
+            )
+            effective_closing = new_closing_date if new_closing_date is not None else existing_closing
+            live_now = effective_closing is None or _dt_to_date(effective_closing) >= today
+            if was_closed and live_now:
+                reopened = True
+                doc["reopened"] = True
+                doc["reopened_at"] = now
+                doc["reopen_count"] = doc.get("reopen_count", 0) + 1
+                doc.setdefault("status_history", []).append(
+                    {
+                        "event": "reopened",
+                        "at": now,
+                        "previous_closing_date": existing_closing,
+                        "closing_date": effective_closing,
+                    }
+                )
+                doc["content_last_changed"] = now
             if (
                 existing_closing is not None
                 and new_closing_date is not None
@@ -216,6 +255,7 @@ def ingest_batch(
             doc["times_found"] = doc.get("times_found", 0) + 1
             doc["disappeared"] = False
             doc.pop("disappeared_at", None)
+            doc.update(overrides)
 
         # domain_match: cheap keyword-only relevance check, with no opinion on
         # the value ranges - this is what gates document download (see
@@ -263,6 +303,9 @@ def ingest_batch(
         # Report counters are independent dimensions (a tender can be both
         # "new" and "closing soon" at once) - only the single `status` field
         # needs a priority order, since a tender can only have one status.
+        if reopened:
+            summary.reopened += 1
+
         if is_new:
             summary.new += 1
         elif deadline_changed:
@@ -273,7 +316,9 @@ def ingest_batch(
         if is_closing_soon:
             summary.closing_soon += 1
 
-        if is_closing_soon:
+        if reopened:
+            doc["status"] = TenderStatus.REOPENED.value
+        elif is_closing_soon:
             doc["status"] = TenderStatus.CLOSING_SOON.value
         elif deadline_changed:
             doc["status"] = TenderStatus.UPDATED.value
@@ -318,9 +363,18 @@ def _mark_disappeared(
             operations.append(
                 UpdateOne(
                     {"_id": doc["_id"]},
-                    # disappeared_at: when app.processing.cleanup's grace
-                    # period starts for a tender with no closing_date.
-                    {"$set": {"disappeared": True, "status": TenderStatus.CLOSED.value, "disappeared_at": now}},
+                    # disappeared_at: when it was found closed. The tender
+                    # itself is kept for good - closed tenders are never deleted.
+                    {
+                        "$set": {"disappeared": True, "status": TenderStatus.CLOSED.value, "disappeared_at": now},
+                        "$push": {
+                            "status_history": {
+                                "event": "closed",
+                                "at": now,
+                                "closing_date": doc.get("closing_date"),
+                            }
+                        },
+                    },
                 )
             )
             summary.disappeared += 1

@@ -46,6 +46,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr unrar \
     && rm -rf /var/lib/apt/lists/*
 
+# The summarizer runs one Tesseract process per vCPU in parallel; without
+# this each would also spread itself over every core and they'd contend.
+ENV OMP_THREAD_LIMIT=1
+
 WORKDIR /var/task
 
 COPY requirements.txt .

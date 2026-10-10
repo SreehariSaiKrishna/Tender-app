@@ -138,6 +138,7 @@ def _print_process_result(result) -> None:
         click.echo(f"  Unchanged (re-seen):    {summary.unchanged}")
         click.echo(f"  Closing within 7 days:  {summary.closing_soon}")
         click.echo(f"  Disappeared (closed):   {summary.disappeared}")
+        click.echo(f"  Reopened:               {summary.reopened}")
         click.echo(f"  Found in >1 query:      {summary.cross_query_matches}")
     else:
         click.secho("Nothing was successfully normalized; skipping database merge.", fg="red")

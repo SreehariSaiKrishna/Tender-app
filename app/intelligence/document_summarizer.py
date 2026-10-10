@@ -17,6 +17,8 @@ import logging
 import os
 import re
 import shutil
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -118,28 +120,33 @@ def _tesseract_cmd() -> str | None:
     return next((p for p in _WINDOWS_DEFAULT_TESSERACT_PATHS if os.path.exists(p)), None)
 
 
-def _ocr_pdf_page(pdf_path: Path, page_number: int, dpi: int = 200) -> str:
-    """OCR one page of a PDF that has no extractable text layer - rasterize
-    it with pymupdf (no external binary needed) and read it with
-    pytesseract (a thin wrapper around the Tesseract OCR engine, which
-    DOES need to be installed separately - see _tesseract_cmd).
-    """
+# Greyscale at 150 dpi: measured 2026-10-02 on a noisy, slightly skewed
+# synthetic A4 scan of 8.6pt eligibility text, it read every amount and
+# date exactly as 200 dpi colour did, at ~1.5x the speed (2.2s vs 3.3s a
+# page on a desktop core; a Lambda core is slower).
+OCR_DPI = 150
+
+
+def _render_page_for_ocr(page):
+    """A PIL image of one pymupdf page, ready for Tesseract. Called on the
+    thread that owns the document - pymupdf isn't thread-safe."""
     import pymupdf
+
+    return page.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY).pil_image()
+
+
+def _ocr_image(image) -> str:
+    """Tesseract over one page image. pytesseract runs the engine as a
+    separate process, so several of these run in parallel on threads."""
     import pytesseract
 
-    cmd = _tesseract_cmd()
-    if not cmd:
-        logger.warning("Tesseract OCR engine not found; skipping OCR for %s", pdf_path)
-        return ""
-    pytesseract.pytesseract.tesseract_cmd = cmd
+    return pytesseract.image_to_string(image)
 
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        pixmap = doc[page_number].get_pixmap(dpi=dpi)
-        image = pixmap.pil_image()
-        return pytesseract.image_to_string(image)
-    finally:
-        doc.close()
+
+def _ocr_workers() -> int:
+    # One Tesseract process per core (the Dockerfile sets OMP_THREAD_LIMIT=1
+    # so each stays on one) - measured ~1.9x with 2, ~2.8x with 4.
+    return max(1, min(4, os.cpu_count() or 1))
 
 
 # A long scanned bundle mustn't OCR every page - each page is a rasterize +
@@ -147,37 +154,128 @@ def _ocr_pdf_page(pdf_path: Path, page_number: int, dpi: int = 200) -> str:
 # Beyond this many OCR'd pages per file, later scanned pages are skipped.
 MAX_OCR_PAGES_PER_FILE = 40
 
+# The per-file cap alone didn't bound a tender: from 2026-10-01 every
+# scheduled run was killed at the Lambda's 900s inside one tender's OCR -
+# e.g. 45316608 (115 scanned drawings + more) and 56986758 (eight scanned
+# volumes + a .rar of them). So a tender's files share one budget too -
+# spent on its most useful files first (see _document_priority). Past ~50
+# pages of text the tender's stored text is full anyway
+# (MAX_DOCUMENT_TEXT_CHARS).
+MAX_OCR_PAGES_PER_TENDER = 80
+MAX_OCR_SECONDS_PER_TENDER = 150
 
-def _extract_pdf_text(path: Path) -> str:
-    # pymupdf reads the text layer too (and faster than pypdf); pages
-    # without one fall back to OCR, up to MAX_OCR_PAGES_PER_FILE.
+# Pages bigger than A3 (in PDF points) are engineering drawings - no
+# eligibility/BOQ text worth reading, and at 200 dpi an A0 sheet is a
+# ~190 MB image that takes Tesseract minutes (or runs the Lambda out of
+# memory). Their text layer is still kept; they're just never OCR'd.
+MAX_OCR_PAGE_AREA = 842 * 1191 * 1.1
+
+
+class OcrBudget:
+    """OCR pages/seconds left for one tender's documents - shared across its
+    files (and the files inside its archives)."""
+
+    def __init__(self, pages: int | None = None, seconds: float | None = None):
+        self.pages = MAX_OCR_PAGES_PER_TENDER if pages is None else pages
+        self.deadline = time.monotonic() + (MAX_OCR_SECONDS_PER_TENDER if seconds is None else seconds)
+
+    def exhausted(self) -> bool:
+        return self.pages <= 0 or time.monotonic() >= self.deadline
+
+
+# By file name. The notice/RFP/eligibility documents carry what the summary,
+# checklist and bid drafting need; drawings and price schedules the least.
+# Names that say nothing (e.g. "Vol-01.pdf", "1785221082.pdf") sit between.
+# (?<![a-z])/(?![a-z]): a whole word even inside "Schedule_of_rates" or
+# "NIT03" (\b treats "_" and digits as word characters), but not "unit".
+_PRIORITY_FIRST_RE = re.compile(
+    r"notice|(?<![a-z])(nit|itb|rfp|rfq)(?![a-z])|tender[\W_]*doc|bid[\W_]*doc|complete[\W_]*tender|"
+    r"eligib|qualif|corrigend|addend|scope|terms|instruction",
+    re.IGNORECASE,
+)
+_PRIORITY_LAST_RE = re.compile(
+    r"drg|drawing|layout|boq|price|(?<![a-z])(maps?|rates?|sor)(?![a-z])", re.IGNORECASE
+)
+# Scanned drawings are never OCR'd, whatever their page size - their text
+# layer (if any) is still read.
+_DRAWING_NAME_RE = re.compile(r"drg|drawing|layout", re.IGNORECASE)
+
+
+def _document_priority(filename: str) -> int:
+    if _PRIORITY_FIRST_RE.search(filename):
+        return 0
+    if _PRIORITY_LAST_RE.search(filename):
+        return 2
+    return 1
+
+
+def _needs_ocr(page, text: str) -> bool:
+    """A page worth OCRing: no real text layer, no bigger than A3 (see
+    MAX_OCR_PAGE_AREA), and holding at least one raster image - a scan. A
+    blank separator page or a vector-only drawing has nothing to read."""
+    return (
+        len(text.strip()) < MIN_TEXT_CHARS_BEFORE_OCR
+        and page.rect.width * page.rect.height <= MAX_OCR_PAGE_AREA
+        and bool(page.get_images(full=True))
+    )
+
+
+def _safe_ocr(item: tuple[Path, int, Any]) -> str:
+    path, page_number, image = item
+    try:
+        return _ocr_image(image)
+    except Exception as exc:  # noqa: BLE001 - OCR failing must not lose the rest of the file
+        logger.warning("OCR failed for %s page %d: %s", path, page_number, exc)
+        return ""
+
+
+def _extract_pdf_text(path: Path, budget: OcrBudget | None = None) -> str:
+    # pymupdf reads the text layer too (and faster than pypdf); scanned
+    # pages without one fall back to OCR, up to MAX_OCR_PAGES_PER_FILE and
+    # the tender's OcrBudget, a few pages at a time in parallel.
     import pymupdf
 
     with pymupdf.open(str(path)) as doc:
         texts = [page.get_text() for page in doc]
+        candidates = [i for i, page in enumerate(doc) if _needs_ocr(page, texts[i])]
+        if candidates and _DRAWING_NAME_RE.search(path.name):
+            logger.info("Not OCRing %d scanned page(s) of drawing file %s", len(candidates), path)
+            candidates = []
+        if not candidates:
+            return "\n".join(texts)
 
-    ocr_pages = 0
-    total_chars = sum(len(t) for t in texts)
-    for i, text in enumerate(texts):
-        if len(text.strip()) >= MIN_TEXT_CHARS_BEFORE_OCR:
-            continue
-        if total_chars >= MAX_DOCUMENT_TEXT_CHARS:
-            break
-        if ocr_pages >= MAX_OCR_PAGES_PER_FILE:
-            logger.warning("OCR page limit (%d) reached for %s; later scanned pages skipped",
-                           MAX_OCR_PAGES_PER_FILE, path)
-            break
-        ocr_pages += 1
-        # Likely a scanned/image-only page - fall back to OCR rather than
-        # treating the whole file as unreadable.
-        try:
-            ocr_text = _ocr_pdf_page(path, i)
-        except Exception as exc:  # noqa: BLE001 - OCR failing must not lose the rest of the file
-            logger.warning("OCR failed for %s page %d: %s", path, i, exc)
-            continue
-        if ocr_text.strip():
-            texts[i] = ocr_text
-            total_chars += len(ocr_text)
+        cmd = _tesseract_cmd()
+        if not cmd:
+            logger.warning("Tesseract OCR engine not found; skipping OCR for %s", path)
+            return "\n".join(texts)
+        import pytesseract
+
+        pytesseract.pytesseract.tesseract_cmd = cmd
+
+        if len(candidates) > MAX_OCR_PAGES_PER_FILE:
+            logger.warning("OCR page limit (%d) reached for %s; %d later scanned pages skipped",
+                           MAX_OCR_PAGES_PER_FILE, path, len(candidates) - MAX_OCR_PAGES_PER_FILE)
+            candidates = candidates[:MAX_OCR_PAGES_PER_FILE]
+
+        total_chars = sum(len(t) for t in texts)
+        workers = _ocr_workers()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for start in range(0, len(candidates), workers):
+                if total_chars >= MAX_DOCUMENT_TEXT_CHARS:
+                    break
+                batch = candidates[start:start + workers]
+                if budget is not None:
+                    if budget.exhausted():
+                        logger.warning("Tender's OCR budget used up at %s page %d; later scanned pages skipped",
+                                       path, batch[0])
+                        break
+                    batch = batch[:budget.pages]
+                    budget.pages -= len(batch)
+                images = [(path, i, _render_page_for_ocr(doc[i])) for i in batch]
+                for i, ocr_text in zip(batch, pool.map(_safe_ocr, images)):
+                    if ocr_text.strip():
+                        texts[i] = ocr_text
+                        total_chars += len(ocr_text)
 
     return "\n".join(texts)
 
@@ -282,7 +380,7 @@ def _unrar_tool() -> str | None:
     return next((p for p in _WINDOWS_DEFAULT_UNRAR_PATHS if os.path.exists(p)), None)
 
 
-def _extract_archive_text(path: Path, opener) -> str:
+def _extract_archive_text(path: Path, opener, budget: OcrBudget | None = None) -> str:
     """Shared logic for .zip/.rar: extract to a scratch directory, then
     recurse extract_text() over each member (so a PDF/DOCX/etc. inside an
     archive is read the same way it would be if downloaded directly - real
@@ -298,19 +396,19 @@ def _extract_archive_text(path: Path, opener) -> str:
         for member_path in sorted(Path(tmp_dir).rglob("*")):
             if not member_path.is_file():
                 continue
-            text = extract_text(member_path)
+            text = extract_text(member_path, budget)
             if text:
                 parts.append(f"[Archived file: {member_path.name}]\n{text}")
     return "\n\n".join(parts)
 
 
-def _extract_zip_text(path: Path) -> str:
+def _extract_zip_text(path: Path, budget: OcrBudget | None = None) -> str:
     import zipfile
 
-    return _extract_archive_text(path, zipfile.ZipFile)
+    return _extract_archive_text(path, zipfile.ZipFile, budget)
 
 
-def _extract_rar_text(path: Path) -> str:
+def _extract_rar_text(path: Path, budget: OcrBudget | None = None) -> str:
     import rarfile
 
     tool = _unrar_tool()
@@ -318,7 +416,7 @@ def _extract_rar_text(path: Path) -> str:
         logger.warning("UnRAR tool not found; skipping archive %s", path)
         return ""
     rarfile.UNRAR_TOOL = tool
-    return _extract_archive_text(path, rarfile.RarFile)
+    return _extract_archive_text(path, rarfile.RarFile, budget)
 
 
 # Confirmed live (2026-09-16): real tender attachments include archives
@@ -331,8 +429,9 @@ def _extract_rar_text(path: Path) -> str:
 KNOWN_PLAIN_TEXT_EXTENSIONS = {".txt", ".csv", ".json", ".xml"}
 
 
-def extract_text(path: Path) -> str:
-    """Extract plain text from one downloaded tender document.
+def extract_text(path: Path, budget: OcrBudget | None = None) -> str:
+    """Extract plain text from one downloaded tender document. `budget`
+    bounds the OCR of scanned pages across all of one tender's files.
 
     Never raises - returns "" for an unsupported or corrupt file, since one
     bad file must not lose the rest of a tender's documents (same
@@ -344,7 +443,7 @@ def extract_text(path: Path) -> str:
     suffix = path.suffix.lower()
     try:
         if suffix == ".pdf":
-            return _extract_pdf_text(path)
+            return _extract_pdf_text(path, budget)
         if suffix in (".html", ".htm"):
             return _extract_html_text(path)
         if suffix in (".xls", ".xlsx"):
@@ -354,9 +453,9 @@ def extract_text(path: Path) -> str:
         if suffix == ".doc":
             return _extract_doc_text(path)
         if suffix == ".zip":
-            return _extract_zip_text(path)
+            return _extract_zip_text(path, budget)
         if suffix == ".rar":
-            return _extract_rar_text(path)
+            return _extract_rar_text(path, budget)
         if suffix in KNOWN_PLAIN_TEXT_EXTENSIONS:
             return path.read_text(encoding="utf-8", errors="ignore")
         logger.warning("No text extractor for %s; skipping it in the AI summary.", path)
@@ -490,10 +589,13 @@ def summarize_pending_documents(
     limit: int | None = None,
     collection: Collection | None = None,
     tender_ids: list[Any] | None = None,
+    deadline: float | None = None,
 ) -> SummarizeSummary:
     """Summarize every tender that has downloaded documents but no
     up-to-date AI summary yet (never summarized, or re-downloaded since the
     last summary) - or, with `tender_ids`, just those of them.
+
+    `deadline` (a time.monotonic() value): no new tender is started after it.
     """
     settings = settings or get_settings()
     provider = provider or get_provider(settings)
@@ -510,10 +612,17 @@ def summarize_pending_documents(
     eligibility_keywords = load_match_keywords()
 
     summary = SummarizeSummary()
-    for tender in candidates:
+    for n, tender in enumerate(candidates):
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning("Run time budget reached; %d tender(s) left to summarise", len(candidates) - n)
+            break
         file_texts: dict[str, str] = {}
         any_on_disk = False
-        for entry in tender.get("documents", []):
+        ocr_budget = OcrBudget()
+        # Most useful first: they get the OCR budget, and their text comes
+        # first in the stored (capped) text and the summary prompt.
+        entries = sorted(tender.get("documents", []), key=lambda e: _document_priority(e.get("filename") or ""))
+        for entry in entries:
             local_path = entry.get("local_path")
             if not local_path:
                 continue
@@ -521,7 +630,7 @@ def summarize_pending_documents(
             if not path.exists():
                 continue
             any_on_disk = True
-            text = extract_text(path)
+            text = extract_text(path, ocr_budget)
             if text:
                 file_texts[entry.get("filename", path.name)] = text
 

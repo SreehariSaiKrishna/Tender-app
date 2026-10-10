@@ -106,8 +106,23 @@ def _safe(text: Any) -> str:
     ends up in a Paragraph and didn't originate as a literal in this module
     (tender titles, AI-extracted requirement text, an organisation name...)
     must go through this first - unescaped "&"/"<"/">" would otherwise be a
-    malformed-XML crash waiting to happen on real tender text."""
-    return html.escape(str(text), quote=False).replace("₹", "Rs. ")
+    malformed-XML crash waiting to happen on real tender text. Text in a
+    script the fonts can't draw at all (e.g. a Marathi phrase the drafter
+    left untranslated) becomes one highlighted "[TO BE VERIFIED: ...]"
+    note instead of a row of black boxes."""
+    # U+FFFD: a character the tender's text extraction couldn't decode (a
+    # curly quote, usually) - dropped rather than printed as a box.
+    text = _NON_LATIN_RUN_RE.sub(UNTRANSLATED, str(text).replace("�", ""))
+    return html.escape(text, quote=False).replace("₹", "Rs. ")
+
+
+# Letters of scripts outside Latin (Greek onwards - Devanagari, Tamil,
+# Cyrillic, CJK...) - the base-14 PDF fonts have no glyphs for them. A run
+# spans the spaces, digits and punctuation between such words.
+_NON_LATIN_LETTER = r"[Ͱ-῿Ⰰ-퟿豈-﫿]"
+_NON_LATIN_RUN_RE = re.compile(
+    rf"{_NON_LATIN_LETTER}+(?:[\s\d.,;:/()\-–'\"]+{_NON_LATIN_LETTER}+)*")
+UNTRANSLATED = "[TO BE VERIFIED: text in a non-English script - translate it into English]"
 
 
 class BidGenerationError(RuntimeError):
@@ -324,10 +339,10 @@ def _is_signing_asset(doc: CompanyDocumentRef, company_profile: dict[str, Any]) 
     enclosures in their own right."""
     signatory = company_profile.get("authorized_signatory", {})
     names = {
-        (signatory.get("signature_document_name") or "").strip().lower(),
-        (signatory.get("seal_document_name") or "").strip().lower(),
+        _loose_name(signatory.get("signature_document_name")),
+        _loose_name(signatory.get("seal_document_name")),
     } - {""}
-    return doc.name.strip().lower() in names
+    return _loose_name(doc.name) in names or doc.mark_kind in ("signature", "stamp", "letterhead")
 
 
 def enclosure_documents(
@@ -479,6 +494,7 @@ def submission_item(
     origin: str = "auto",
     notary: bool = False,
     section: str = "",
+    reference: str = "",
 ) -> dict[str, Any]:
     return {
         "id": uuid.uuid4().hex,
@@ -496,6 +512,9 @@ def submission_item(
         "notary": notary,
         # One of CHECKLIST_SECTIONS - "" on older checklists (see row_section).
         "section": section,
+        # The tender's own annexure / form number, else the clause the row
+        # answers - the index's "Ref." column. "" on older checklists.
+        "reference": reference,
         "format_text": format_text,  # the tender's prescribed format / drafting instructions
         "notes": notes,
         "done": False,
@@ -552,6 +571,38 @@ def needs_notary(*texts: str) -> bool:
     return bool(_NOTARY_RE.search(" ".join(t for t in texts if t)))
 
 
+# A record someone else issues - the bidder can only attach it, never write
+# it: drafting one gives a covering letter that claims a document is
+# enclosed when it isn't (see is_issued_record).
+_ISSUED_RECORD_RE = re.compile(
+    r"empanel|lease|rent agreement|electricity bill|utility bill|address proof|office proof|"
+    r"proof of (office|address)|\bproof\b|licen[cs]e\b|registration certificate|completion certificate|"
+    r"performance certificate", re.IGNORECASE)
+
+
+def is_issued_record(document: str) -> bool:
+    """A row named for a record issued by someone else (an empanelment
+    certificate, office address proof...) rather than a letter, form or
+    annexure the bidder writes."""
+    return bool(_ISSUED_RECORD_RE.search(document or "")) and not _BIDDER_WRITTEN_RE.search(document or "")
+
+
+def records_not_drafted(checklist: dict[str, Any]) -> dict[str, Any]:
+    """Turns auto-built "draft" rows that are really issued records (see
+    is_issued_record) into "upload" rows - Missing until a library document
+    is picked - so the pack shows the gap instead of a drafted letter.
+    Rows the user added or edited on the dashboard stay as they are."""
+    items = []
+    for row in checklist.get("items", []):
+        if (row.get("source") == "draft" and row.get("origin", "auto") == "auto"
+                and is_issued_record(row.get("document") or "")):
+            row = {**row, "source": "upload", "letterhead": False}
+            if row.get("status") != STATUS_NOT_APPLICABLE:
+                row["status"] = STATUS_ENCLOSED if row.get("document_id") else STATUS_MISSING
+        items.append(row)
+    return {**checklist, "items": items}
+
+
 # The groups a pack is assembled in, in order, when the tender doesn't
 # prescribe its own (see build_checklist). Each row carries one.
 SECTION_COVERING = "Covering Letter / Bid Form"
@@ -584,7 +635,8 @@ _SECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"no[- ]deviation|integrity pact|conflict of interest|non[- ]disclosure", re.I)),
     (SECTION_EXPERIENCE, re.compile(
         r"work order|purchase order|completion|performance certificate|experience|similar (work|project)|"
-        r"client (certificate|testimonial)|list of (relevant )?projects", re.I)),
+        r"client (certificate|testimonial)|list of (relevant |completed |similar )?projects|project data|"
+        r"project (details|sheet)", re.I)),
     (SECTION_FINANCIAL, re.compile(
         r"turnover|audited|financial statement|balance sheet|profit (and|&) loss|\bitr\b|income tax return|"
         r"net ?worth|solvency|\bca certificate|chartered accountant", re.I)),
@@ -594,7 +646,7 @@ _SECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"cancelled cheque|bank (details|proof)", re.I)),
     (SECTION_TECHNICAL, re.compile(
         r"technical proposal|technical bid|methodology|approach|work plan|presentation|\bcv\b|"
-        r"curriculum vitae|personnel|team|company profile|organi[sz]ation(al)? (profile|capability)|"
+        r"curriculum vitae|personnel|manpower|team|company profile|organi[sz]ation(al)? (profile|capability)|"
         r"concept|strategy", re.I)),
     (SECTION_ANNEXURES, re.compile(r"annex|appendix|format|\bform\b|schedule", re.I)),
 ]
@@ -606,6 +658,10 @@ def _known_section(value: str | None) -> str | None:
     key = re.sub(r"[^a-z]+", "", (value or "").lower())
     if not key:
         return None
+    # Exact first - "financial" is inside "emdfinancialbid" too.
+    for section in CHECKLIST_SECTIONS:
+        if key == re.sub(r"[^a-z]+", "", section.lower()):
+            return section
     for section in CHECKLIST_SECTIONS:
         s_key = re.sub(r"[^a-z]+", "", section.lower())
         if key == s_key or key in s_key or s_key in key:
@@ -746,6 +802,151 @@ def _work_order_description(project: dict[str, Any]) -> str:
     return text + "."
 
 
+# "Annexure 5", "Annexure-V", "Form 3A", "Appendix B", "Schedule II" - the
+# tender's own number for a prescribed format.
+_ANNEXURE_LABEL_RE = re.compile(
+    r"\b(annexure|annex|appendix|form|schedule|proforma|format)\s*[-–:.]?\s*(?:no\.?\s*)?"
+    r"([0-9]{1,3}[a-z]?|[ivxlc]{1,6}|[a-z])\b(?:-[0-9a-z]{1,2}\b|\([0-9a-z]{1,2}\))?",
+    re.IGNORECASE)
+
+
+def annexure_label(*texts: str) -> str:
+    """The first tender annexure / form number named in `texts` (e.g.
+    "Annexure 5"), or ""."""
+    for text in texts:
+        for m in _ANNEXURE_LABEL_RE.finditer(text or ""):
+            if len(m.group(2)) == 1 and m.group(2).islower():
+                continue  # "schedule a meeting" - a lettered annexure is written "Appendix B"
+            return " ".join(m.group(0).split()).strip(" -–:.")
+    return ""
+
+
+_LOWER_LETTER_LABEL_RE = re.compile(
+    r"\b(Annexure|ANNEXURE|Annex|ANNEX|Appendix|APPENDIX|Form|FORM|Schedule|SCHEDULE|Proforma)(\s*[-–:.]?\s*)"
+    r"([a-z])(?=\s*(?:[-–:(;,]|$)|\s+[A-Z])")
+
+
+def normalise_labels(text: str) -> str:
+    """"Appendix a - Covering Letter" (a tender whose text extraction lost
+    its capitals) as "Appendix A - Covering Letter"."""
+    return _LOWER_LETTER_LABEL_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3).upper()}", text or "")
+
+
+def row_reference(document: str, format_hint: str = "", basis: str = "") -> str:
+    """The index's Ref. for a row - the tender's annexure / form number when
+    it prescribes one, else the clause the row answers."""
+    return annexure_label(document, format_hint) or " ".join((basis or "").split())[:60]
+
+
+_FY_RE = re.compile(r"\b(20\d{2})\s*[-–/]\s*(\d{2}|20\d{2})\b")
+
+
+def _fy_key(start: str, end: str) -> str:
+    return f"{start}-{end[-2:]}"
+
+
+def financial_years_on_record(company_profile: dict[str, Any]) -> set[str]:
+    financials = company_profile.get("financials") or {}
+    years = [t.get("financial_year") for t in financials.get("annual_turnover", [])]
+    years += [b.get("financial_year") for b in financials.get("balance_sheet", [])]
+    return {_fy_key(m.group(1), m.group(2)) for y in years if y for m in [_FY_RE.search(str(y))] if m}
+
+
+def financial_years_not_on_record(text: str, company_profile: dict[str, Any]) -> list[str]:
+    """Financial years `text` asks for (e.g. "FY 2022-23") that the
+    company's verified financials don't cover - the generic CA certificate on
+    file can't prove them."""
+    on_record = financial_years_on_record(company_profile)
+    if not on_record:
+        return []
+    asked = []
+    for m in _FY_RE.finditer(text or ""):
+        key = _fy_key(m.group(1), m.group(2))
+        consecutive = (int(key[2:4]) + 1) % 100 == int(key[-2:])  # "2022-23", not a date range
+        if consecutive and key not in on_record and key not in asked:
+            asked.append(key)
+    return asked
+
+
+_TABLE_AMOUNT_RE = re.compile(
+    r"^\s*(?:(?:rs\.?|inr|₹)\s*)?\d{1,3}(?:,\d{2,3})+(?:\.\d+)?\s*(?:/-)?\s*$|^\s*(?:rs\.?|inr|₹)\s*[\d,.]+\s*(?:/-)?\s*$",
+    re.IGNORECASE)
+
+
+def _digits(text: str) -> str:
+    return re.sub(r"\D", "", text)
+
+
+def _fy_in(text: str) -> str | None:
+    for m in _FY_RE.finditer(text or ""):
+        key = _fy_key(m.group(1), m.group(2))
+        if (int(key[2:4]) + 1) % 100 == int(key[-2:]):
+            return key
+    return None
+
+
+def guard_financial_years(drafted_documents: dict[str, Any], company_profile: dict[str, Any]) -> dict[str, Any]:
+    """In every drafted turnover table, each year's figure must be the
+    CA-certified figure for THAT year (company_profile.json's financials).
+    A figure put under another year - e.g. a tender asking for FY 2022-23
+    to 2024-25 filled with the certificate's 2023-24 to 2025-26 - or a year
+    not on record becomes a highlighted placeholder plus an open item, and
+    so does an average over a different set of years. Never invents the
+    right figure; only stops a false one reaching the pack."""
+    financials = company_profile.get("financials") or {}
+    certified = {_fy_in(str(t.get("financial_year"))): t.get("amount_display") or ""
+                 for t in financials.get("annual_turnover", []) if _fy_in(str(t.get("financial_year")))}
+    if not certified:
+        return drafted_documents
+    average = financials.get("average_turnover") or {}
+    # "FY 2023-24 to FY 2025-26" - every year from the first to the last.
+    starts = [int(m.group(1)) for m in _FY_RE.finditer(str(average.get("period") or ""))]
+    average_years = ({f"{y}-{(y + 1) % 100:02d}" for y in range(min(starts), max(starts) + 1)}
+                     if starts else set())
+
+    for doc in drafted_documents.values():
+        for table in getattr(doc, "tables", None) or []:
+            text = " ".join([table.title or "", *table.columns, *(c for r in table.rows for c in r)]).lower()
+            if "turnover" not in text:
+                continue
+            column_fy = [_fy_in(c) for c in table.columns]
+            column_avg = ["average" in c.lower() for c in table.columns]
+            table_years: set[str] = {fy for fy in column_fy if fy}
+            checks: list[tuple[list[str], int, str | None, bool]] = []
+            for row in table.rows:
+                labels = [c for c in row if not _TABLE_AMOUNT_RE.match(c)]
+                row_fy = next((fy for fy in map(_fy_in, labels) if fy), None)
+                row_avg = any("average" in c.lower() for c in labels)
+                table_years |= {row_fy} if row_fy else set()
+                for i, cell in enumerate(row):
+                    if _TABLE_AMOUNT_RE.match(cell) and not _PLACEHOLDER_RE.search(cell):
+                        fy = column_fy[i] if i < len(column_fy) and column_fy[i] else row_fy
+                        avg = (i < len(column_avg) and column_avg[i]) or row_avg
+                        checks.append((row, i, fy, avg))
+            for row, i, fy, avg in checks:
+                cell = row[i]
+                if avg:
+                    if not (table_years and average_years and table_years != average_years):
+                        continue
+                    row[i] = (f"[TO BE VERIFIED: average turnover over FY {', '.join(sorted(table_years))} - "
+                              f"the CA-certified average is for {average.get('period')}]")
+                elif fy and _digits(cell) != _digits(certified.get(fy, "")):
+                    row[i] = (f"[TO BE VERIFIED: FY {fy} turnover - the CA-certified figure is {certified[fy]}]"
+                              if fy in certified else
+                              f"[TO BE VERIFIED: FY {fy} turnover - not in the CA-certified figures on file]")
+                else:
+                    continue
+                if hasattr(doc, "open_items"):
+                    doc.open_items.append(f"{row[i][1:-1]} (was \"{cell.strip()}\")")
+    return drafted_documents
+
+
+# A certificate a Chartered Accountant (or a bank) issues and signs - when the
+# tender prescribes its format, the bidder can only prepare it for them.
+_CA_CERTIFICATE_RE = re.compile(
+    r"\bca\b|chartered accountant|turnover certificate|net ?worth certificate|solvency|auditor", re.IGNORECASE)
+
+
 def _rows_from_plan(
     plan: "SubmissionChecklistPlan", candidates: list[CompanyDocumentRef], company_profile: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -762,6 +963,12 @@ def _rows_from_plan(
     by_doc: dict[str, dict[str, Any]] = {}
     by_name: dict[tuple[str, str], dict[str, Any]] = {}
     for r in plan.rows:
+        r.document, r.basis, r.format_hint = (normalise_labels(r.document), normalise_labels(r.basis),
+                                              normalise_labels(r.format_hint))
+        if r.document[:1].islower():
+            r.document = r.document[0].upper() + r.document[1:]  # "boq" as the tender's lower-cased text gave it
+        if r.source == "draft" and is_issued_record(r.document):
+            r.source = "upload"  # see records_not_drafted
         doc = None
         if r.source == "upload":
             unused = [c for c in candidates if c.id not in by_doc]
@@ -803,11 +1010,28 @@ def _rows_from_plan(
         # second set, whatever the plan says; the dashboard can still tick it.
         given = (None, None, None) if pre_attested else (r.letterhead, r.signature, r.stamp)
         letterhead, signature, stamp = (g if g is not None else d for g, d in zip(given, usual))
+
+        row_text = f"{r.document} {r.what_to_upload} {r.format_hint} {r.notes}"
+        ca_format = r.source == "draft" and bool(_CA_CERTIFICATE_RE.search(f"{r.document} {r.what_to_upload}"))
+        if ca_format:
+            # The tender's own format for a CA's certificate: prepared here,
+            # filled from the verified financials, but issued by the CA.
+            letterhead, signature, stamp = False, False, False
+            notes = (f"{notes} Prepared in the tender's format for the Chartered Accountant to issue on their "
+                     "letterhead with UDIN, sign and seal - the bidder does not sign it.").strip()
+        if ca_format or section == SECTION_FINANCIAL:
+            gaps = financial_years_not_on_record(row_text, company_profile)
+            if gaps:
+                notes = (f"{notes} Tender asks for FY {', '.join(gaps)}, which the CA-certified figures on file "
+                         "do not cover - get a fresh CA certificate for exactly the years asked.").strip()
         row = submission_item(
             name, what_to_upload, r.where.strip(), r.source,
             doc.id if doc else None, letterhead, signature, stamp,
             _row_status(r.source, doc) if applicable else STATUS_NOT_APPLICABLE, r.format_hint.strip(), notes,
             notary=notary and applicable, section=section,
+            # An attached record's own name ("GST REG-06 + Annex A") is no
+            # tender annexure number - only a document the bidder fills is.
+            reference=row_reference(r.document if r.source == "draft" else "", r.format_hint, basis),
         )
         rows.append(row)
         bases[row["id"]] = [basis] if basis else []
@@ -820,8 +1044,36 @@ def _rows_from_plan(
     for row in rows:
         if bases[row["id"]]:
             row["notes"] = f"Tender: {'; '.join(bases[row['id']])}. {row['notes']}".strip()
+    rows = _collapse_repeated_formats(rows)
     _exempt_payment_rows(rows)
     return rows
+
+
+_INSTANCE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _collapse_repeated_formats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One prescribed format listed both bare and per instance ("Appendix D
+    - Project Data Sheet" plus "... (MP CAEC)", "... (Dumka)") keeps only
+    the instances; listed bare and once more with a qualifier ("Appendix H"
+    and "Appendix H (Resource List)") it is one row. Notes are merged."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        label = annexure_label(row["document"]) if row["source"] == "draft" else ""
+        if label:
+            groups.setdefault(_loose_name(label), []).append(row)
+    dropped: set[str] = set()
+    for group in groups.values():
+        bare = [r for r in group if not _INSTANCE_SUFFIX_RE.search(r["document"])]
+        instances = [r for r in group if _INSTANCE_SUFFIX_RE.search(r["document"])]
+        if not bare or not instances:
+            continue
+        keep, drop = (instances, bare) if len(instances) >= 2 else (bare[:1], bare[1:] + instances)
+        for row in drop:
+            for note in [n for n in [row["notes"]] if n and n not in keep[0]["notes"]]:
+                keep[0]["notes"] = f"{keep[0]['notes']} {note}".strip()
+            dropped.add(row["id"])
+    return [r for r in rows if r["id"] not in dropped]
 
 
 _EXEMPTION_RE = re.compile(r"exempt", re.IGNORECASE)
@@ -882,6 +1134,7 @@ def _rows_from_summary(
             text.strip()[:80], text.strip(), "Financial Bid" if _FINANCIAL_RE.search(text) else DEFAULT_WHERE,
             source, doc.id if doc else None, letterhead, signature, stamp, _row_status(source, doc),
             notary=needs_notary(text), section=infer_section(text, source=source),
+            reference=annexure_label(text),
         ))
     rows += [_library_row(d, company_profile) for d in selection.selected if d.id not in used]
     return rows
@@ -889,15 +1142,21 @@ def _rows_from_summary(
 
 def _order_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rows grouped in CHECKLIST_SECTIONS order (stable - the plan's own
-    order within a group), the experience summary ahead of the work orders
-    it summarises."""
+    order within a group). Within a group the forms the bidder fills (an
+    experience or turnover annexure, the experience summary) come first and
+    the records proving them right after, so an evaluator reads each claim
+    followed by its proof."""
     def _key(row: dict[str, Any]) -> tuple[int, int]:
         section = row_section(row)
-        within = 0
-        if section == SECTION_EXPERIENCE:
-            text = f"{row.get('document') or ''}".lower()
-            within = 0 if re.search(r"summary|list of|statement|details of", text) else (
-                2 if re.search(r"completion|performance|client certificate|testimonial", text) else 1)
+        text = f"{row.get('document') or ''}".lower()
+        if row.get("source") == "draft" or (
+                section == SECTION_EXPERIENCE and re.search(r"summary|list of|statement|details of", text)):
+            within = 0
+        elif section == SECTION_EXPERIENCE and re.search(r"completion|performance|client certificate|testimonial",
+                                                          text):
+            within = 2
+        else:
+            within = 1
         return CHECKLIST_SECTIONS.index(section), within
 
     return sorted(rows, key=_key)
@@ -934,6 +1193,70 @@ def _add_experience_summary(rows: list[dict[str, Any]]) -> None:
         "Summary sheet of the enclosed work orders - client, work order no. & date, relevant scope, value and status",
         DEFAULT_WHERE, "draft", None, True, True, True, STATUS_TO_PREPARE,
         notes="Summarises the work orders enclosed below.", section=SECTION_EXPERIENCE,
+    ))
+
+
+ELIGIBILITY_COMPLIANCE = "Eligibility Compliance Statement"
+_COMPLIANCE_ROW_RE = re.compile(
+    r"compliance (statement|sheet|matrix|table)|eligibility (criteria|compliance|statement|details)|"
+    r"pre[- ]?qualification (criteria|compliance|details)|qualification criteria", re.IGNORECASE)
+# A tender with at least this many stated conditions gets a point-by-point
+# compliance statement when it prescribes none.
+_MIN_CONDITIONS_FOR_STATEMENT = 3
+
+
+def _add_compliance_statement(rows: list[dict[str, Any]], conditions: list[dict[str, Any]]) -> None:
+    """Evaluators check eligibility condition by condition - a statement
+    answering each one (Complied / how / which document, on which page) is
+    added after the covering letter when the tender states several
+    conditions and no row already answers them."""
+    if len(conditions) < _MIN_CONDITIONS_FOR_STATEMENT:
+        return
+    if any(_COMPLIANCE_ROW_RE.search(f"{r['document']} {r['what_to_upload']}") for r in rows):
+        return
+    _insert_in_section(rows, submission_item(
+        ELIGIBILITY_COMPLIANCE,
+        "Point-by-point statement of compliance with every eligibility / qualification condition - "
+        "compliance, how the bidder qualifies, and the supporting document with its page number",
+        DEFAULT_WHERE, "draft", None, True, True, True, STATUS_TO_PREPARE,
+        notes="Answers the tender's eligibility conditions one by one, pointing at the enclosed proof.",
+        section=SECTION_COVERING,
+    ))
+
+
+# The tender asks the bidder to present - not "presentation of documents".
+_PRESENTATION_ASKED_RE = re.compile(
+    r"technical presentation|power ?point presentation|\bppt\b|slide deck|"
+    r"presentation (before|to) (the )?([a-z]+ ){0,3}(committee|board|panel|authority|department)|"
+    r"(make|give|deliver|conduct)s? (a |the )?(brief |short |technical )?presentation|"
+    r"presentation (on|of|covering) (the )?(proposed |technical )?(approach|methodology|work ?plan|concept|"
+    r"strategy|proposal|solution|understanding|plan)",
+    re.IGNORECASE,
+)
+_ASKS_FOR_PRESENTATION_RE = re.compile(r"\bpresentation\b|\bppt\b|power ?point|slide deck|\bslides\b", re.IGNORECASE)
+
+
+def _add_presentation(rows: list[dict[str, Any]], tender: dict[str, Any]) -> None:
+    """A tender whose documents ask the bidder to present gets a presentation
+    row (drafted into a slide deck, see app.reports.presentation) - when the
+    planner left it out and no row already is one."""
+    text = tender.get("document_text") or ""
+    match = _PRESENTATION_ASKED_RE.search(text)
+    if not match:
+        return
+    if any(_ASKS_FOR_PRESENTATION_RE.search(r.get("document") or "") for r in rows):
+        return
+    # The sentence that asks for it, for the drafter and the reviewer.
+    start = max(text.rfind(".", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
+    end_dot = text.find(".", match.end())
+    sentence = re.sub(r"\s+", " ", text[start:end_dot + 1 if end_dot != -1 else match.end() + 200]).strip()[:400]
+    _insert_in_section(rows, submission_item(
+        "Technical Presentation",
+        "Presentation on the bidder's understanding, approach, methodology and relevant experience, as the tender asks",
+        "Technical Presentation", "draft", None, False, False, False, STATUS_TO_PREPARE,
+        format_text=sentence,
+        notes="Added because the tender's documents ask for a presentation.",
+        section=SECTION_TECHNICAL,
     ))
 
 
@@ -988,14 +1311,20 @@ def build_checklist(
     unless the tender prescribes its own (the plan's `tender_order`)."""
     candidates = enclosure_documents(company_documents, company_profile)
     tender_order = False
+    conditions: list[dict[str, Any]] = []
     if plan is not None and plan.rows:
         rows = _rows_from_plan(plan, candidates, company_profile)
         tender_order = plan.tender_order
+        conditions = [{"ref": c.ref.strip(), "proved_by": c.proved_by.strip()}
+                      for c in plan.conditions if c.ref.strip()]
     else:
         selection = select_enclosures(tender, company_documents, company_profile)
         rows = _rows_from_summary(tender, selection, company_profile)
 
     _add_experience_summary(rows)
+    if not _thin_tender_text(tender):
+        _add_compliance_statement(rows, conditions)
+        _add_presentation(rows, tender)
     if _thin_tender_text(tender):
         _add_company_profile(rows)
     referenced = {r["document_id"] for r in rows if r["document_id"]}
@@ -1032,6 +1361,9 @@ def build_checklist(
         "notes": _checklist_notes(tender, company_profile),
         "builder_note": builder_note,
         "tender_order": tender_order,
+        # The tender's eligibility conditions and the rows proving them (the
+        # planner's worklist) - what a compliance statement answers.
+        "conditions": conditions,
     }
     return drop_resolved_missing_information(checklist, tender)
 
@@ -1402,9 +1734,33 @@ def signing_assets(
     authorized_signatory, when they're in the library."""
     signatory = company_profile.get("authorized_signatory", {})
     return (
-        _find_document(company_documents, signatory.get("signature_document_name")),
-        _find_document(company_documents, signatory.get("seal_document_name")),
+        _find_signing_asset(company_documents, signatory.get("signature_document_name"), "signature",
+                            signatory.get("name") or ""),
+        _find_signing_asset(company_documents, signatory.get("seal_document_name"), "stamp",
+                            company_profile.get("trade_name") or company_profile.get("legal_name") or ""),
     )
+
+
+def _loose_name(text: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def _find_signing_asset(
+    documents: list[CompanyDocumentRef], name: str | None, kind: str, owner: str
+) -> CompanyDocumentRef | None:
+    """The configured signature / seal image - by name, ignoring case,
+    spaces and underscores ("Oaks Stamp" is "Oaks_stamp"); else the one
+    image added as that kind on the Sign & Stamp tab whose name carries the
+    owner's first name (the signatory's for a signature, the company's for
+    a seal) - so a renamed upload never leaves every page unsigned."""
+    if name:
+        exact = _find_document(documents, name) or next(
+            (d for d in documents if _loose_name(d.name) == _loose_name(name)), None)
+        if exact is not None:
+            return exact
+    first = _loose_name((owner.split() or [""])[0])
+    matches = [d for d in documents if d.mark_kind == kind and first and first in _loose_name(d.name)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _closing_lines(flow: list[Any]) -> list[Any]:
@@ -1456,6 +1812,9 @@ def _signature_block(
     ]
     if signatory.get("place"):
         lines.append(f"Place: {_safe(signatory['place'])}")
+    lines.append(f"Date: {dt.date.today().strftime('%d-%m-%Y')}")
+    if stamp and seal_img is None:
+        lines.append("Company Seal:")  # no seal image on file - affixed by hand
     flow.append(Paragraph("<br/>".join(lines), body))
     return [KeepTogether(flow)]
 
@@ -1503,15 +1862,38 @@ _HEADER_STYLE = [
 ]
 
 
+PageRange = tuple[int, int]  # first and last page of a row's document in the pack
+
+
+def fmt_pages(pages: PageRange | None) -> str:
+    if not pages:
+        return ""
+    first, last = pages
+    return str(first) if first == last else f"{first}-{last}"
+
+
+def row_pages(
+    n: int, items: list[dict[str, Any]], plans: dict[str, "RowPlan"], page_ranges: dict[str, PageRange] | None
+) -> PageRange | None:
+    """Where S.No. `n`'s document sits in the pack - a duplicate row points
+    at the row that encloses its document."""
+    if not page_ranges or not 1 <= n <= len(items):
+        return None
+    plan = plans.get(items[n - 1]["id"])
+    if plan and plan.action == "duplicate" and plan.same_as:
+        return page_ranges.get(items[plan.same_as - 1]["id"])
+    return page_ranges.get(items[n - 1]["id"])
+
+
 def _submission_checklist_story(
     checklist: dict[str, Any],
     s: _Styles,
     plans: dict[str, "RowPlan"] | None = None,
-    start_pages: dict[str, int] | None = None,
+    page_ranges: dict[str, PageRange] | None = None,
 ) -> list[Any]:
-    """The checklist page - also the pack's table of contents: each row's
-    Notary requirement, Status and, once the pack is laid out
-    (`start_pages`), the page its document starts on."""
+    """The checklist page - also the pack's index: each row's annexure /
+    clause reference, Notary requirement, Status and, once the pack is laid
+    out (`page_ranges`), the pages its document occupies."""
     header = checklist.get("header") or {}
     plans = plans or {}
     heading = ParagraphStyle("cl_heading", parent=s.h1, fontSize=13, leading=16, spaceAfter=2)
@@ -1528,31 +1910,32 @@ def _submission_checklist_story(
             flow.append(Paragraph(f"<b>{label}:</b> {_safe(header[key])}", info))
     flow.append(Paragraph("Submission Checklist", ParagraphStyle("cl_sub", parent=s.h2, spaceBefore=8)))
 
-    columns = ("S.No.", "Document", "What to Upload", "Where", "Notary", "Status", "Page")
+    columns = ("S.No.", "Document", "Annexure / Ref.", "What to Upload", "Where", "Notary", "Status", "Pages")
     rows = [[Paragraph(h, head_cell) for h in columns]]
     style = list(_HEADER_STYLE)
-    for n, item in enumerate(checklist.get("items", []), 1):
+    items = checklist.get("items", [])
+    for n, item in enumerate(items, 1):
         status = item.get("status") or "-"
         plan = plans.get(item["id"])
         shown_status = f"{status} (see S.No. {plan.same_as})" if plan and plan.action == "duplicate" else status
         notary = bool(item.get("notary"))
-        page = (start_pages or {}).get(item["id"])
-        if plan and plan.action == "duplicate" and start_pages:
-            page = start_pages.get(checklist["items"][plan.same_as - 1]["id"])
+        reference = item.get("reference") or (annexure_label(item.get("document") or "", item.get("format_text") or "")
+                                              if item.get("source") == "draft" else "")
         rows.append([
             str(n),
             Paragraph(_safe(item.get("document") or "-"), s.cell),
+            Paragraph(_safe(reference or "-"), s.cell),
             Paragraph(_safe(item.get("what_to_upload") or "-"), s.cell),
             Paragraph(_safe(item.get("where") or "-"), s.cell),
             Paragraph("<b>Yes</b>" if notary else "No", center_cell),
             Paragraph(_safe(shown_status), s.cell),
-            Paragraph(str(page) if page else "-", center_cell),
+            Paragraph(fmt_pages(row_pages(n, items, plans, page_ranges)) or "-", center_cell),
         ])
         if status in _STATUS_FILL:
-            style.append(("BACKGROUND", (5, n), (5, n), colors.HexColor(_STATUS_FILL[status])))
+            style.append(("BACKGROUND", (6, n), (6, n), colors.HexColor(_STATUS_FILL[status])))
         if notary:
-            style.append(("BACKGROUND", (4, n), (4, n), colors.HexColor("#fff3bf")))
-    table = Table(rows, colWidths=[1.2 * cm, 3.2 * cm, 5.0 * cm, 2.3 * cm, 1.4 * cm, 2.3 * cm, 1.2 * cm],
+            style.append(("BACKGROUND", (5, n), (5, n), colors.HexColor("#fff3bf")))
+    table = Table(rows, colWidths=[1.0 * cm, 3.0 * cm, 2.5 * cm, 3.5 * cm, 1.9 * cm, 1.4 * cm, 1.8 * cm, 1.5 * cm],
                   repeatRows=1)
     table.setStyle(TableStyle(style + [("FONTSIZE", (0, 1), (0, -1), 8.5), ("ALIGN", (0, 0), (0, -1), "CENTER")]))
     flow.append(table)
@@ -1634,7 +2017,10 @@ def _drafted_table(table_data: Any, s: _Styles) -> list[Any]:
     data = [[Paragraph(_safe(c), head_cell) for c in columns]]
     for r in rows:
         data.append([Paragraph(_rich(c), s.cell) for c in (list(r) + [""] * width)[:width]])
-    table = Table(data, colWidths=_table_widths(columns, rows, 16.6 * cm), repeatRows=1)
+    # splitInRow: a many-column table squeezes long cells (a project
+    # description) into rows taller than a page - those continue on the
+    # next page rather than failing the whole pack.
+    table = Table(data, colWidths=_table_widths(columns, rows, 16.6 * cm), repeatRows=1, splitInRow=1)
     table.setStyle(TableStyle(_HEADER_STYLE + [("FONTSIZE", (0, 0), (-1, -1), 8.5)]))
     flow: list[Any] = []
     if table_data.title:
@@ -1642,6 +2028,202 @@ def _drafted_table(table_data: Any, s: _Styles) -> list[Any]:
         flow.append(Spacer(1, 4))
     flow += [table, Spacer(1, 10)]
     return flow
+
+
+# --- The tender's own check list annexure ------------------------------------------
+# Many tenders prescribe their own "Check List" annexure (Sr. No. / Details of
+# Requirement / Document Type / Yes-No / Page No.) - the same information as
+# the master checklist, which the drafter can't know (it has no page
+# numbers). Its table is filled here from the checklist once the pack is laid
+# out; the drafter only writes the paragraphs around it.
+
+_CHECK_LIST_RE = re.compile(r"check[\s-]?list|index of (enclosed )?documents", re.IGNORECASE)
+CHECK_LIST_COLUMNS = ["Sr. No.", "Details of Requirement", "Document Type", "Yes / No", "If Yes Page No."]
+
+
+def is_check_list_annexure(row: dict[str, Any]) -> bool:
+    return row.get("source") == "draft" and bool(_CHECK_LIST_RE.search(row.get("document") or ""))
+
+
+def _document_type(item: dict[str, Any]) -> str:
+    if item.get("source") == "draft" and re.search(r"\bpresentation\b|\bppt\b", item.get("document") or "", re.I):
+        return "Presentation slides"
+    if item.get("source") == "draft":
+        return "Prescribed format / letter on letterhead" if item.get("letterhead") else "Prescribed format"
+    return "Self-attested copy" if item.get("signature") or item.get("stamp") else "Copy"
+
+
+def _check_list_cell(column: str, n: int, item: dict[str, Any], enclosed: bool, pages: str) -> str:
+    key = column.lower()
+    if re.search(r"\bs\.?\s*no|\bsr\b|\bsr\.|\bsl\.?\s*no|serial|^#$", key):
+        return str(n)
+    if "page" in key:
+        return pages if enclosed and pages else "-"
+    if re.search(r"annex|\bref", key) and not re.search(r"requirement|particular|detail|description", key):
+        return item.get("reference") or (annexure_label(item.get("document") or "")
+                                         if item.get("source") == "draft" else "") or "-"
+    if re.search(r"yes|enclosed|submitted|attached|furnished", key):
+        return "Yes" if enclosed else "No"
+    if "type" in key:
+        return _document_type(item)
+    if re.search(r"requirement|document|particular|detail|description|name", key):
+        return item.get("document") or ""
+    return ""
+
+
+def fill_check_list_annexure(
+    doc: "DraftedDocument | None",
+    row: dict[str, Any],
+    checklist: dict[str, Any],
+    plans: dict[str, "RowPlan"],
+    page_ranges: dict[str, PageRange] | None,
+) -> Any:
+    """`doc` (the drafted check list annexure) with its table rebuilt from
+    the checklist - one row per document in the pack, Yes/No by whether it
+    is enclosed and the pages it occupies - under the tender's own column
+    headings when the draft kept them. Pages show "-" until `page_ranges`
+    is known."""
+    from types import SimpleNamespace
+
+    tables = list(getattr(doc, "tables", None) or [])
+    columns = next((list(t.columns) for t in tables if len(t.columns) >= 3), None) or CHECK_LIST_COLUMNS
+    title = next((t.title for t in tables if t.title), "")
+    items = checklist.get("items", [])
+    rows: list[list[str]] = []
+    for n, item in enumerate(items, 1):
+        plan = plans.get(item["id"])
+        if plan is None or plan.action == "skip":
+            continue
+        enclosed = plan.action in ("draft", "attach", "duplicate")
+        pages = fmt_pages(row_pages(n, items, plans, page_ranges))
+        rows.append([_check_list_cell(c, len(rows) + 1, item, enclosed, pages) for c in columns])
+    table = SimpleNamespace(title=title, columns=columns, rows=rows)
+    if doc is None:
+        return SimpleNamespace(
+            title=row.get("document") or "Check List", body_paragraphs=[], tables=[table],
+            closing_paragraphs=["We confirm that the documents listed above are enclosed with our bid, at the "
+                                "page numbers indicated."], open_items=[])
+    return SimpleNamespace(title=doc.title, body_paragraphs=list(doc.body_paragraphs), tables=[table],
+                           closing_paragraphs=list(doc.closing_paragraphs), open_items=[])
+
+
+# --- Cross-references to other documents in the pack ----------------------------
+# The drafter can't know page numbers, so a compliance statement, experience
+# summary or covering letter cites an enclosure as "[[PAGE 7]]" (S.No. 7 of
+# the checklist - see prompts.BID_DRAFT_SYSTEM_PROMPT); the token becomes
+# the enclosure's final pages once the pack is laid out.
+
+PAGE_REF_RE = re.compile(r"\[\[\s*PAGES?\s*(?:S\.?\s*NO\.?\s*)?(\d{1,3})\s*\]\]", re.IGNORECASE)
+# A reference the drafter couldn't number - "[[PAGE [TO BE FILLED ...]]]",
+# "[[PAGE ?]]" - for a document that isn't in the pack.
+BAD_PAGE_REF_RE = re.compile(r"\[\[\s*PAGES?\b(?:[^\[\]]|\[[^\[\]]*\])*\]{1,3}", re.IGNORECASE)
+_BAD_PAGE_REF_TEXT = "[TO BE VERIFIED: cites a document that is not in this bid pack]"
+# Stands in for a page reference before the layout is known - as wide as a
+# real one, so the document's length doesn't change once it's filled.
+_PAGE_REF_STAND_IN = "Pages 000-000"
+
+
+def _document_texts(doc: Any) -> list[str]:
+    texts = [getattr(doc, "title", "") or "", *(getattr(doc, "body_paragraphs", None) or []),
+             *(getattr(doc, "closing_paragraphs", None) or [])]
+    for t in getattr(doc, "tables", None) or []:
+        texts += [t.title or "", *t.columns, *(c for r in t.rows for c in r)]
+    return [str(t) for t in texts]
+
+
+_BLANK_FIELD_RE = re.compile(r"^[^:\n]{2,70}:\s*(?:_+|\.{3,}|-)?\s*$")
+_NOT_A_FIELD_RE = re.compile(
+    r"^(to|ref|subject|sub|dear .*|.*(as under|following|below|mention|include|instructions?|note|"
+    r"declare|certify|undertake|annexure|appendix)\b.*)\s*:", re.IGNORECASE)
+_SKIP_FILL_CHECK_RE = re.compile(r"check[\s-]?list|index|presentation|\bcvs?\b|curriculum vitae", re.IGNORECASE)
+
+
+def looks_unfilled(doc: Any, company_profile: dict[str, Any], document: str = "") -> bool:
+    """A drafted document that is still the bare format: it has empty fields
+    (a "<field>:" line or a table cell) yet never names the bidder (legal
+    name, CIN, PAN, GSTIN or signatory) nor raises a placeholder - or it
+    leaves three or more "<field>:" lines empty."""
+    name = f"{document} {getattr(doc, 'title', '')}"
+    if doc is None or _SKIP_FILL_CHECK_RE.search(name) or _FINANCIAL_RE.search(name):
+        return False  # a price bid's cells are the bidder's own, left blank on purpose
+    texts = _document_texts(doc)[1:]  # the title doesn't count
+    joined = " ".join(texts).lower()
+    signatory = (company_profile.get("authorized_signatory") or {}).get("name")
+    identifiers = [company_profile.get(k) for k in ("legal_name", "trade_name", "cin", "pan", "gstin")] + [signatory]
+    names_bidder = any(i and i.lower() in joined for i in identifiers)
+    blank_fields = [t for t in texts if _BLANK_FIELD_RE.match(t.strip()) and not _NOT_A_FIELD_RE.match(t.strip())]
+    empty_cells = any(not str(c).strip() for t in getattr(doc, "tables", None) or [] for r in t.rows for c in r)
+    has_gaps = bool(blank_fields) or empty_cells
+    return (has_gaps and not names_bidder and not _PLACEHOLDER_RE.search(" ".join(texts))) or len(blank_fields) >= 3
+
+
+def has_page_refs(doc: Any) -> bool:
+    return doc is not None and any(BAD_PAGE_REF_RE.search(t) for t in _document_texts(doc))
+
+
+def _page_ref_text(
+    n: int, checklist: dict[str, Any], plans: dict[str, "RowPlan"], page_ranges: dict[str, PageRange] | None
+) -> str:
+    items = checklist.get("items", [])
+    if not 1 <= n <= len(items):
+        return f"[TO BE VERIFIED: reference to S.No. {n} - the checklist has no such row]"
+    plan = plans.get(items[n - 1]["id"])
+    if plan is None or plan.action == "skip":
+        return "Not applicable"
+    if plan.action == "placeholder":
+        return f"[TO BE VERIFIED: S.No. {n} ({items[n - 1].get('document') or ''}) is not enclosed yet]"
+    if page_ranges is None:
+        return _PAGE_REF_STAND_IN
+    pages = row_pages(n, items, plans, page_ranges)
+    if not pages:
+        return f"S.No. {n}"
+    return f"{'Page' if pages[0] == pages[1] else 'Pages'} {fmt_pages(pages)}"
+
+
+def resolve_page_refs(
+    doc: Any, checklist: dict[str, Any], plans: dict[str, "RowPlan"], page_ranges: dict[str, PageRange] | None
+) -> Any:
+    """`doc` with every "[[PAGE n]]" replaced by S.No. n's pages in the pack
+    (a stand-in of the same width while `page_ranges` is None)."""
+    from types import SimpleNamespace
+
+    def sub(text: Any) -> str:
+        text = PAGE_REF_RE.sub(lambda m: _page_ref_text(int(m.group(1)), checklist, plans, page_ranges), str(text))
+        return BAD_PAGE_REF_RE.sub(_BAD_PAGE_REF_TEXT, text)
+
+    tables = [SimpleNamespace(title=sub(t.title or ""), columns=[sub(c) for c in t.columns],
+                              rows=[[sub(c) for c in r] for r in t.rows]) for t in getattr(doc, "tables", None) or []]
+    return SimpleNamespace(
+        title=sub(doc.title or ""), body_paragraphs=[sub(p) for p in doc.body_paragraphs], tables=tables,
+        closing_paragraphs=[sub(p) for p in getattr(doc, "closing_paragraphs", None) or []],
+        open_items=list(getattr(doc, "open_items", None) or []))
+
+
+def prepare_check_list_annexures(
+    drafted_documents: "dict[str, DraftedDocument]", rows: list[dict[str, Any]]
+) -> "dict[str, DraftedDocument]":
+    """Drops the open items the drafter raised for a check list annexure
+    (its rows and page numbers are filled when the pack is built - see
+    fill_check_list_annexure), so they don't reach the review notes."""
+    for row in rows:
+        doc = drafted_documents.get(row["id"])
+        if doc is not None and is_check_list_annexure(row):
+            doc.open_items = []
+    return drafted_documents
+
+
+# A price schedule's rate / quantity / amount cells are the bidder's own
+# figures - left blank to fill by hand, never a placeholder or "As quoted...".
+_PRICE_FILLER_RE = re.compile(
+    r"^\s*(\[TO BE (FILLED|VERIFIED)[^\]]*\]|as quoted in the (price schedule|financial bid)[^\n]*|-)\s*$",
+    re.IGNORECASE)
+
+
+def _blank_price_cells(table_data: Any) -> Any:
+    from types import SimpleNamespace
+
+    rows = [[("" if _PRICE_FILLER_RE.match(str(c)) else c) for c in r] for r in (table_data.rows or [])]
+    return SimpleNamespace(title=table_data.title, columns=table_data.columns, rows=rows)
 
 
 # --- One page set per checklist row ------------------------------------------------
@@ -1657,13 +2239,15 @@ def _drafted_document_section(
     page(s): date, title, body paragraphs, any tables, closing paragraphs,
     then the signature block with the signature/seal the row asks for. Its
     open items go to the internal review notes, not onto the page itself."""
-    flow: list[Any] = [_date_line(s.body), Paragraph(_safe(doc.title or row.get("document") or ""), s.h1)]
+    flow: list[Any] = [_date_line(s.body),
+                       Paragraph(_safe(normalise_labels(doc.title or row.get("document") or "")), s.h1)]
     for para in doc.body_paragraphs:
         if para.strip():
             flow.append(Paragraph(_format_paragraph(para), s.body))
             flow.append(Spacer(1, 6))
+    price_bid = row.get("source") == "draft" and bool(_FINANCIAL_RE.search(row.get("document") or ""))
     for table_data in getattr(doc, "tables", None) or []:
-        flow += _drafted_table(table_data, s)
+        flow += _drafted_table(_blank_price_cells(table_data) if price_bid else table_data, s)
     for para in getattr(doc, "closing_paragraphs", None) or []:
         if para.strip():
             flow.append(Paragraph(_format_paragraph(para), s.body))
@@ -2231,6 +2815,187 @@ def combine_marked(marked: list[tuple[bytes, str]]) -> bytes:
     return out.getvalue()
 
 
+# --- Continuous page numbers ---------------------------------------------------------
+
+PAGE_NUMBER_BOTTOM = 0.45 * cm  # below the letterhead's footer contact strip
+
+
+def stamp_page_numbers(writer: PdfWriter, count: int, serials: list[int | None] | None = None) -> None:
+    """"Page N of <count>" at the bottom centre of the first `count` pages of
+    `writer` - on a small white ground, so it reads on a scan too. With
+    `serials` (per page, the checklist S.No. of the document it belongs to,
+    None for the cover and index) it reads "S.No. 4 | Page N of <count>",
+    matching the checklist. One overlay PDF holds every page's number, each
+    page sized like its target."""
+    if count <= 0:
+        return
+    buf = io.BytesIO()
+    c = pdf_canvas.Canvas(buf)
+    for i in range(count):
+        box = writer.pages[i].cropbox  # the visible area - a scan's may be smaller than its mediabox
+        width, height = float(box.width), float(box.height)
+        c.setPageSize((width, height))
+        serial = serials[i] if serials and i < len(serials) else None
+        text = f"Page {i + 1} of {count}"
+        if serial is not None:
+            text = f"S.No. {serial}  |  {text}"
+        text_w = c.stringWidth(text, "Helvetica", 8)
+        c.setFillColor(colors.white)
+        c.rect(width / 2 - text_w / 2 - 4, PAGE_NUMBER_BOTTOM - 3, text_w + 8, 11, stroke=0, fill=1)
+        c.setFillColor(colors.HexColor("#343a40"))
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(width / 2, PAGE_NUMBER_BOTTOM, text)
+        c.showPage()
+    c.save()
+    overlays = PdfReader(io.BytesIO(buf.getvalue())).pages
+    for i in range(count):
+        box = writer.pages[i].cropbox
+        writer.pages[i].merge_transformed_page(
+            overlays[i], Transformation().translate(float(box.left), float(box.bottom)))
+
+
+# --- Pre-submission QA -------------------------------------------------------------
+
+_GEM_BID_RE = re.compile(r"\bGEM/\d{4}/B/\d+\b", re.IGNORECASE)
+_AMOUNT_RE = re.compile(r"(?:rs\.?|inr|₹)\s*[\d,]+(?:\.\d+)?(?:\s*(?:lakh|lakhs|crore|crores|cr\.?))?", re.IGNORECASE)
+_FINANCIAL_CLAIM_RE = re.compile(r"turnover|net ?worth|solvency", re.IGNORECASE)
+# Documents that must name the tender they answer.
+_TENDER_SPECIFIC_RE = re.compile(
+    r"covering letter|bid (submission )?(form|letter)|declaration|undertaking|affidavit|authori[sz]ation|"
+    r"compliance", re.IGNORECASE)
+_PERSONNEL_RE = re.compile(r"curriculum vitae|\bcvs?\b|personnel|team composition|key staff|manpower", re.IGNORECASE)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[\s,]+", "", text.lower()).replace("₹", "rs").replace("rs.", "rs").replace("inr", "rs")
+
+
+def qa_findings(
+    tender: dict[str, Any],
+    checklist: dict[str, Any],
+    plans: dict[str, "RowPlan"],
+    page_ranges: dict[str, PageRange] | None,
+    drafted_documents: dict[str, Any],
+    company_profile: dict[str, Any],
+    company_documents: list[CompanyDocumentRef],
+    presentations: Iterable[str] = (),
+) -> list[str]:
+    """What an automated read of the finished pack still finds wrong -
+    listed in the internal review notes. Never blocks the pack: each line
+    is for the team to fix or confirm before upload."""
+    import json
+
+    findings: list[str] = []
+    header = checklist.get("header") or {}
+    items = checklist.get("items", [])
+    presentations = set(presentations)
+    bid_number = (header.get("bid_number") or "").strip()
+    tender_refs = [r for r in {bid_number, (tender.get("tender_ref") or "").strip()} if len(r) >= 4]
+    known_amounts = _squash(json.dumps(company_profile.get("financials") or {}, ensure_ascii=False)
+                            + " " + (tender.get("document_text") or "")
+                            + " " + json.dumps(tender.get("document_summary") or {}, ensure_ascii=False, default=str))
+
+    if header.get("summary_only") or _thin_tender_text(tender):
+        findings.append("The tender's own documents were not read in full - check every annexure, format, "
+                        "corrigendum and the GeM ATC against the tender before upload.")
+
+    for n, item in enumerate(items, 1):
+        plan = plans.get(item["id"])
+        if plan is None or plan.action != "draft" or item["id"] in presentations:
+            continue
+        where = f"S.No. {n} {item.get('document') or ''}"
+        pages = fmt_pages(row_pages(n, items, plans, page_ranges))
+        where += f" (page {pages})" if pages else ""
+        doc = drafted_documents.get(item["id"])
+        if doc is None:
+            if re.search(r"covering letter", item.get("document") or "", re.IGNORECASE):
+                findings.append(f"{where}: a standard templated letter - check it against the tender's own "
+                                "covering letter / bid form, if it prescribes one.")
+            elif not is_check_list_annexure(item):
+                findings.append(f"{where}: not drafted - its page is a template to complete by hand.")
+            continue
+        if looks_unfilled(doc, company_profile, item.get("document") or ""):
+            findings.append(f"{where}: looks unfilled - the format is there but the bidder's details are not "
+                            "filled in. Fill it from the company records before upload.")
+        texts = _document_texts(resolve_page_refs(doc, checklist, plans, page_ranges))
+        placeholders = [p for t in texts for p in _PLACEHOLDER_RE.findall(t)]
+        if placeholders:
+            findings.append(f"{where}: {len(placeholders)} placeholder(s) still to resolve, e.g. {placeholders[0]}")
+        joined = " ".join(texts)
+        others = sorted({m.upper() for m in _GEM_BID_RE.findall(joined)} - {bid_number.upper()})
+        if others and bid_number:
+            findings.append(f"{where}: mentions bid number(s) {', '.join(others)}, not this tender's {bid_number} "
+                            "- possible copy-paste from another tender.")
+        if (tender_refs and _TENDER_SPECIFIC_RE.search(item.get("document") or "")
+                and not any(r.lower() in joined.lower() for r in tender_refs)):
+            findings.append(f"{where}: does not quote the tender reference ({' / '.join(tender_refs)}).")
+        for text in texts:
+            if not _FINANCIAL_CLAIM_RE.search(text):
+                continue
+            for amount in _AMOUNT_RE.findall(text):
+                if _squash(amount) not in known_amounts:
+                    findings.append(f"{where}: financial figure \"{amount.strip()}\" matches neither the "
+                                    "CA-certified figures on file nor the tender - verify it.")
+        if "Chartered Accountant to issue" in (item.get("notes") or ""):
+            findings.append(f"{where}: prepared for the CA - get it issued on the CA's letterhead with UDIN, "
+                            "signed and sealed, and enclose that instead.")
+
+    # Every eligibility condition must be proved by something actually in the pack.
+    for condition in checklist.get("conditions") or []:
+        proofs = [_name_key(p) for p in re.split(r"[;,]", condition.get("proved_by") or "") if p.strip()]
+        if not proofs:
+            continue
+        rows = [(n, i) for n, i in enumerate(items, 1)
+                if any(p and (p in _name_key(i.get("document") or "") or _name_key(i.get("document") or "") in p)
+                       for p in proofs)]
+        if not rows:
+            findings.append(f"Condition \"{condition.get('ref')}\": its proof ({condition.get('proved_by')}) is not "
+                            "on the checklist - confirm the condition is covered.")
+        elif not any(plans.get(i["id"]) and plans[i["id"]].action in ("attach", "draft", "duplicate", "skip")
+                     for _, i in rows):
+            findings.append(f"Condition \"{condition.get('ref')}\": its proof (S.No. "
+                            f"{', '.join(str(n) for n, _ in rows)}) is not enclosed - the bid fails this condition "
+                            "without it.")
+
+    signature_doc, seal_doc = signing_assets(company_profile, company_documents)
+    active = [i for i in items if plans.get(i["id"]) and plans[i["id"]].action not in ("skip", "duplicate")]
+    if signature_doc is None and any(i.get("signature") for i in active):
+        findings.append("No signature image in the Documents library - every signed page needs a wet signature.")
+    if seal_doc is None and any(i.get("stamp") for i in active):
+        findings.append("No seal image in the Documents library - every sealed page needs the company seal.")
+
+    today = dt.date.today()
+    for cert in company_profile.get("certifications", []):
+        try:
+            valid_until = dt.date.fromisoformat(str(cert.get("valid_until") or ""))
+        except ValueError:
+            continue
+        if valid_until < today:
+            findings.append(f"{cert.get('name')} expired on {valid_until.strftime('%d-%m-%Y')} - renew it or "
+                            "leave it out of the bid.")
+
+    if not [k for k in company_profile.get("key_personnel", []) if k.get("name")] and any(
+            _PERSONNEL_RE.search(i.get("document") or "") for i in active):
+        findings.append("No key personnel on record (company_profile.json key_personnel) - the personnel list and "
+                        "CVs cannot be filled; add each proposed person with qualification and experience.")
+    return findings
+
+
+# Checked by a person on the final set - what no automated read can confirm.
+MANUAL_QA_CHECKS = (
+    "Every annexure compared line by line with the tender's own format - no heading, clause, declaration, "
+    "column or row changed, merged or left out.",
+    "Every condition of the eligibility criteria, ATC, scope of work, corrigenda and GeM bid document is answered "
+    "by an enclosed document.",
+    "Tender number, tender name, department and authority names and dates are this tender's on every page.",
+    "Turnover, net worth and project values match the CA certificates and audited statements enclosed.",
+    "Each proposed person meets the tender's minimum qualification and experience.",
+    "Every page needing it is signed and sealed; notarised documents are executed on stamp paper.",
+    "Page numbers run continuously and every index / compliance page reference points at the right page.",
+    "Portal requirements met: file names, file size limits, upload slots and document sequence.",
+)
+
+
 # --- Internal review notes (plain pages, removed before submission) --------------
 
 def _internal_notes_story(
@@ -2238,6 +3003,7 @@ def _internal_notes_story(
     checklist: dict[str, Any],
     drafting_note: str | None,
     s: _Styles,
+    qa: list[str] | None = None,
 ) -> list[Any]:
     document_summary = tender.get("document_summary") or {}
     body = ParagraphStyle("ibody", parent=s.base["BodyText"])
@@ -2271,6 +3037,15 @@ def _internal_notes_story(
                 "draftnote", parent=body, textColor=colors.HexColor("#a16207"),
                 borderColor=colors.HexColor("#facc15"), borderWidth=0.6, borderPadding=6,
                 backColor=colors.HexColor("#fefce8"))))
+
+    story.append(Paragraph("Pre-submission QA - found automatically", s.h2))
+    for finding in qa or []:
+        story.append(Paragraph(f"• {_rich(finding)}", body))
+    if not qa:
+        story.append(Paragraph("Nothing found - still complete the checks below.", body))
+    story.append(Paragraph("Pre-submission QA - check by hand before upload", s.h2))
+    for check in MANUAL_QA_CHECKS:
+        story.append(Paragraph(f"[ ] {_safe(check)}", body))
 
     pending = [(n, i) for n, i in enumerate(checklist.get("items", []), 1)
                if i.get("status") in (STATUS_MISSING, STATUS_TO_PREPARE)]
@@ -2356,6 +3131,7 @@ def generate_bid_package(
     letterhead_image: str | Path | None = None,
     checklist: dict[str, Any] | None = None,
     cover_page: bool = True,
+    presentations: dict[str, bytes] | None = None,
 ) -> bytes:
     """Builds the bid pack PDF from `checklist` (the tender's saved,
     possibly hand-edited submission checklist - built fresh via
@@ -2372,15 +3148,24 @@ def generate_bid_package(
        in, or a placeholder page when it can't be (see plan_rows). A
        library document is merged once, however many rows point at it. The
        letterhead and the signature/seal go wherever the row's
-       letterhead/signature/stamp say.
-    3. Internal review notes on plain pages, to be removed before submitting.
+       letterhead/signature/stamp say. A presentation row with a rendered
+       deck in `presentations` (by row id - PDF bytes, see
+       app.reports.presentation) is its slides instead.
+    3. Internal review notes on plain pages, to be removed before submitting
+       - with the automated pre-submission QA (see qa_findings).
+
+    Every page of 1-2 carries "Page N of T" - a document's pages prefixed
+    with its checklist S.No. ("S.No. 4 | Page N of T"); the index, a check list
+    annexure and every "[[PAGE n]]" cross-reference in a draft show the
+    final page numbers (see resolve_page_refs).
     """
     s = _styles()
     title = f"Bid Pack - {tender.get('title') or tender.get('tender_ref') or 'Tender'}"
-    drafted_documents = drafted_documents or {}
+    drafted_documents = guard_financial_years(drafted_documents or {}, company_profile)
+    presentations = presentations or {}
     if not is_submission_checklist(checklist):
         checklist = build_checklist(tender, eligibility_criteria, company_profile, company_documents)
-    checklist = refresh_statuses(checklist, company_documents, drafted_documents)
+    checklist = refresh_statuses(checklist, company_documents, set(drafted_documents) | set(presentations))
     plans = plan_rows(checklist, company_documents)
 
     letterhead_page = _letterhead_page(letterhead_image)
@@ -2399,14 +3184,31 @@ def generate_bid_package(
     parts: list[tuple[Any, ...]] = []
     row_part: dict[str, int] = {}  # row id -> index of its first part
     merged: set[str] = set()  # library document ids already in the pack
+    # part index -> its row, for documents holding page numbers (a check list
+    # annexure, or a draft citing "[[PAGE n]]") - re-rendered once the layout
+    # is known.
+    paged: dict[int, dict[str, Any]] = {}
+
+    def _paged_story(row: dict[str, Any], page_ranges: dict[str, PageRange] | None) -> list[Any]:
+        doc = drafted_documents.get(row["id"])
+        if is_check_list_annexure(row):
+            doc = fill_check_list_annexure(doc, row, checklist, plans, page_ranges)
+        doc = resolve_page_refs(doc, checklist, plans, page_ranges)
+        return _drafted_document_section(doc, row, company_profile, company_documents, s)
+
     for n, row in shown:
         plan = plans[row["id"]]
         if plan.action == "attach" and plan.doc.id in merged:
             continue
         row_part[row["id"]] = len(parts)
-        if plan.action == "draft":
+        if plan.action == "draft" and row["id"] in presentations:
+            parts.append(("pages", list(PdfReader(io.BytesIO(presentations[row["id"]])).pages)))
+        elif plan.action == "draft":
             drafted = drafted_documents.get(row["id"])
-            if drafted is not None:
+            if is_check_list_annexure(row) or has_page_refs(drafted):
+                paged[len(parts)] = row
+                story = _paged_story(row, None)
+            elif drafted is not None:
                 story = _drafted_document_section(drafted, row, company_profile, company_documents, s)
             elif re.search(r"covering letter", row.get("document") or "", re.IGNORECASE):
                 story = _fallback_covering_letter_section(tender, row, company_profile, company_documents, s)
@@ -2420,27 +3222,53 @@ def generate_bid_package(
             parts.append(("pages", _render(_placeholder_section(n, row, plan.reason, s), False)))
 
     front = _render(_cover_page_story(checklist, tender, company_profile, s), True) if cover_page else []
-    # The checklist's length doesn't depend on the page numbers in it, so
-    # one render without them tells where the documents start.
-    first = len(front) + len(_render(_submission_checklist_story(checklist, s, plans), True)) + 1
-    offsets = []
-    for part in parts:
-        offsets.append(first)
-        first += len(part[1]) if part[0] == "pages" else len(part[3])
-    start_pages = {row_id: offsets[i] for row_id, i in row_part.items()}
 
+    def _layout(first: int) -> dict[str, PageRange]:
+        spans = []
+        for part in parts:
+            length = len(part[1]) if part[0] == "pages" else len(part[3])
+            spans.append((first, first + max(length, 1) - 1))
+            first += length
+        return {row_id: spans[i] for row_id, i in row_part.items()}
+
+    # The index and the documents citing page numbers are rendered with the
+    # layout, which they can change by a page themselves (a longer page
+    # range wrapping) - so it's redone until it holds.
+    page_ranges: dict[str, PageRange] | None = None
+    index_pages: list[PageObject] = []
+    for _ in range(5):
+        index_pages = _render(_submission_checklist_story(checklist, s, plans, page_ranges), True)
+        layout = _layout(len(front) + len(index_pages) + 1)
+        resized = False
+        for i, row in paged.items():
+            pages = _render(_paged_story(row, layout), bool(row.get("letterhead")))
+            resized = resized or len(pages) != len(parts[i][1])
+            parts[i] = ("pages", pages)
+        if not resized and layout == page_ranges:
+            break
+        page_ranges = _layout(len(front) + len(index_pages) + 1) if resized else layout
+
+    qa = qa_findings(tender, checklist, plans, page_ranges, drafted_documents, company_profile,
+                     company_documents, presentations)
+    # Each part's checklist S.No. (a library document several rows point at
+    # carries the first one's), printed with every page number.
+    part_serial = {row_part[row["id"]]: n for n, row in reversed(shown) if row["id"] in row_part}
     writer = PdfWriter()
     try:
-        for page in front + _render(_submission_checklist_story(checklist, s, plans, start_pages), True):
+        for page in front + index_pages:
             writer.add_page(page)
-        for part in parts:
+        serials: list[int | None] = [None] * len(writer.pages)
+        for i, part in enumerate(parts):
+            before = len(writer.pages)
             if part[0] == "pages":
                 for page in part[1]:
                     writer.add_page(page)
             else:
                 _, doc, row, pages = part
                 _add_attached_pages(writer, doc, row, letterhead_page, signature, seal, pages)
-        for page in _render(_internal_notes_story(tender, checklist, drafting_note, s), False):
+            serials += [part_serial.get(i)] * (len(writer.pages) - before)
+        stamp_page_numbers(writer, len(writer.pages), serials)
+        for page in _render(_internal_notes_story(tender, checklist, drafting_note, s, qa), False):
             writer.add_page(page)
 
         out = io.BytesIO()

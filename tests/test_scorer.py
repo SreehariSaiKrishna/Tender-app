@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 
 import mongomock
 import pytest
@@ -174,6 +175,19 @@ def test_screen_tenders_persists_results(collection):
     # sort by priority without unpacking the screenings array.
     assert docs[0]["latest_priority"] == "High"
     assert docs[0]["latest_relevance_score"] == 85
+
+
+def test_screen_tenders_stops_at_the_deadline_and_leaves_the_rest_for_next_run(collection):
+    make_tender(collection, dedup_key="ref:1")
+    make_tender(collection, dedup_key="ref:2")
+    provider = FakeProvider(response=VALID_VERDICT)
+
+    summary = screen_tenders(provider=provider, capabilities=["Digital Marketing"], collection=collection,
+                             deadline=time.monotonic() - 1)
+    assert summary.screened == 0 and provider.calls == []
+
+    later = screen_tenders(provider=provider, capabilities=["Digital Marketing"], collection=collection)
+    assert later.screened == 2
 
 
 def test_screen_tenders_skips_already_screened_unchanged_tenders(collection):

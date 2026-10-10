@@ -27,6 +27,8 @@ beautifulsoup4>=4.12
 
 # Bid pack generation (app.reports.bid_generator, POST /tenders/{id}/generate-bid)
 reportlab>=4.0
+# ...and the technical presentation as a PowerPoint deck (app.reports.presentation)
+python-pptx>=1.0
 # OCR fallback for scanned/image-only tender-notice PDFs - pymupdf rasterizes
 # the page (no external binary needed), pytesseract then reads it via the
 # Tesseract OCR engine, which IS a separate system install (not pip-only):

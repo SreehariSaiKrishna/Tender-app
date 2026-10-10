@@ -6,6 +6,8 @@ local uvicorn/CLI run need no AWS access.
 Keys used (see template.yaml for the lifecycle rules on each prefix):
   company-documents/<id>/<filename>  - the Documents library
   tender-text/<tender_id>.txt        - deleted along with its tender
+  tender-documents/<tender_id>/...   - a hand-added tender's uploaded documents
+                                       (app.processing.manual_documents)
   bid-packs/<tender_id>/<uuid>.pdf   - expire after a day, never kept
 
 Metadata about each file lives in Mongo; this module only moves bytes.

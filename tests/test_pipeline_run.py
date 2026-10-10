@@ -63,17 +63,32 @@ def test_a_run_that_collects_nothing_still_finishes_then_fails(monkeypatch, sett
     steps, persisted = [], []
     monkeypatch.setattr(pipeline, "run_collection", lambda s: [])  # login failed
     monkeypatch.setattr(pipeline, "run_process", lambda s, collect_outcomes: steps.append("process"))
-    monkeypatch.setattr(pipeline, "run_cleanup", lambda s: steps.append("cleanup"))
     monkeypatch.setattr(pipeline, "run_document_download", lambda s, **kw: steps.append("download"))
     monkeypatch.setattr(pipeline, "run_document_summarize", lambda s, **kw: steps.append("summarize"))
-    monkeypatch.setattr(pipeline, "run_screen", lambda s: steps.append("screen"))
+    monkeypatch.setattr(pipeline, "run_screen", lambda s, **kw: steps.append("screen"))
     monkeypatch.setattr(pipeline, "_persist_run", lambda summary, started_at, trigger: persisted.append(summary))
 
     with pytest.raises(pipeline.CollectionFailedError):
         pipeline.run_pipeline(settings)
 
-    assert steps == ["process", "cleanup", "download", "summarize", "screen"]
+    assert steps == ["process", "screen", "download", "summarize"]
     assert len(persisted) == 1  # recorded before failing
+
+
+def test_the_run_deadline_reaches_each_long_step(monkeypatch, settings):
+    seen = {}
+    monkeypatch.setattr(pipeline, "run_collection", lambda s: [DownloadOutcome("Q", "success")])
+    monkeypatch.setattr(pipeline, "run_process", lambda s, collect_outcomes: None)
+    monkeypatch.setattr(pipeline, "run_screen", lambda s, deadline: seen.update(screen=deadline))
+    monkeypatch.setattr(pipeline, "run_document_download", lambda s, summarized, deadline: seen.update(download=deadline))
+    monkeypatch.setattr(pipeline, "run_document_summarize", lambda s, already, deadline: seen.update(summarize=deadline))
+    monkeypatch.setattr(pipeline, "_persist_run", lambda *a: None)
+
+    pipeline.run_pipeline(settings, deadline=1000.0)
+
+    # A tender's documents are only started with room left to finish them.
+    assert seen == {"screen": 1000.0, "summarize": 1000.0,
+                    "download": 1000.0 - pipeline.DOCUMENT_TENDER_HEADROOM_SECONDS}
 
 
 def test_each_tender_is_summarised_right_after_its_download(monkeypatch, settings):
@@ -99,6 +114,6 @@ def test_each_tender_is_summarised_right_after_its_download(monkeypatch, setting
     assert summarised == [["t1"], ["t2"]] and counts.summarized == 2
 
     # The summarize step then adds whatever was left over.
-    monkeypatch.setattr(pipeline, "summarize_pending_documents", lambda s: SummarizeSummary(summarized=1, failed=1))
+    monkeypatch.setattr(pipeline, "summarize_pending_documents", lambda s, **kw: SummarizeSummary(summarized=1, failed=1))
     total = pipeline.run_document_summarize(settings, already=counts).summary
     assert (total.summarized, total.failed) == (3, 1)

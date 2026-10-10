@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(git fetch -q origin)",
+      "PowerShell(git pull --ff-only -q origin main; git log --oneline -1; Select-String -Path scripts\\\\deploy.sh -Pattern FrontendCustomUrl | % { $_.Line.Trim\\(\\) })",
+      "PowerShell(git branch -d fix/cors-custom-domain)",
+      "PowerShell(git push -q origin --delete fix/cors-custom-domain)",
+      "PowerShell(& venv\\\\Scripts\\\\python.exe -c \"import boto3; s=boto3.Session\\(profile_name='tender-agent'\\); cf=s.client\\('cloudformation',region_name='ap-south-1'\\); o={x['OutputKey']:x['OutputValue'] for x in cf.describe_stacks\\(StackName='tender-agent-frontend'\\)['Stacks'][0]['Outputs']}; d=s.client\\('cloudfront'\\).get_distribution_config\\(Id=o['FrontendDistributionId']\\)['DistributionConfig']; print\\(o['FrontendDistributionId'], d['Aliases'], d['ViewerCertificate'].get\\('ACMCertificateArn'\\)\\)\")",
+      "PowerShell($env:AWS_PROFILE='tender-agent'; $fn = aws lambda list-functions --query \"Functions[?contains\\(FunctionName,'PipelineFunction'\\)].FunctionName\" --output text; $fn; aws cloudwatch describe-alarm-history --history-item-type StateUpdate --max-records 10 --query \"AlarmHistoryItems[].[Timestamp,AlarmName,HistorySummary]\" --output text)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\oaks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-oaks-OneDrive-Desktop-tender-app\\\\4f1ab8b1-9fa4-4129-b3cf-ef46c22ccbc9\\\\scratchpad\\\\logs.py\" 4)",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\oaks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-oaks-OneDrive-Desktop-tender-app\\\\4f1ab8b1-9fa4-4129-b3cf-ef46c22ccbc9\\\\scratchpad\\\\streams.py\" tender-agent 3; Get-Content $env:USERPROFILE\\\\.aws\\\\config | Select-String '^\\\\[')",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\oaks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-oaks-OneDrive-Desktop-tender-app\\\\4f1ab8b1-9fa4-4129-b3cf-ef46c22ccbc9\\\\scratchpad\\\\runs.py\" 10)"
+    ]
+  }
+}
